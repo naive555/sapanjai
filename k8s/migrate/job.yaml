@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: junctera-migrate
+  namespace: junctera
+spec:
+  # Postgres may not be accepting connections yet on a first apply; each
+  # failed attempt restarts the pod, so this is effectively "retry until the
+  # database is up" with a ceiling.
+  backoffLimit: 6
+  # Delete the finished Job 5 minutes after it succeeds. This also makes
+  # `kubectl apply -f k8s/ -R` re-runnable: a completed Job's spec is
+  # immutable, so re-applying one that still exists fails. Both steps are
+  # idempotent (goose skips applied migrations, the seeder upserts), so a
+  # re-run after the TTL expires is harmless.
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: junctera-migrate
+    spec:
+      restartPolicy: OnFailure
+      # Both steps run the same image as the api/worker Deployments, with the
+      # entrypoint overridden. Migrations are embedded in the binary, so
+      # nothing needs mounting.
+      #
+      # They pull the full ConfigMap + Secret even though neither touches
+      # Redis or JWTs: cmd/migrate and cmd/seed use the same config.Load() as
+      # the API, which validates every required variable up front.
+      initContainers:
+        # Runs to completion before the seeder starts — the plans table has to
+        # exist before it can be written to.
+        - name: migrate
+          image: junctera-api:latest
+          imagePullPolicy: Never
+          command: ["/app/migrate", "up"]
+          envFrom:
+            - configMapRef:
+                name: junctera-config
+            - secretRef:
+                name: junctera-secret
+          # DATABASE_URL is assembled from the postgres-credentials Secret
+          # rather than duplicated — see api/deployment.yaml.
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: dbname
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)?sslmode=disable
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+              cpu: 250m
+      containers:
+        - name: seed
+          image: junctera-api:latest
+          imagePullPolicy: Never
+          command: ["/app/seed"]
+          envFrom:
+            - configMapRef:
+                name: junctera-config
+            - secretRef:
+                name: junctera-secret
+          # Same derived DATABASE_URL as the init container above.
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: dbname
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)?sslmode=disable
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+              cpu: 250m

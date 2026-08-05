@@ -1,0 +1,862 @@
+basePath: /
+definitions:
+  github_com_junctera_backend_internal_shared_httpx.ErrorResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  internal_module_auditlog.LogResponse:
+    properties:
+      action:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      organizationId:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_auth.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_module_auth.LogoutResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
+  internal_module_auth.RefreshRequest:
+    properties:
+      refreshToken:
+        type: string
+    required:
+    - refreshToken
+    type: object
+  internal_module_auth.RegisterRequest:
+    properties:
+      displayName:
+        minLength: 1
+        type: string
+      email:
+        type: string
+      password:
+        minLength: 8
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_module_auth.TokenResponse:
+    properties:
+      accessToken:
+        type: string
+      refreshToken:
+        type: string
+    type: object
+  internal_module_organization.CreateRequest:
+    properties:
+      name:
+        minLength: 1
+        type: string
+      slug:
+        minLength: 2
+        type: string
+    required:
+    - name
+    - slug
+    type: object
+  internal_module_organization.InviteRequest:
+    properties:
+      email:
+        type: string
+      role:
+        enum:
+        - admin
+        - member
+        type: string
+    required:
+    - email
+    - role
+    type: object
+  internal_module_organization.MemberResponse:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      joinedAt:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_organization.MembershipResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      organization:
+        $ref: '#/definitions/internal_module_organization.OrgResponse'
+      organizationId:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_organization.OrgResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  internal_module_organization.SuccessResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
+  internal_module_rbac.AssignRoleRequest:
+    properties:
+      roleId:
+        type: string
+      userId:
+        type: string
+    required:
+    - roleId
+    - userId
+    type: object
+  internal_module_rbac.CreateRoleRequest:
+    properties:
+      description:
+        type: string
+      name:
+        minLength: 1
+        type: string
+      permissions:
+        items:
+          type: string
+        type: array
+    required:
+    - name
+    type: object
+  internal_module_rbac.PermissionResponse:
+    properties:
+      action:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      roleId:
+        type: string
+    type: object
+  internal_module_rbac.RoleResponse:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      permissions:
+        items:
+          $ref: '#/definitions/internal_module_rbac.PermissionResponse'
+        type: array
+    type: object
+  internal_module_rbac.RoleRowResponse:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+    type: object
+  internal_module_rbac.SuccessResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
+  internal_module_rbac.UpdatePermissionsRequest:
+    properties:
+      permissions:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_module_subscription.AssignRequest:
+    properties:
+      planId:
+        type: string
+    required:
+    - planId
+    type: object
+  internal_module_subscription.PlanResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      limits:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+    type: object
+  internal_module_subscription.SubscriptionResponse:
+    properties:
+      createdAt:
+        type: string
+      customLimits:
+        items:
+          type: integer
+        type: array
+      id:
+        type: string
+      organizationId:
+        type: string
+      plan:
+        $ref: '#/definitions/internal_module_subscription.PlanResponse'
+      planId:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  internal_module_subscription.SuccessResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
+info:
+  contact: {}
+  description: Multi-tenant B2B SaaS platform API.
+  title: Junctera API
+  version: 0.1.0
+paths:
+  /audit-logs:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: userId
+        type: string
+      - description: Filter by action
+        in: query
+        name: action
+        type: string
+      - description: Max results (1-100, default 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_module_auditlog.LogResponse'
+            type: array
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Query audit logs
+      tags:
+      - audit-logs
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.TokenResponse'
+        "401":
+          description: INVALID_CREDENTIALS
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: TOO_MANY_ATTEMPTS
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer <accessToken>
+        in: header
+        name: Authorization
+        type: string
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.LogoutResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      summary: Log out
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.TokenResponse'
+        "401":
+          description: INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      summary: Rotate a refresh token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Registration payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.TokenResponse'
+        "409":
+          description: EMAIL_TAKEN
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - auth
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ status: \"ok\", uptime: <seconds> }'
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /organizations:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_module_organization.MembershipResponse'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List my organizations
+      tags:
+      - organizations
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_organization.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_organization.OrgResponse'
+        "409":
+          description: SLUG_TAKEN
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create an organization
+      tags:
+      - organizations
+  /organizations/invite:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Invite payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_organization.InviteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_organization.SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: ALREADY_MEMBER
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Invite a member
+      tags:
+      - organizations
+  /organizations/members:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_module_organization.MemberResponse'
+            type: array
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List organization members
+      tags:
+      - organizations
+  /organizations/members/{userId}:
+    delete:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Member user ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_organization.SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: MEMBER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Remove a member
+      tags:
+      - organizations
+  /plans:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_module_subscription.PlanResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List subscription plans
+      tags:
+      - subscription
+  /rbac/assign:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Assignment payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_rbac.AssignRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_rbac.SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: MEMBER_NOT_FOUND / ROLE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Assign a role to a member
+      tags:
+      - rbac
+  /rbac/roles:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_module_rbac.RoleResponse'
+            type: array
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List roles
+      tags:
+      - rbac
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Role payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_rbac.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_rbac.RoleRowResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a role
+      tags:
+      - rbac
+  /rbac/roles/{roleId}/permissions:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Role ID
+        in: path
+        name: roleId
+        required: true
+        type: string
+      - description: New permission set
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_rbac.UpdatePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_rbac.SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: ROLE_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Replace a role's permissions
+      tags:
+      - rbac
+  /subscription:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_subscription.SubscriptionResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the organization's subscription
+      tags:
+      - subscription
+  /subscription/assign:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Plan payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_subscription.AssignRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_subscription.SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Not a member of this organization
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Assign a subscription plan
+      tags:
+      - subscription
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer {token}" — the JWT access token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

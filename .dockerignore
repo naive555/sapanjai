@@ -1,0 +1,10 @@
+.git
+.claude
+docs
+node_modules
+**/node_modules
+**/.next
+**/tmp
+.env
+.env.local
+*.md

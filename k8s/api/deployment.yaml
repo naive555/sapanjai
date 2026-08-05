@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: junctera-api
+  namespace: junctera
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: junctera-api
+  template:
+    metadata:
+      labels:
+        app: junctera-api
+    spec:
+      containers:
+        - name: junctera-api
+          image: junctera-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: junctera-config
+            - secretRef:
+                name: junctera-secret
+          # The database credentials are defined in exactly one place — the
+          # postgres-credentials Secret, which also configures the Postgres
+          # StatefulSet. DATABASE_URL is assembled from them here instead of
+          # being stored as a second copy in junctera-secret, so the two
+          # can never drift apart.
+          #
+          # Two constraints on $(VAR) expansion shape this block: it only
+          # sees variables declared in this `env` list (never ones arriving
+          # via envFrom), and only ones declared before the reference — hence
+          # the three explicit lookups, with DATABASE_URL last.
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: dbname
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)?sslmode=disable
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m

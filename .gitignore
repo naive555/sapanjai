@@ -1,0 +1,25 @@
+# Env
+.env
+.env.local
+.env.*.local
+
+# Node / Next.js
+node_modules/
+apps/frontend/.next/
+apps/frontend/out/
+apps/frontend/.env.local
+
+# Go
+apps/backend/tmp/
+apps/backend/bin/
+
+# K8s secrets
+k8s/secret.yaml
+k8s/**/secret.yaml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

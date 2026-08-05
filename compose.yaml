@@ -1,0 +1,94 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: junctera-db
+    environment:
+      # Defaults match .env.example, so the container stack comes up without a
+      # .env file; setting those vars in .env overrides both this container and
+      # the DATABASE_URL the api/worker connect with (below), keeping the two
+      # from silently diverging.
+      POSTGRES_USER: ${DATABASE_USER:-username}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-password}
+      POSTGRES_DB: ${DATABASE_NAME:-junctera}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-username}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: junctera-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./apps/backend
+    container_name: junctera-api
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.docker
+    environment:
+      # Built from the same vars/defaults as the db service above so the
+      # credentials can never drift apart. Not in .env.docker, because only
+      # compose knows the `db` service hostname.
+      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-junctera}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./apps/backend
+    container_name: junctera-worker
+    entrypoint: ["/app/worker"]
+    env_file:
+      - .env.docker
+    environment:
+      # The worker's internal ops endpoint; also what the image's
+      # HEALTHCHECK probes, overriding the API's PORT from .env.docker.
+      WORKER_PORT: "3001"
+      HEALTHCHECK_PORT: "3001"
+      # Kept identical to the api service's — see the note there.
+      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-junctera}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/frontend
+    container_name: junctera-web
+    ports:
+      - "4000:3000"
+    environment:
+      # Runtime env, read when the standalone Next.js server boots — routes
+      # the /api/* proxy rewrite to the api service via compose's internal
+      # DNS (not localhost, since web and api are separate containers).
+      BACKEND_URL: http://api:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
