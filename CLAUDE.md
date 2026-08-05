@@ -28,8 +28,11 @@ See [`README.md`](README.md) for the quickstart, [`apps/frontend/README.md`](app
 ```
 apps/backend/    Go API — cmd/{api,migrate,seed,worker}, internal/{config,server,middleware,module,worker,job,infra,shared}, migrations/
 apps/frontend/   Next.js dashboard — app/{(auth),(dashboard)}/, lib/{api,auth,org}/, components/
-docs/            01-source-analysis · 02-api-contract · 03-target-architecture · 04-migration-plan
+docs/            01-source-analysis · 02-api-contract · 03-target-architecture · 04-migration-plan · 05-mcp-gateway
+spikes/          throwaway feasibility spikes, each its own Go module — mcp-gateway/
 ```
+
+`spikes/*` are **separate Go modules and deliberately outside the build**: `make test`/`make lint` and CI are scoped to `apps/backend`, and Go skips nested modules in `./...`. Nothing in `spikes/` is production code or a dependency of it — treat it as evidence attached to a design doc, and don't let it drift into the main pipeline.
 
 ## Ground rules
 
