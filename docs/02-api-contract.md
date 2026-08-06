@@ -119,8 +119,8 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
 | `PORT` | 3000 | |
-| `APP_NAME` | junctera-api | logger service name |
-| `DATABASE_URL` | — | `postgres://user:pass@host:5432/junctera` |
+| `APP_NAME` | sapanjai-api | logger service name |
+| `DATABASE_URL` | — | `postgres://user:pass@host:5432/sapanjai` |
 | `REDIS_URL` | — | required at boot |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | min 32 chars |
 | `JWT_ACCESS_EXPIRES_IN` | 15m | duration string |

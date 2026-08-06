@@ -1,5 +1,5 @@
 // Command httpsrv runs the spike as a Streamable HTTP MCP server — the shape
-// the real Junctera gateway needs, because only an HTTP transport carries
+// the real Sapanjai gateway needs, because only an HTTP transport carries
 // per-request headers and can therefore serve many tenants from one process.
 //
 // It runs Stateless, which makes the request lifecycle identical to a normal
@@ -27,9 +27,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/gateway"
-	"github.com/junctera/spikes/mcp-gateway/internal/principal"
-	"github.com/junctera/spikes/mcp-gateway/internal/rbac"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/gateway"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/principal"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/rbac"
 )
 
 func main() {
@@ -73,7 +73,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Info("junctera mcp spike listening",
+	logger.Info("sapanjai mcp spike listening",
 		slog.String("addr", *addr),
 		slog.String("endpoint", "http://"+*addr+"/mcp"),
 		slog.Any("demo_tokens", principal.Tokens()),
@@ -113,7 +113,7 @@ func withAuth(logger *slog.Logger, next http.Handler) http.Handler {
 		if token == "" {
 			// WWW-Authenticate is what makes an MCP client offer to
 			// re-authenticate instead of just erroring out.
-			w.Header().Set("WWW-Authenticate", `Bearer realm="junctera"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="sapanjai"`)
 			writeJSONError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
@@ -121,7 +121,7 @@ func withAuth(logger *slog.Logger, next http.Handler) http.Handler {
 		p, err := principal.Resolve(token)
 		if err != nil {
 			logger.Warn("auth rejected", slog.String("error", err.Error()))
-			w.Header().Set("WWW-Authenticate", `Bearer realm="junctera", error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="sapanjai", error="invalid_token"`)
 			writeJSONError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}

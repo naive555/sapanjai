@@ -1,4 +1,4 @@
-# junctera
+# Sapanjai (HeartBridge)
 
 A multi-tenant B2B SaaS platform template: **Go backend + Next.js dashboard** in one monorepo.
 
@@ -289,12 +289,12 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `APP_NAME` | `junctera-api` | logger service name |
+| `APP_NAME` | `sapanjai-api` | logger service name |
 | `APP_ENV` | `development` | `development` enables pretty logging |
 | `PORT` | `3000` | API port |
 | `LOG_LEVEL` | `debug` | |
 | `DATABASE_URL` | — | **required** |
-| `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` | `username` / `password` / `junctera` | also configure the compose `db` container and the container-side `DATABASE_URL` |
+| `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` | `username` / `password` / `sapanjai` | also configure the compose `db` container and the container-side `DATABASE_URL` |
 | `REDIS_URL` | — | **required** |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | **required**, min 32 chars each |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
@@ -317,8 +317,8 @@ Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (m
 
 ```bash
 # individual images
-docker build -t junctera-api:dev ./apps/backend
-docker build -t junctera-web:dev ./apps/frontend
+docker build -t sapanjai-api:dev ./apps/backend
+docker build -t sapanjai-web:dev ./apps/frontend
 
 # full stack: db, redis, api, worker, web — web waits on api's HEALTHCHECK
 docker compose up -d --build

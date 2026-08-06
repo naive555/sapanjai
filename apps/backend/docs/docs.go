@@ -69,19 +69,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -120,19 +120,19 @@ const docTemplate = `{
                     "401": {
                         "description": "INVALID_CREDENTIALS",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "429": {
                         "description": "TOO_MANY_ATTEMPTS",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -177,7 +177,7 @@ const docTemplate = `{
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -216,13 +216,13 @@ const docTemplate = `{
                     "401": {
                         "description": "INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -261,13 +261,13 @@ const docTemplate = `{
                     "409": {
                         "description": "EMAIL_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -356,13 +356,13 @@ const docTemplate = `{
                     "409": {
                         "description": "SLUG_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -413,31 +413,31 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "USER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "ALREADY_MEMBER",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -479,13 +479,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -531,19 +531,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -576,7 +576,7 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -627,25 +627,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND / ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -687,13 +687,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -742,19 +742,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -812,25 +812,25 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -869,13 +869,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -926,19 +926,19 @@ const docTemplate = `{
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -946,7 +946,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_junctera_backend_internal_shared_httpx.ErrorResponse": {
+        "github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -1355,7 +1355,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "Junctera API",
+	Title:            "Sapanjai API",
 	Description:      "Multi-tenant B2B SaaS platform API.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
-	"github.com/junctera/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/infra/database/db"
 )
 
 // ---- hand-mocked dependencies ----

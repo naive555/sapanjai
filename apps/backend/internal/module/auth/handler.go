@@ -12,10 +12,10 @@ import (
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/shared/httpx"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/shared/httpx"
 )
 
 // blacklistTTL mirrors the hard-coded 15-minute access-token blacklist TTL

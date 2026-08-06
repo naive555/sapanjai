@@ -15,8 +15,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/mockdata"
-	"github.com/junctera/spikes/mcp-gateway/internal/rbac"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/mockdata"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/rbac"
 )
 
 // Entry binds one MCP tool to one RBAC action.

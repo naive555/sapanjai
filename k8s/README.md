@@ -1,14 +1,14 @@
 # Kubernetes manifests
 
-Deployment manifests for the junctera backend — the API, the background
+Deployment manifests for the Sapanjai (HeartBridge) backend — the API, the background
 worker, a one-off schema/seed Job, and their Postgres and Redis dependencies.
 Plain YAML, no Helm or Kustomize.
 
 These target a **local cluster** (minikube / kind / Docker Desktop) as written:
-the api, worker, and migrate workloads all reference `junctera-api:latest` with
+the api, worker, and migrate workloads all reference `sapanjai-api:latest` with
 `imagePullPolicy: Never`, meaning the image must already exist in the cluster's
 own image store. Load it before applying — e.g. `minikube image load
-junctera-api:latest` or `kind load docker-image junctera-api:latest`.
+sapanjai-api:latest` or `kind load docker-image sapanjai-api:latest`.
 For a real cluster, swap in a registry-qualified image reference and drop the
 `Never` pull policy.
 
@@ -16,15 +16,15 @@ For a real cluster, swap in a registry-qualified image reference and drop the
 
 ```
 k8s/
-├── namespace.yaml            # junctera namespace — apply this first
+├── namespace.yaml            # sapanjai namespace — apply this first
 ├── configmap.yaml            # non-secret env shared by api, worker, migrate
 ├── secret.example.yaml       # template — copy to secret.yaml, fill in, never commit
 ├── api/
-│   ├── deployment.yaml       # junctera-api, 2 replicas, /health probes on :3000
-│   ├── service.yaml          # junctera-api-service :3000 (ClusterIP)
-│   └── ingress.yaml          # nginx, host: junctera.local
+│   ├── deployment.yaml       # sapanjai-api, 2 replicas, /health probes on :3000
+│   ├── service.yaml          # sapanjai-api-service :3000 (ClusterIP)
+│   └── ingress.yaml          # nginx, host: sapanjai.local
 ├── worker/
-│   └── deployment.yaml       # junctera-worker, 1 replica, /health probes on :3001
+│   └── deployment.yaml       # sapanjai-worker, 1 replica, /health probes on :3001
 ├── migrate/
 │   └── job.yaml              # one-off: goose migrations, then plan seeding
 ├── postgres/
@@ -42,8 +42,8 @@ Env reaches every workload through `envFrom`, combining two objects:
 
 | Object | Kind | Holds |
 | --- | --- | --- |
-| `junctera-config` | ConfigMap | `APP_NAME`, `APP_ENV=production`, `LOG_LEVEL`, `PORT`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN` |
-| `junctera-secret` | Secret | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (min 32 chars each), `REDIS_URL` |
+| `sapanjai-config` | ConfigMap | `APP_NAME`, `APP_ENV=production`, `LOG_LEVEL`, `PORT`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN` |
+| `sapanjai-secret` | Secret | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (min 32 chars each), `REDIS_URL` |
 | `postgres-credentials` | Secret | `username`, `password`, `dbname` |
 
 ### Where DATABASE_URL comes from
@@ -104,12 +104,12 @@ kubectl apply -f k8s/ -R
 `k8s/secret.yaml` and `k8s/**/secret.yaml` are gitignored — never commit real
 secrets.
 
-Reaching the API through the Ingress needs `junctera.local` resolving to the
+Reaching the API through the Ingress needs `sapanjai.local` resolving to the
 ingress controller; add it to your hosts file, or skip the Ingress entirely and
 port-forward:
 
 ```bash
-kubectl -n junctera port-forward svc/junctera-api-service 3000:3000
+kubectl -n sapanjai port-forward svc/sapanjai-api-service 3000:3000
 curl localhost:3000/health
 ```
 
@@ -136,8 +136,8 @@ Two behaviors worth knowing:
 Watch it or re-run it on demand:
 
 ```bash
-kubectl -n junctera logs job/junctera-migrate --all-containers -f
-kubectl -n junctera delete job junctera-migrate --ignore-not-found
+kubectl -n sapanjai logs job/sapanjai-migrate --all-containers -f
+kubectl -n sapanjai delete job sapanjai-migrate --ignore-not-found
 kubectl apply -f k8s/migrate/job.yaml
 ```
 
@@ -148,7 +148,7 @@ For migration commands the Job doesn't cover (`down`, `status`), port-forward
 and use the Makefile targets against the cluster database:
 
 ```bash
-kubectl -n junctera port-forward svc/postgres-service 5432:5432
+kubectl -n sapanjai port-forward svc/postgres-service 5432:5432
 # with DATABASE_URL pointed at localhost:5432:
 make migrate-status
 ```
@@ -159,7 +159,7 @@ make migrate-status
   Next.js image and its compose service already exist (`apps/frontend/Dockerfile`,
   the `web` service in `compose.yaml`); porting them alongside `api/` is a
   follow-up. A `web` Deployment would need `BACKEND_URL` set to
-  `http://junctera-api-service:3000`.
+  `http://sapanjai-api-service:3000`.
 - **Postgres and Redis** are single-replica with no backup, no auth on Redis, and
   a 1Gi PVC — fine for a local cluster, not a production data tier. Use managed
   services or an operator for anything real.

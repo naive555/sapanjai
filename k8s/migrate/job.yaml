@@ -1,8 +1,8 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: junctera-migrate
-  namespace: junctera
+  name: sapanjai-migrate
+  namespace: sapanjai
 spec:
   # Postgres may not be accepting connections yet on a first apply; each
   # failed attempt restarts the pod, so this is effectively "retry until the
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       labels:
-        app: junctera-migrate
+        app: sapanjai-migrate
     spec:
       restartPolicy: OnFailure
       # Both steps run the same image as the api/worker Deployments, with the
@@ -31,14 +31,14 @@ spec:
         # Runs to completion before the seeder starts — the plans table has to
         # exist before it can be written to.
         - name: migrate
-          image: junctera-api:latest
+          image: sapanjai-api:latest
           imagePullPolicy: Never
           command: ["/app/migrate", "up"]
           envFrom:
             - configMapRef:
-                name: junctera-config
+                name: sapanjai-config
             - secretRef:
-                name: junctera-secret
+                name: sapanjai-secret
           # DATABASE_URL is assembled from the postgres-credentials Secret
           # rather than duplicated — see api/deployment.yaml.
           env:
@@ -68,14 +68,14 @@ spec:
               cpu: 250m
       containers:
         - name: seed
-          image: junctera-api:latest
+          image: sapanjai-api:latest
           imagePullPolicy: Never
           command: ["/app/seed"]
           envFrom:
             - configMapRef:
-                name: junctera-config
+                name: sapanjai-config
             - secretRef:
-                name: junctera-secret
+                name: sapanjai-secret
           # Same derived DATABASE_URL as the init container above.
           env:
             - name: POSTGRES_USER

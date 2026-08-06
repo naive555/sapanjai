@@ -26,7 +26,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "junctera",
+  title: "Sapanjai",
   description: "Multi-tenant B2B SaaS platform dashboard",
 };
 

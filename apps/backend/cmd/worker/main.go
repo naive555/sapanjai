@@ -15,12 +15,12 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/junctera/backend/internal/config"
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/job/sessioncleanup"
-	applogger "github.com/junctera/backend/internal/shared/logger"
-	"github.com/junctera/backend/internal/worker"
+	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/job/sessioncleanup"
+	applogger "github.com/sapanjai/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/internal/worker"
 )
 
 func main() {

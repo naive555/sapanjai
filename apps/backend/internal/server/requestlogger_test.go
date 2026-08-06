@@ -10,7 +10,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/junctera/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // newLoggerHarness builds a minimal Echo wired the way New does — custom error

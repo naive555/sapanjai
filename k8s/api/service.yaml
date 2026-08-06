@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: junctera-api-service
-  namespace: junctera
+  name: sapanjai-api-service
+  namespace: sapanjai
 spec:
   selector:
-    app: junctera-api
+    app: sapanjai-api
   ports:
     - port: 3000
       targetPort: 3000

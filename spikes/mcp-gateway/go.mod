@@ -1,4 +1,4 @@
-module github.com/junctera/spikes/mcp-gateway
+module github.com/sapanjai/spikes/mcp-gateway
 
 go 1.26.5
 

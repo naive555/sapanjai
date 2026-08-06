@@ -26,7 +26,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-2">
             <span className="font-display text-base leading-none">
-              control<span className="text-signal">plane</span>
+              Sapan<span className="text-signal">jai</span>
             </span>
             <p className="text-sm text-muted-foreground">
               Tenants, roles, and an audit trail for all of it.

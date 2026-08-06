@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/junctera/backend/internal/config"
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	applogger "github.com/junctera/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	applogger "github.com/sapanjai/backend/internal/shared/logger"
 	"github.com/joho/godotenv"
 )
 

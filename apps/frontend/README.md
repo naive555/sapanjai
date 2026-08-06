@@ -1,6 +1,6 @@
-# junctera frontend
+# Sapanjai frontend
 
-Next.js (App Router) dashboard for the [junctera](../../README.md) B2B SaaS template — auth, organizations + switcher, members, RBAC roles, audit logs, subscription. TypeScript + Tailwind v4 + [shadcn/ui](https://ui.shadcn.com) (`base-nova` preset) + [TanStack Query](https://tanstack.com/query).
+Next.js (App Router) dashboard for the [Sapanjai (HeartBridge)](../../README.md) B2B SaaS template — auth, organizations + switcher, members, RBAC roles, audit logs, subscription. TypeScript + Tailwind v4 + [shadcn/ui](https://ui.shadcn.com) (`base-nova` preset) + [TanStack Query](https://tanstack.com/query).
 
 ## Running it
 
@@ -83,7 +83,7 @@ pnpm lint                 # eslint
 ## Docker
 
 ```bash
-docker build -t junctera-web:dev .
+docker build -t sapanjai-web:dev .
 ```
 
 Standalone output (`output: "standalone"` in `next.config.ts`). The runner sets `HOSTNAME=0.0.0.0` explicitly — without it the standalone server binds to the container's assigned network IP rather than all interfaces, which breaks the loopback-based `HEALTHCHECK` even though external port-forwarding still works. See the root `compose.yaml`'s `web` service for how this is wired into the full stack.

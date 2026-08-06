@@ -14,20 +14,20 @@ import (
 	"github.com/redis/go-redis/v9"
 	echoSwagger "github.com/swaggo/echo-swagger"
 
-	_ "github.com/junctera/backend/docs" // generated OpenAPI spec
-	"github.com/junctera/backend/internal/config"
-	"github.com/junctera/backend/internal/infra/database"
-	appredis "github.com/junctera/backend/internal/infra/redis"
-	appmw "github.com/junctera/backend/internal/middleware"
-	"github.com/junctera/backend/internal/module/auditlog"
-	"github.com/junctera/backend/internal/module/auth"
-	"github.com/junctera/backend/internal/module/health"
-	"github.com/junctera/backend/internal/module/organization"
-	"github.com/junctera/backend/internal/module/rbac"
-	"github.com/junctera/backend/internal/module/subscription"
-	"github.com/junctera/backend/internal/shared/apperror"
-	"github.com/junctera/backend/internal/shared/httpx"
-	"github.com/junctera/backend/internal/shared/logger"
+	_ "github.com/sapanjai/backend/docs" // generated OpenAPI spec
+	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/infra/database"
+	appredis "github.com/sapanjai/backend/internal/infra/redis"
+	appmw "github.com/sapanjai/backend/internal/middleware"
+	"github.com/sapanjai/backend/internal/module/auditlog"
+	"github.com/sapanjai/backend/internal/module/auth"
+	"github.com/sapanjai/backend/internal/module/health"
+	"github.com/sapanjai/backend/internal/module/organization"
+	"github.com/sapanjai/backend/internal/module/rbac"
+	"github.com/sapanjai/backend/internal/module/subscription"
+	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/httpx"
+	"github.com/sapanjai/backend/internal/shared/logger"
 )
 
 // New builds a fully configured Echo instance: middleware stack, custom

@@ -33,7 +33,7 @@ jobs:
       run:
         working-directory: apps/backend
     env:
-      DATABASE_URL: postgres://username:password@localhost:5432/junctera?sslmode=disable
+      DATABASE_URL: postgres://username:password@localhost:5432/sapanjai?sslmode=disable
       REDIS_URL: redis://localhost:6379
       JWT_ACCESS_SECRET: ci-access-secret-not-a-real-secret-32c
       JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-secret-32
@@ -44,7 +44,7 @@ jobs:
         env:
           POSTGRES_USER: username
           POSTGRES_PASSWORD: password
-          POSTGRES_DB: junctera
+          POSTGRES_DB: sapanjai
         ports:
           - 5432:5432
         options: >-
@@ -96,7 +96,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t junctera-api:ci ./apps/backend
+        run: docker build -t sapanjai-api:ci ./apps/backend
 
   frontend:
     name: Frontend

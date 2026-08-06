@@ -1,6 +1,6 @@
 basePath: /
 definitions:
-  github_com_junctera_backend_internal_shared_httpx.ErrorResponse:
+  github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse:
     properties:
       message:
         type: string
@@ -260,7 +260,7 @@ definitions:
 info:
   contact: {}
   description: Multi-tenant B2B SaaS platform API.
-  title: Junctera API
+  title: Sapanjai API
   version: 0.1.0
 paths:
   /audit-logs:
@@ -295,15 +295,15 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Query audit logs
@@ -330,15 +330,15 @@ paths:
         "401":
           description: INVALID_CREDENTIALS
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "429":
           description: TOO_MANY_ATTEMPTS
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       summary: Log in
       tags:
       - auth
@@ -367,7 +367,7 @@ paths:
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       summary: Log out
       tags:
       - auth
@@ -392,11 +392,11 @@ paths:
         "401":
           description: INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       summary: Rotate a refresh token
       tags:
       - auth
@@ -421,11 +421,11 @@ paths:
         "409":
           description: EMAIL_TAKEN
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       summary: Register a new user
       tags:
       - auth
@@ -478,11 +478,11 @@ paths:
         "409":
           description: SLUG_TAKEN
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create an organization
@@ -514,23 +514,23 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "404":
           description: USER_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "409":
           description: ALREADY_MEMBER
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Invite a member
@@ -556,11 +556,11 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List organization members
@@ -589,15 +589,15 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "404":
           description: MEMBER_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Remove a member
@@ -617,7 +617,7 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List subscription plans
@@ -649,19 +649,19 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "404":
           description: MEMBER_NOT_FOUND / ROLE_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Assign a role to a member
@@ -687,11 +687,11 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: List roles
@@ -722,15 +722,15 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create a role
@@ -767,19 +767,19 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "404":
           description: ROLE_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Replace a role's permissions
@@ -803,11 +803,11 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get the organization's subscription
@@ -839,15 +839,15 @@ paths:
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_junctera_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
       summary: Assign a subscription plan

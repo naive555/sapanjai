@@ -12,10 +12,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/gateway"
-	"github.com/junctera/spikes/mcp-gateway/internal/mockdata"
-	"github.com/junctera/spikes/mcp-gateway/internal/principal"
-	"github.com/junctera/spikes/mcp-gateway/internal/rbac"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/gateway"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/mockdata"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/principal"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/rbac"
 )
 
 // connect drives a real MCP handshake against a scoped server over the
@@ -296,7 +296,7 @@ func newHTTPServer(t *testing.T) *httptest.Server {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		p, err := principal.Resolve(tok)
 		if err != nil {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="junctera"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="sapanjai"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

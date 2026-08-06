@@ -3,14 +3,14 @@
 //
 // Because stdio has no request headers and no per-request identity, the
 // principal is fixed for the lifetime of the process and comes from the
-// environment (JUNCTERA_TOKEN). That is a genuine protocol constraint, not a
+// environment (SAPANJAI_TOKEN). That is a genuine protocol constraint, not a
 // shortcut — see docs/FINDINGS.md, "stdio cannot be multi-tenant".
 //
 // Register with Claude Code:
 //
-//	claude mcp add junctera-spike \
-//	  --env JUNCTERA_TOKEN=tok_reader_siam \
-//	  -- /abs/path/to/junctera-mcp-stdio
+//	claude mcp add sapanjai-spike \
+//	  --env SAPANJAI_TOKEN=tok_reader_siam \
+//	  -- /abs/path/to/sapanjai-mcp-stdio
 //
 // CRITICAL: nothing may be written to stdout except JSON-RPC frames. All
 // logging goes to stderr.
@@ -23,8 +23,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/gateway"
-	"github.com/junctera/spikes/mcp-gateway/internal/principal"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/gateway"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/principal"
 )
 
 func main() {
@@ -32,10 +32,10 @@ func main() {
 	// and the client drops the connection with an opaque parse error.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	token := os.Getenv("JUNCTERA_TOKEN")
+	token := os.Getenv("SAPANJAI_TOKEN")
 	if token == "" {
 		token = "tok_reader_siam"
-		logger.Warn("JUNCTERA_TOKEN unset, defaulting", slog.String("token", token))
+		logger.Warn("SAPANJAI_TOKEN unset, defaulting", slog.String("token", token))
 	}
 
 	p, err := principal.Resolve(token)
@@ -46,7 +46,7 @@ func main() {
 
 	server := gateway.BuildServer(p, logger)
 
-	logger.Info("junctera mcp spike starting on stdio",
+	logger.Info("sapanjai mcp spike starting on stdio",
 		slog.String("user", p.Email),
 		slog.String("org_id", p.OrgID),
 		slog.String("role", p.Role),

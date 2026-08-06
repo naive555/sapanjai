@@ -1,8 +1,8 @@
-# Junctera MCP gateway — Phase 0 spike findings
+# Sapanjai MCP gateway — Phase 0 spike findings
 
 **Date:** 2026-08-05 · **Verdict: feasible, no blockers.** The
 `modelcontextprotocol/go-sdk` is at a stable **v1.7.0**, the transport that
-Junctera needs (Streamable HTTP) supports per-request auth cleanly, and
+Sapanjai needs (Streamable HTTP) supports per-request auth cleanly, and
 controlplane's RBAC engine ports over without modification.
 
 Two design decisions need making before production code (§4, §5). Everything
@@ -45,18 +45,18 @@ Desktop block as unconfirmed until someone runs it.
 ### Claude Code, stdio (verified)
 
 ```bash
-go build -o bin/junctera-mcp-stdio.exe ./cmd/stdio
-claude mcp add junctera-spike --scope local \
-  --env JUNCTERA_TOKEN=tok_reader_siam \
-  -- /abs/path/to/bin/junctera-mcp-stdio.exe
-claude mcp list        # -> junctera-spike: ... - ✔ Connected
+go build -o bin/sapanjai-mcp-stdio.exe ./cmd/stdio
+claude mcp add sapanjai-spike --scope local \
+  --env SAPANJAI_TOKEN=tok_reader_siam \
+  -- /abs/path/to/bin/sapanjai-mcp-stdio.exe
+claude mcp list        # -> sapanjai-spike: ... - ✔ Connected
 ```
 
 ### Claude Code, Streamable HTTP (verified)
 
 ```bash
 go run ./cmd/httpsrv -addr 127.0.0.1:8090
-claude mcp add junctera-http --scope local --transport http \
+claude mcp add sapanjai-http --scope local --transport http \
   http://127.0.0.1:8090/mcp \
   --header "Authorization: Bearer tok_bookkeeper_siam"
 ```
@@ -73,9 +73,9 @@ argument after it. The URL must come *before* `--header`, or you get
 ```json
 {
   "mcpServers": {
-    "junctera": {
-      "command": "C:\\path\\to\\junctera-mcp-stdio.exe",
-      "env": { "JUNCTERA_TOKEN": "tok_reader_siam" }
+    "sapanjai": {
+      "command": "C:\\path\\to\\sapanjai-mcp-stdio.exe",
+      "env": { "SAPANJAI_TOKEN": "tok_reader_siam" }
     }
   }
 }
@@ -135,7 +135,7 @@ Three things fall out of this, all good:
 - permission changes take effect on the next call, not the next reconnect.
 
 Cost: no server→client requests (sampling, elicitation) and no resumable
-streams. Junctera needs neither today. `JSONResponse: true` additionally drops
+streams. Sapanjai needs neither today. `JSONResponse: true` additionally drops
 SSE framing for plain `application/json`, which is far easier to put behind a
 load balancer.
 

@@ -1,8 +1,8 @@
 # MCP Gateway — design notes
 
 > **Status: Phase 0 spike complete (2026-08-05). Verdict: feasible, no blockers. No production code written yet.**
-> The product pivot: junctera's platform core becomes a **Managed MCP Gateway** — per-org, permission-scoped [Model Context Protocol](https://modelcontextprotocol.io) endpoints that let AI agents (Claude, Cursor, …) reach customer data sources, starting with Thai accounting/ERP systems.
-> Everything below was validated by the spike in [`spikes/mcp-gateway/`](../spikes/mcp-gateway/) — its own Go module (`github.com/junctera/spikes/mcp-gateway`), not built or linted by `make`/CI. Its [`docs/FINDINGS.md`](../spikes/mcp-gateway/docs/FINDINGS.md) holds the full verification transcript and client-registration walkthrough; this document holds what the backend needs to know.
+> The product pivot: the Sapanjai (HeartBridge) platform core becomes a **Managed MCP Gateway** — per-org, permission-scoped [Model Context Protocol](https://modelcontextprotocol.io) endpoints that let AI agents (Claude, Cursor, …) reach customer data sources, starting with Thai accounting/ERP systems.
+> Everything below was validated by the spike in [`spikes/mcp-gateway/`](../spikes/mcp-gateway/) — its own Go module (`github.com/sapanjai/spikes/mcp-gateway`), not built or linted by `make`/CI. Its [`docs/FINDINGS.md`](../spikes/mcp-gateway/docs/FINDINGS.md) holds the full verification transcript and client-registration walkthrough; this document holds what the backend needs to know.
 
 ## The shape of it
 

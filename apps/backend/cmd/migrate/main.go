@@ -17,9 +17,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/junctera/backend/internal/config"
-	applogger "github.com/junctera/backend/internal/shared/logger"
-	"github.com/junctera/backend/migrations"
+	"github.com/sapanjai/backend/internal/config"
+	applogger "github.com/sapanjai/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/migrations"
 )
 
 func main() {

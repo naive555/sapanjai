@@ -1,4 +1,4 @@
-# Target Architecture — junctera monorepo (Go + Next.js)
+# Target Architecture — Sapanjai (HeartBridge) monorepo (Go + Next.js)
 
 > Stack decisions confirmed with the project owner on 2026-07-18:
 > **Backend: Go + Echo · sqlc + pgx · goose migrations. Frontend: Next.js (App Router) + shadcn/ui + Tailwind. Glue: root Makefile + docker-compose.**
@@ -21,7 +21,7 @@
 ## Monorepo layout
 
 ```
-junctera/
+sapanjai/
 ├── CLAUDE.md
 ├── Makefile                  # dev, test, lint, migrate, seed, sqlc, build, up/down
 ├── compose.yaml              # db, redis, api, web

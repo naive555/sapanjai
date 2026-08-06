@@ -1,6 +1,6 @@
 # spikes/mcp-gateway
 
-Phase 0 feasibility spike for the Junctera Managed MCP Gateway. No database, no
+Phase 0 feasibility spike for the Sapanjai Managed MCP Gateway. No database, no
 Redis, no network calls.
 
 Answers: can a Go MCP server expose per-org, permission-scoped tools to Claude,
@@ -10,7 +10,7 @@ and does the platform core's existing RBAC model carry over?
 [`docs/RBAC-MAPPING.md`](docs/RBAC-MAPPING.md). The distilled version that the
 backend needs lives in [`docs/05-mcp-gateway.md`](../../docs/05-mcp-gateway.md).
 
-> **This is a separate Go module** (`github.com/junctera/spikes/mcp-gateway`),
+> **This is a separate Go module** (`github.com/sapanjai/spikes/mcp-gateway`),
 > kept out of `apps/backend` on purpose. `make test`, `make lint` and CI are all
 > scoped to `apps/backend`, and Go skips nested modules in `./...`, so nothing
 > here is built or linted by the main pipeline. Run its commands from this
@@ -28,10 +28,10 @@ go run ./cmd/stdio                         # local dev / Claude Desktop shape
 ## Try it against Claude Code
 
 ```bash
-go build -o bin/junctera-mcp-stdio.exe ./cmd/stdio
-claude mcp add junctera-spike --scope local \
-  --env JUNCTERA_TOKEN=tok_reader_siam \
-  -- "$PWD/bin/junctera-mcp-stdio.exe"
+go build -o bin/sapanjai-mcp-stdio.exe ./cmd/stdio
+claude mcp add sapanjai-spike --scope local \
+  --env SAPANJAI_TOKEN=tok_reader_siam \
+  -- "$PWD/bin/sapanjai-mcp-stdio.exe"
 claude mcp list
 ```
 
@@ -40,7 +40,7 @@ Then ask Claude *"list my overdue invoices"* and *"create an invoice for
 `invoice:read` and not `invoice:write`. Swap to `tok_bookkeeper_siam`
 (`invoice:*`) and it succeeds.
 
-Remove with `claude mcp remove junctera-spike`.
+Remove with `claude mcp remove sapanjai-spike`.
 
 ## Demo principals
 

@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	appredis "github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/worker"
+	appredis "github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/worker"
 )
 
 // setupRedisLock skips unless REDIS_URL is set, and returns a RedisLock

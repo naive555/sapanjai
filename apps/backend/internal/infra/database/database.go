@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/junctera/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/infra/database/db"
 )
 
 // New creates a pgx connection pool for the given URL and verifies

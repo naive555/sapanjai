@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: junctera-db
+    container_name: sapanjai-db
     environment:
       # Defaults match .env.example, so the container stack comes up without a
       # .env file; setting those vars in .env overrides both this container and
@@ -9,7 +9,7 @@ services:
       # from silently diverging.
       POSTGRES_USER: ${DATABASE_USER:-username}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-password}
-      POSTGRES_DB: ${DATABASE_NAME:-junctera}
+      POSTGRES_DB: ${DATABASE_NAME:-sapanjai}
     ports:
       - "5432:5432"
     volumes:
@@ -23,7 +23,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: junctera-redis
+    container_name: sapanjai-redis
     ports:
       - "6379:6379"
     healthcheck:
@@ -36,7 +36,7 @@ services:
   api:
     build:
       context: ./apps/backend
-    container_name: junctera-api
+    container_name: sapanjai-api
     ports:
       - "3000:3000"
     env_file:
@@ -45,7 +45,7 @@ services:
       # Built from the same vars/defaults as the db service above so the
       # credentials can never drift apart. Not in .env.docker, because only
       # compose knows the `db` service hostname.
-      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-junctera}?sslmode=disable
+      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-sapanjai}?sslmode=disable
     depends_on:
       db:
         condition: service_healthy
@@ -56,7 +56,7 @@ services:
   worker:
     build:
       context: ./apps/backend
-    container_name: junctera-worker
+    container_name: sapanjai-worker
     entrypoint: ["/app/worker"]
     env_file:
       - .env.docker
@@ -66,7 +66,7 @@ services:
       WORKER_PORT: "3001"
       HEALTHCHECK_PORT: "3001"
       # Kept identical to the api service's — see the note there.
-      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-junctera}?sslmode=disable
+      DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-sapanjai}?sslmode=disable
     depends_on:
       db:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
   web:
     build:
       context: ./apps/frontend
-    container_name: junctera-web
+    container_name: sapanjai-web
     ports:
       - "4000:3000"
     environment:

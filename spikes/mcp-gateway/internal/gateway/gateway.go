@@ -24,14 +24,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/rbac"
-	"github.com/junctera/spikes/mcp-gateway/internal/tools"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/rbac"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/tools"
 )
 
 // ServerName and ServerVersion identify this spike to clients during the
 // initialize handshake.
 const (
-	ServerName    = "junctera-mcp-spike"
+	ServerName    = "sapanjai-mcp-spike"
 	ServerVersion = "0.1.0"
 )
 
@@ -44,7 +44,7 @@ func BuildServer(p *rbac.Principal, logger *slog.Logger) *mcp.Server {
 		Name:    ServerName,
 		Version: ServerVersion,
 	}, &mcp.ServerOptions{
-		Instructions: "Read and create invoices in the caller's Junctera organization. " +
+		Instructions: "Read and create invoices in the caller's Sapanjai organization. " +
 			"All amounts are THB and include Thai 7% VAT. The organization is fixed by the " +
 			"caller's credentials; there is no way to query another organization.",
 		Logger: logger,

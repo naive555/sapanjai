@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: junctera-worker
-  namespace: junctera
+  name: sapanjai-worker
+  namespace: sapanjai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: junctera-worker
+      app: sapanjai-worker
   template:
     metadata:
       labels:
-        app: junctera-worker
+        app: sapanjai-worker
     spec:
       containers:
-        - name: junctera-worker
-          image: junctera-api:latest
+        - name: sapanjai-worker
+          image: sapanjai-api:latest
           imagePullPolicy: Never
           command: ["/app/worker"]
           ports:
@@ -45,9 +45,9 @@ spec:
               value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/$(POSTGRES_DB)?sslmode=disable
           envFrom:
             - configMapRef:
-                name: junctera-config
+                name: sapanjai-config
             - secretRef:
-                name: junctera-secret
+                name: sapanjai-secret
           livenessProbe:
             httpGet:
               path: /health

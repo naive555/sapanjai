@@ -1,8 +1,8 @@
-// Command api boots the junctera backend: load config, connect to
+// Command api boots the sapanjai backend: load config, connect to
 // Redis and Postgres, start the HTTP server, and shut down gracefully on
 // SIGINT/SIGTERM.
 //
-// @title                      Junctera API
+// @title                      Sapanjai API
 // @version                    0.1.0
 // @description                Multi-tenant B2B SaaS platform API.
 // @BasePath                   /
@@ -22,11 +22,11 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/junctera/backend/internal/config"
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/server"
-	applogger "github.com/junctera/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/server"
+	applogger "github.com/sapanjai/backend/internal/shared/logger"
 )
 
 func main() {
@@ -61,7 +61,7 @@ func main() {
 
 	go func() {
 		addr := ":" + cfg.Port
-		log.Info("junctera-api listening", "addr", addr)
+		log.Info("sapanjai-api listening", "addr", addr)
 		if err := e.Start(addr); err != nil && err.Error() != "http: Server closed" {
 			log.Error("server error", "error", err)
 			os.Exit(1)

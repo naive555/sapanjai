@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-**junctera** — a multi-tenant B2B SaaS platform, **Go (backend) + Next.js (frontend)** in one monorepo. It starts from a platform-core template and business domains get added on top as new modules.
+**Sapanjai (HeartBridge)** — a multi-tenant B2B SaaS platform, **Go (backend) + Next.js (frontend)** in one monorepo. It starts from a platform-core template and business domains get added on top as new modules.
 
 **What the core already provides** (all live end-to-end):
 

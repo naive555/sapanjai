@@ -120,7 +120,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           className="font-display px-2.5 text-[0.9375rem] leading-none focus-visible:ring-2
             focus-visible:ring-ring/50 focus-visible:outline-none"
         >
-          control<span className="text-signal">plane</span>
+          Sapan<span className="text-signal">jai</span>
         </Link>
         <nav className="flex flex-col gap-6">
           <NavLinks />

@@ -9,11 +9,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/module/auditlog"
-	"github.com/junctera/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/module/auditlog"
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // Compile-time checks that the concrete infra types satisfy the narrow

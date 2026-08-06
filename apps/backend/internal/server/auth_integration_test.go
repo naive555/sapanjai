@@ -15,14 +15,14 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/junctera/backend/internal/config"
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	appredis "github.com/junctera/backend/internal/infra/redis"
-	"github.com/junctera/backend/internal/module/auth"
-	"github.com/junctera/backend/internal/server"
-	applogger "github.com/junctera/backend/internal/shared/logger"
-	"github.com/junctera/backend/migrations"
+	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	appredis "github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/module/auth"
+	"github.com/sapanjai/backend/internal/server"
+	applogger "github.com/sapanjai/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/migrations"
 )
 
 // setupTestServer skips unless DATABASE_URL and REDIS_URL are set, runs
@@ -57,7 +57,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *config.Config, *database.
 	}
 
 	cfg := &config.Config{
-		AppName:             "junctera-api-test",
+		AppName:             "sapanjai-api-test",
 		AppEnv:              "test",
 		Port:                "0",
 		LogLevel:            "error",

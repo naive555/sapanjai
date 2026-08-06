@@ -6,9 +6,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/junctera/backend/internal/infra/database/db"
-	appmw "github.com/junctera/backend/internal/middleware"
-	"github.com/junctera/backend/internal/shared/httpx"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	appmw "github.com/sapanjai/backend/internal/middleware"
+	"github.com/sapanjai/backend/internal/shared/httpx"
 )
 
 const defaultQueryLimit = 50

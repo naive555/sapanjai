@@ -1,4 +1,4 @@
-module github.com/junctera/backend
+module github.com/sapanjai/backend
 
 go 1.26.2
 

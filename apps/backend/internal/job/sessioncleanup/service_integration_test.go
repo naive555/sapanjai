@@ -13,10 +13,10 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/job/sessioncleanup"
-	"github.com/junctera/backend/migrations"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/job/sessioncleanup"
+	"github.com/sapanjai/backend/migrations"
 )
 
 // setupIntegrationStore skips unless DATABASE_URL is set, runs migrations

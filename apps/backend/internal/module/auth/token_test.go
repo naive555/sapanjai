@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/junctera/backend/internal/config"
+	"github.com/sapanjai/backend/internal/config"
 )
 
 func testTokenConfig() *config.Config {

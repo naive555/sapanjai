@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/junctera/backend/internal/infra/database"
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/module/auditlog"
-	"github.com/junctera/backend/internal/module/subscription"
-	"github.com/junctera/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/infra/database"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/module/auditlog"
+	"github.com/sapanjai/backend/internal/module/subscription"
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // Compile-time checks that the concrete infra/module types satisfy the

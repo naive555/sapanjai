@@ -48,7 +48,7 @@ type Config struct {
 // problem found so an operator can fix them all in one pass.
 func Load() (*Config, error) {
 	cfg := &Config{
-		AppName:  getEnv("APP_NAME", "junctera-api"),
+		AppName:  getEnv("APP_NAME", "sapanjai-api"),
 		AppEnv:   getEnv("APP_ENV", "development"),
 		Port:     getEnv("PORT", "3000"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),

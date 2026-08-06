@@ -1,19 +1,19 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: junctera-ingress
-  namespace: junctera
+  name: sapanjai-ingress
+  namespace: sapanjai
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   rules:
-    - host: junctera.local
+    - host: sapanjai.local
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: junctera-api-service
+                name: sapanjai-api-service
                 port:
                   number: 3000

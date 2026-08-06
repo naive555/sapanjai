@@ -14,8 +14,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/junctera/spikes/mcp-gateway/internal/mockdata"
-	"github.com/junctera/spikes/mcp-gateway/internal/rbac"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/mockdata"
+	"github.com/sapanjai/spikes/mcp-gateway/internal/rbac"
 )
 
 // ErrUnknownToken is returned for a token with no matching principal. The

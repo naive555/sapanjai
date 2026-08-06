@@ -1,33 +1,33 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: junctera-api
-  namespace: junctera
+  name: sapanjai-api
+  namespace: sapanjai
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: junctera-api
+      app: sapanjai-api
   template:
     metadata:
       labels:
-        app: junctera-api
+        app: sapanjai-api
     spec:
       containers:
-        - name: junctera-api
-          image: junctera-api:latest
+        - name: sapanjai-api
+          image: sapanjai-api:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: junctera-config
+                name: sapanjai-config
             - secretRef:
-                name: junctera-secret
+                name: sapanjai-secret
           # The database credentials are defined in exactly one place — the
           # postgres-credentials Secret, which also configures the Postgres
           # StatefulSet. DATABASE_URL is assembled from them here instead of
-          # being stored as a second copy in junctera-secret, so the two
+          # being stored as a second copy in sapanjai-secret, so the two
           # can never drift apart.
           #
           # Two constraints on $(VAR) expansion shape this block: it only

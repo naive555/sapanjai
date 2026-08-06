@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/worker"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/worker"
 )
 
 // ---- hand-mocked cleanupStore ----

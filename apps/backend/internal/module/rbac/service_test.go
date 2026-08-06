@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/junctera/backend/internal/infra/database/db"
-	"github.com/junctera/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // ---- hand-mocked rbacStore ----
