@@ -42,6 +42,10 @@ const (
 	RoleNotFound        = "ROLE_NOT_FOUND"
 	Forbidden           = "FORBIDDEN"
 	NotFound            = "NOT_FOUND"
+
+	ConnectorNameTaken     = "CONNECTOR_NAME_TAKEN"
+	InvalidConnectorType   = "INVALID_CONNECTOR_TYPE"
+	HealthCheckUnsupported = "HEALTH_CHECK_UNSUPPORTED"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -63,6 +67,10 @@ var Map = map[string]mapping{
 	RoleNotFound:        {404, "Role not found"},
 	Forbidden:           {403, "Insufficient permissions"},
 	NotFound:            {404, "Resource not found"},
+
+	ConnectorNameTaken:     {409, "Connector name already taken"},
+	InvalidConnectorType:   {422, "Unsupported connector type"},
+	HealthCheckUnsupported: {501, "Health check not supported for this connector type"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or
