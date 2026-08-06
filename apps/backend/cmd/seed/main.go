@@ -20,9 +20,9 @@ var defaultPlans = []struct {
 	name   string
 	limits map[string]int
 }{
-	{"free", map[string]int{"max_members": 5, "max_roles": 3}},
-	{"pro", map[string]int{"max_members": 50, "max_roles": 20}},
-	{"enterprise", map[string]int{"max_members": -1, "max_roles": -1}}, // -1 = unlimited
+	{"free", map[string]int{"max_members": 5, "max_roles": 3, "max_connectors": 2}},
+	{"pro", map[string]int{"max_members": 50, "max_roles": 20, "max_connectors": 10}},
+	{"enterprise", map[string]int{"max_members": -1, "max_roles": -1, "max_connectors": -1}}, // -1 = unlimited
 }
 
 func main() {

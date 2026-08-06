@@ -43,7 +43,7 @@ Env reaches every workload through `envFrom`, combining two objects:
 | Object | Kind | Holds |
 | --- | --- | --- |
 | `sapanjai-config` | ConfigMap | `APP_NAME`, `APP_ENV=production`, `LOG_LEVEL`, `PORT`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN` |
-| `sapanjai-secret` | Secret | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (min 32 chars each), `REDIS_URL` |
+| `sapanjai-secret` | Secret | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (min 32 chars each), `CONNECTOR_MASTER_KEY` (base64, exactly 32 bytes), `REDIS_URL` |
 | `postgres-credentials` | Secret | `username`, `password`, `dbname` |
 
 ### Where DATABASE_URL comes from
@@ -95,7 +95,8 @@ fleet-wide regardless of replica count.
 ```bash
 cp k8s/secret.example.yaml k8s/secret.yaml
 cp k8s/postgres/secret.example.yaml k8s/postgres/secret.yaml
-# edit both with real values (JWT secrets must be at least 32 characters)
+# edit both with real values (JWT secrets must be at least 32 characters;
+# CONNECTOR_MASTER_KEY must be base64 of exactly 32 bytes — openssl rand -base64 32)
 
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/ -R

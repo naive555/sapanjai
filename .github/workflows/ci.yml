@@ -37,6 +37,7 @@ jobs:
       REDIS_URL: redis://localhost:6379
       JWT_ACCESS_SECRET: ci-access-secret-not-a-real-secret-32c
       JWT_REFRESH_SECRET: ci-refresh-secret-not-a-real-secret-32
+      CONNECTOR_MASTER_KEY: LzGKj+dUmvqr8wBtNrcCnLi/kuMFyK2xl4lBwbeMqko=
 
     services:
       db:
