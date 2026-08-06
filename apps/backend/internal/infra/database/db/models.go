@@ -21,6 +21,18 @@ type AuditLog struct {
 	CreatedAt      time.Time   `json:"created_at"`
 }
 
+type Connector struct {
+	ID                uuid.UUID        `json:"id"`
+	OrganizationID    uuid.UUID        `json:"organization_id"`
+	Name              string           `json:"name"`
+	Type              string           `json:"type"`
+	EncryptedConfig   json.RawMessage  `json:"encrypted_config"`
+	Status            string           `json:"status"`
+	LastHealthCheckAt pgtype.Timestamp `json:"last_health_check_at"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
+}
+
 type MemberRole struct {
 	ID           uuid.UUID `json:"id"`
 	MembershipID uuid.UUID `json:"membership_id"`

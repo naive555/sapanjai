@@ -12,17 +12,22 @@ import (
 
 type Querier interface {
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
+	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (Membership, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreatePermission(ctx context.Context, arg CreatePermissionParams) error
 	CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteConnector(ctx context.Context, arg DeleteConnectorParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context, arg DeleteExpiredSessionsParams) (int64, error)
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
+	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
+	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
@@ -32,6 +37,7 @@ type Querier interface {
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error)
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationMembersRow, error)
 	ListPermissionActionsByUserOrg(ctx context.Context, arg ListPermissionActionsByUserOrgParams) ([]string, error)
@@ -42,6 +48,8 @@ type Querier interface {
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
+	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
 	UpsertOrgSubscription(ctx context.Context, arg UpsertOrgSubscriptionParams) error
 	UpsertPlan(ctx context.Context, arg UpsertPlanParams) error
 }
