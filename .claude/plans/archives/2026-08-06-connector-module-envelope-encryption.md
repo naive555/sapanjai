@@ -1,13 +1,35 @@
 # Connector module — generic skeleton with envelope-encrypted config — Implementation Plan
 
-> **Status: not started.** Target executor: **Sonnet**. This plan is
-> prescriptive — exact file paths, copy-paste-ready snippets, and verification
-> commands. Read `CLAUDE.md`, `docs/02-api-contract.md` (the contract you are
-> extending) and `docs/05-mcp-gateway.md` (why connectors exist) before
-> starting.
+> **Status: ✅ All 12 steps complete (2026-08-06).** All Definition-of-done
+> items verified live, not just read through: `go build`/`go vet` pass;
+> `go test ./...` passes both without infra (unit) and with real Postgres +
+> Redis (integration, `internal/server` in ~23s not cached); `make sqlc` and
+> `make swagger` produce clean regenerations; migration `00007` applies and
+> rolls back cleanly. A live smoke test against a running `cmd/api` proved the
+> full lifecycle end-to-end — create → 200 with no `config` key and
+> `status: "inactive"` → raw DB row shows only the envelope
+> (`{v,kid,dek,ct}`, no plaintext secret) → health-check → 501
+> `HEALTH_CHECK_UNSUPPORTED` → delete → 404 on re-fetch — and grepped the
+> server's log output to confirm no secret ever appears in it.
+> `TestIntegration_ConnectorsPermissionEnforcement` exercises real RBAC roles
+> (`connector:read`-only, `connector:*` wildcard, no role) rather than fakes.
+>
+> One deviation from the plan's assumption, not a bug: `db.Connector.LastHealthCheckAt`
+> came out of sqlc as `pgtype.Timestamp`, not `*time.Time` — a nullable
+> `pg_catalog.timestamp` column only gets the `time.Time` override when
+> `NOT NULL`, matching how `AuditLog.UserID`/`OrganizationID` already work as
+> `pgtype.UUID`. Handled with a `fromPgTimestamp` helper in `handler.go`
+> mirroring `auditlog.go`'s existing `fromPgUUID` pattern — the plan's
+> `Connector` field types were otherwise exactly as sqlc generated them.
 >
 > This is the **generic connector skeleton only**. No FlowAccount / PEAK /
-> Xero-specific code. No MCP tools. No frontend.
+> Xero-specific code. No MCP tools. No frontend. All three are correctly out
+> of scope and remain so — see `docs/05-mcp-gateway.md` Phase 2 for what's next.
+>
+> Target executor: **Sonnet**. This plan is prescriptive — exact file paths,
+> copy-paste-ready snippets, and verification commands. Read `CLAUDE.md`,
+> `docs/02-api-contract.md` (the contract extended) and `docs/05-mcp-gateway.md`
+> (why connectors exist) for context.
 
 ## Scope
 
@@ -1305,31 +1327,56 @@ absent.
 
 ## Definition of done
 
-- [ ] `go build ./...`, `go test ./...` (with and without infra), and
-      `make lint` all pass.
-- [ ] `make sqlc` and `make swagger` produce no uncommitted diff.
-- [ ] Migration `00007` applies and rolls back cleanly.
-- [ ] Every `/connectors` route is gated by the documented permission, verified
+- [x] `go build ./...` and `go test ./...` pass, both with and without infra
+      (`internal/server`'s integration suite ran against real Postgres +
+      Redis, ~23s not cached). `make lint` → `golangci-lint run` reports only
+      pre-existing `gofmt`/CRLF churn on files this plan never touched
+      (`cmd/healthcheck/main.go`, `internal/shared/httpx/{bind,response}.go`
+      on one run; `internal/config/config.go`, `internal/infra/database/database.go`,
+      `internal/infra/redis/auth.go` on another) — the known Windows
+      `core.autocrlf` gotcha already recorded in project memory, not a defect
+      in this change. No connector-module file was ever flagged.
+- [x] `make sqlc` and `make swagger` produce no uncommitted diff (verified:
+      regenerating both after the module was in place changed nothing beyond
+      what `git status` already showed as committed).
+- [x] Migration `00007` applies and rolls back cleanly (`go run ./cmd/migrate up`
+      then `down` then `up` again, verified against the live `sapanjai-db`
+      container, plus `\d connectors` inspected directly).
+- [x] Every `/connectors` route is gated by the documented permission, verified
       against real RBAC roles in the integration test — including the
-      `connector:*` wildcard and the no-role denial.
-- [ ] A connector's config is unreadable in the database, absent from every
-      response body, and absent from the logs.
-- [ ] Cross-org access to a connector id returns 404, on all four id-bearing
-      routes.
-- [ ] The health-check route exists, returns 501, and the `Checker` interface
-      is documented with the "no credentials in errors" contract.
-- [ ] Swapping `EnvKeyProvider` for a KMS provider requires changes in exactly
-      one place (`server.New`) — confirm by reading, no code needed.
-- [ ] `CONNECTOR_MASTER_KEY` is present in `.env.example`, `.env.docker`,
-      `k8s/secret.example.yaml`, `k8s/README.md` and CI, and its absence fails
-      boot with a clear message.
-- [ ] `docs/02`, `docs/03`, `docs/05`, `README.md` and `CLAUDE.md` updated;
+      `connector:*` wildcard and the no-role denial
+      (`TestIntegration_ConnectorsPermissionEnforcement`).
+- [x] A connector's config is unreadable in the database (raw-row assertion in
+      `TestIntegration_ConnectorsConfigEncryptedAtRest` plus a live `psql`
+      check during the smoke test), absent from every response body (asserted
+      in both `handler_test.go` and the integration CRUD test), and absent
+      from the logs (grepped live server stdout for the secret and host
+      values during the Step 9 smoke test — none found).
+- [x] Cross-org access to a connector id returns 404, on all four id-bearing
+      routes (`TestIntegration_ConnectorsCrossOrgIsolation`).
+- [x] The health-check route exists, returns 501, and the `Checker` interface
+      is documented with the "no credentials in errors" contract
+      (`health.go`'s doc comment on `Checker.Check`).
+- [x] Swapping `EnvKeyProvider` for a KMS provider requires changes in exactly
+      one place (`server.New`) — confirmed by reading: every other caller
+      depends on the `envelope.KeyProvider`/`sealer` interfaces, never the
+      concrete type.
+- [x] `CONNECTOR_MASTER_KEY` is present in `.env.example`, `.env.docker`,
+      `.env` (local, gitignored), `k8s/secret.example.yaml`, `k8s/README.md`
+      and CI, and its absence fails boot with a clear message aggregated
+      alongside every other missing required var (verified live via
+      `cmd/migrate`, which shares `config.Load`).
+- [x] `docs/02`, `docs/03`, `docs/05`, `README.md` and `CLAUDE.md` updated;
       the stale "no route uses RequirePermission" claims are gone from both
       `CLAUDE.md` and `middleware/auth.go`.
 
 ## Commit plan
 
-Small, buildable commits — each one compiles and passes tests.
+Small, buildable commits — each one compiles and passes tests. This is what
+was planned going in; a repo-configured hook auto-committed after most edit
+bursts, so the actual history is more granular (10 commits, `ffe3a4e`..`65746db`)
+than the 6 curated here — every one of them still builds and passes tests
+individually, so the finer grain cost nothing.
 
 1. `feat(db): add connectors table and queries` — migration 00007, `connectors.sql`, regenerated sqlc.
 2. `feat(crypto): add envelope encryption with swappable key provider` — `internal/shared/envelope/` + its tests.
