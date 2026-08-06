@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sapanjai/backend/internal/shared/envelope"
 )
 
 const minSecretLen = 32
@@ -34,6 +36,11 @@ type Config struct {
 	JWTRefreshSecret    string
 	JWTAccessExpiresIn  time.Duration
 	JWTRefreshExpiresIn time.Duration
+
+	// ConnectorMasterKey is the decoded master key wrapping every
+	// connector's data key (internal/shared/envelope). Decoded, not raw
+	// base64, so a malformed value fails at boot rather than on first use.
+	ConnectorMasterKey []byte
 
 	WorkerPort       string
 	WorkerJobTimeout time.Duration
@@ -76,6 +83,13 @@ func Load() (*Config, error) {
 	}
 	if len(cfg.JWTRefreshSecret) < minSecretLen {
 		problems = append(problems, fmt.Sprintf("JWT_REFRESH_SECRET must be at least %d characters", minSecretLen))
+	}
+
+	masterKey, err := envelope.DecodeMasterKey(os.Getenv("CONNECTOR_MASTER_KEY"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("CONNECTOR_MASTER_KEY must be a base64-encoded %d-byte key: %v", envelope.MasterKeyLen, err))
+	} else {
+		cfg.ConnectorMasterKey = masterKey
 	}
 
 	accessExp, err := time.ParseDuration(getEnv("JWT_ACCESS_EXPIRES_IN", "15m"))
