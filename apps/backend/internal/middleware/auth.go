@@ -153,9 +153,8 @@ func (g *Guards) RequireOrg() echo.MiddlewareFunc {
 // checked BEFORE membership is resolved, so a caller who fails the
 // permission check (including a non-member, since HasPermission returns
 // false for callers with no membership) gets 403 "Missing permission:
-// <action>", never "Not a member of this organization". No route in
-// docs/02-api-contract.md currently uses this guard — it exists for parity
-// with the source's macro and is exercised by unit tests only.
+// <action>", never "Not a member of this organization". First used in
+// production by the /connectors routes (internal/module/connector).
 func (g *Guards) RequirePermission(action string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

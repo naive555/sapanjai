@@ -21,18 +21,22 @@ import (
 	appmw "github.com/sapanjai/backend/internal/middleware"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/auth"
+	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/health"
 	"github.com/sapanjai/backend/internal/module/organization"
 	"github.com/sapanjai/backend/internal/module/rbac"
 	"github.com/sapanjai/backend/internal/module/subscription"
 	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/envelope"
 	"github.com/sapanjai/backend/internal/shared/httpx"
 	"github.com/sapanjai/backend/internal/shared/logger"
 )
 
 // New builds a fully configured Echo instance: middleware stack, custom
-// error handler, infra-backed module wiring, and route registration.
-func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Client) *echo.Echo {
+// error handler, infra-backed module wiring, and route registration. It
+// returns an error when wiring that depends on validated-but-fallible
+// configuration fails (today: the connector master key).
+func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Client) (*echo.Echo, error) {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -73,7 +77,17 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	subHandler.RegisterPlans(e.Group("/plans"), guards)
 	auditlog.NewHandler(auditSvc).Register(e.Group("/audit-logs"), guards)
 
-	return e
+	keyProvider, err := envelope.NewEnvKeyProvider(cfg.ConnectorMasterKey)
+	if err != nil {
+		return nil, fmt.Errorf("connector master key: %w", err)
+	}
+	// No Checkers are registered: per-type health probes land with their
+	// adapters (docs/05-mcp-gateway.md, Phase 2). Until then every
+	// health-check call resolves to 501 HEALTH_CHECK_UNSUPPORTED.
+	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(), log)
+	connector.NewHandler(connectorSvc).Register(e.Group("/connectors"), guards)
+
+	return e, nil
 }
 
 // newErrorHandler returns Echo's global error handler. It maps:

@@ -57,7 +57,11 @@ func main() {
 	}
 	log.Info("Database connected")
 
-	e := server.New(cfg, log, pool, rdb)
+	e, err := server.New(cfg, log, pool, rdb)
+	if err != nil {
+		log.Error("failed to build server", "error", err)
+		os.Exit(1)
+	}
 
 	go func() {
 		addr := ":" + cfg.Port

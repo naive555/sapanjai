@@ -4,6 +4,8 @@ import (
 	"regexp"
 
 	"github.com/go-playground/validator/v10"
+
+	"github.com/sapanjai/backend/internal/module/connector"
 )
 
 // requestValidator adapts go-playground/validator to echo.Validator, so
@@ -23,6 +25,12 @@ func newRequestValidator() *requestValidator {
 	// registered as "orgslug"; used by organization.CreateRequest.Slug.
 	_ = v.RegisterValidation("orgslug", func(fl validator.FieldLevel) bool {
 		return orgSlugPattern.MatchString(fl.Field().String())
+	})
+	// registered as "connectortype"; used by connector.CreateRequest.Type.
+	// The valid set lives in the connector module so adding a type is one
+	// constant there, not a tag edit here.
+	_ = v.RegisterValidation("connectortype", func(fl validator.FieldLevel) bool {
+		return connector.IsValidType(fl.Field().String())
 	})
 	return &requestValidator{v: v}
 }

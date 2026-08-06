@@ -21,6 +21,7 @@ import (
 	appredis "github.com/sapanjai/backend/internal/infra/redis"
 	"github.com/sapanjai/backend/internal/module/auth"
 	"github.com/sapanjai/backend/internal/server"
+	"github.com/sapanjai/backend/internal/shared/envelope"
 	applogger "github.com/sapanjai/backend/internal/shared/logger"
 	"github.com/sapanjai/backend/migrations"
 )
@@ -67,6 +68,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *config.Config, *database.
 		JWTRefreshSecret:    "integration-refresh-secret-bbbbbbbbbbbbbbbbbb",
 		JWTAccessExpiresIn:  15 * time.Minute,
 		JWTRefreshExpiresIn: 7 * 24 * time.Hour,
+		ConnectorMasterKey:  bytes.Repeat([]byte{7}, envelope.MasterKeyLen), // fixed test key
 	}
 
 	pool, err := database.New(ctx, databaseURL)
@@ -84,7 +86,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, *config.Config, *database.
 
 	log := applogger.New(cfg.AppEnv, cfg.LogLevel)
 
-	e := server.New(cfg, log, pool, rdb)
+	e, err := server.New(cfg, log, pool, rdb)
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
