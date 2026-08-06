@@ -68,7 +68,7 @@ No process manager runs backend + frontend (+ worker) together — `make api`, `
 
 ## Environment
 
-Copy `.env.example` → `.env`. Required: `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`/`JWT_REFRESH_SECRET` (min 32 chars), `CONNECTOR_MASTER_KEY` (base64, exactly 32 bytes — `openssl rand -base64 32`), `JWT_ACCESS_EXPIRES_IN` (duration, default 15m), `JWT_REFRESH_EXPIRES_IN` (**seconds**, default 604800), `PORT` (3000), `LOG_LEVEL`, `APP_ENV`. Worker-only, all optional with defaults: `WORKER_PORT` (3001), `WORKER_JOB_TIMEOUT` (5m), `SESSION_CLEANUP_INTERVAL` (1h), `SESSION_CLEANUP_RETENTION` (720h/30d), `SESSION_CLEANUP_BATCH_SIZE` (1000).
+Copy `.env.example` → `.env` (and `.env.docker.example` → `.env.docker` for the containerized stack — both targets are git-ignored, only the templates are tracked). Required: `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`/`JWT_REFRESH_SECRET` (min 32 chars), `CONNECTOR_MASTER_KEY` (base64, exactly 32 bytes — `openssl rand -base64 32`), `JWT_ACCESS_EXPIRES_IN` (duration, default 15m), `JWT_REFRESH_EXPIRES_IN` (**seconds**, default 604800), `PORT` (3000), `LOG_LEVEL`, `APP_ENV`. Worker-only, all optional with defaults: `WORKER_PORT` (3001), `WORKER_JOB_TIMEOUT` (5m), `SESSION_CLEANUP_INTERVAL` (1h), `SESSION_CLEANUP_RETENTION` (720h/30d), `SESSION_CLEANUP_BATCH_SIZE` (1000).
 
 ## Testing expectations
 

@@ -1,5 +1,6 @@
-# Env
+# Env — the .example templates alongside these are the tracked ones
 .env
+.env.docker
 .env.local
 .env.*.local
 

@@ -313,7 +313,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `SESSION_CLEANUP_RETENTION` | `720h` | how long a revoked-but-unexpired session survives (30d) |
 | `SESSION_CLEANUP_BATCH_SIZE` | `1000` | rows per `DELETE` statement |
 
-`DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname. `.env.docker` supplies the rest of the env for the containerized api/worker — throwaway dev placeholders, and it deliberately omits `DATABASE_URL` for the same reason.
+`DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname. `.env.docker` supplies the rest of the env for the containerized api/worker — throwaway dev placeholders, and it deliberately omits `DATABASE_URL` for the same reason. Like `.env`, it is git-ignored and created from a tracked template: `cp .env.docker.example .env.docker` before your first `docker compose up`.
 
 Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (max 5 / 15 min), `worker:lock:<jobName>` (TTL ≈ job interval).
 
@@ -329,6 +329,7 @@ docker build -t sapanjai-api:dev ./apps/backend
 docker build -t sapanjai-web:dev ./apps/frontend
 
 # full stack: db, redis, api, worker, web — web waits on api's HEALTHCHECK
+cp .env.docker.example .env.docker   # once per clone; .env.docker is git-ignored
 docker compose up -d --build
 open http://localhost:4000
 ```
