@@ -18,7 +18,8 @@ import (
 // ActionOrgMemberRemoved, ActionRoleCreated, and ActionRoleAssigned are
 // defined for parity but never written, matching the source and
 // docs/02-api-contract.md ("defined but only the first four are currently
-// written").
+// written"). The three Connector* actions below them are outside that
+// parity set — added with the connector module, and all three are written.
 const (
 	ActionUserLogin        = "user.login"
 	ActionUserRegister     = "user.register"
@@ -27,6 +28,10 @@ const (
 	ActionOrgMemberRemoved = "org.member.removed"
 	ActionRoleCreated      = "role.created"
 	ActionRoleAssigned     = "role.assigned"
+
+	ActionConnectorCreated = "connector.created"
+	ActionConnectorUpdated = "connector.updated"
+	ActionConnectorDeleted = "connector.deleted"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is
