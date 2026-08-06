@@ -1,6 +1,11 @@
 # MCP Gateway — design notes
 
-> **Status: Phase 0 spike complete (2026-08-05). Verdict: feasible, no blockers. No production code written yet.**
+> **Status: Phase 0 spike complete (2026-08-05). Verdict: feasible, no blockers.**
+> **The generic connector skeleton has since landed** (`internal/module/connector`,
+> `internal/shared/envelope`): the `connectors` table, RBAC-gated CRUD behind
+> `connector:{read,write,delete}`, envelope-encrypted `config`, and an empty
+> `Checker` registry (health-check stubbed at 501). See "Phase 2" below — the
+> gateway/MCP-protocol pieces (Phase 1) are still no production code.
 > The product pivot: the Sapanjai (HeartBridge) platform core becomes a **Managed MCP Gateway** — per-org, permission-scoped [Model Context Protocol](https://modelcontextprotocol.io) endpoints that let AI agents (Claude, Cursor, …) reach customer data sources, starting with Thai accounting/ERP systems.
 > Everything below was validated by the spike in [`spikes/mcp-gateway/`](../spikes/mcp-gateway/) — its own Go module (`github.com/sapanjai/spikes/mcp-gateway`), not built or linted by `make`/CI. Its [`docs/FINDINGS.md`](../spikes/mcp-gateway/docs/FINDINGS.md) holds the full verification transcript and client-registration walkthrough; this document holds what the backend needs to know.
 
@@ -175,9 +180,12 @@ rather than the spike's port. Audit actions. Seed the new permission actions.
 Still serving mock data — the goal is the authorization path in production shape.
 
 ### Phase 2 — First real connector
-One Thai accounting system end-to-end. This is where the actual work is: per-tenant
-upstream authentication, storing those upstream credentials safely, mapping their
-data model onto stable tool schemas, and absorbing their rate limits and outages.
+One Thai accounting system end-to-end. The generic skeleton (schema, envelope
+encryption, RBAC-gated CRUD, the `Checker` interface) is done — see the status
+note above — so what's left is the actual work: per-tenant upstream
+authentication, mapping the accounting system's data model onto stable tool
+schemas, implementing a `connector.Checker` for it, and absorbing its rate
+limits and outages.
 
 ### Phase 3 — Self-service
 Frontend pages to mint/revoke MCP keys, pick which tools a key exposes, and view

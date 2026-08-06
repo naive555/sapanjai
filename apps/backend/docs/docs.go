@@ -62,26 +62,26 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/internal_module_auditlog.LogResponse"
+                                "$ref": "#/definitions/LogResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -106,7 +106,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.LoginRequest"
+                            "$ref": "#/definitions/LoginRequest"
                         }
                     }
                 ],
@@ -114,25 +114,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
+                            "$ref": "#/definitions/TokenResponse"
                         }
                     },
                     "401": {
                         "description": "INVALID_CREDENTIALS",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "429": {
                         "description": "TOO_MANY_ATTEMPTS",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -163,7 +163,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.RefreshRequest"
+                            "$ref": "#/definitions/RefreshRequest"
                         }
                     }
                 ],
@@ -171,13 +171,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.LogoutResponse"
+                            "$ref": "#/definitions/LogoutResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -202,7 +202,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.RefreshRequest"
+                            "$ref": "#/definitions/RefreshRequest"
                         }
                     }
                 ],
@@ -210,19 +210,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
+                            "$ref": "#/definitions/TokenResponse"
                         }
                     },
                     "401": {
                         "description": "INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -247,7 +247,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.RegisterRequest"
+                            "$ref": "#/definitions/RegisterRequest"
                         }
                     }
                 ],
@@ -255,19 +255,386 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
+                            "$ref": "#/definitions/TokenResponse"
                         }
                     },
                     "409": {
                         "description": "EMAIL_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/connectors": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "List connectors",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/ConnectorResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:read",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Create a connector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Connector payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ConnectorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:write / LIMIT_EXCEEDED",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "CONNECTOR_NAME_TAKEN",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed / INVALID_CONNECTOR_TYPE",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/connectors/{connectorId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Get a connector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "connectorId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ConnectorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:read",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Delete a connector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "connectorId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:delete",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Update a connector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "connectorId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Connector patch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/UpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ConnectorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:write",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/connectors/{connectorId}/health-check": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Check a connector's health",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "connectorId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ConnectorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: connector:write",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "HEALTH_CHECK_UNSUPPORTED",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -313,7 +680,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/internal_module_organization.MembershipResponse"
+                                "$ref": "#/definitions/MembershipResponse"
                             }
                         }
                     }
@@ -342,7 +709,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_organization.CreateRequest"
+                            "$ref": "#/definitions/CreateRequest"
                         }
                     }
                 ],
@@ -350,19 +717,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_organization.OrgResponse"
+                            "$ref": "#/definitions/OrgResponse"
                         }
                     },
                     "409": {
                         "description": "SLUG_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -399,7 +766,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_organization.InviteRequest"
+                            "$ref": "#/definitions/InviteRequest"
                         }
                     }
                 ],
@@ -407,37 +774,37 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_organization.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "USER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "ALREADY_MEMBER",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -472,20 +839,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/internal_module_organization.MemberResponse"
+                                "$ref": "#/definitions/MemberResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -525,25 +892,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_organization.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -569,14 +936,14 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/internal_module_subscription.PlanResponse"
+                                "$ref": "#/definitions/PlanResponse"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -613,7 +980,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.AssignRoleRequest"
+                            "$ref": "#/definitions/AssignRoleRequest"
                         }
                     }
                 ],
@@ -621,31 +988,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND / ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -680,20 +1047,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/internal_module_rbac.RoleResponse"
+                                "$ref": "#/definitions/RoleResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -728,7 +1095,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.CreateRoleRequest"
+                            "$ref": "#/definitions/CreateRoleRequest"
                         }
                     }
                 ],
@@ -736,25 +1103,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.RoleRowResponse"
+                            "$ref": "#/definitions/RoleRowResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -798,7 +1165,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.UpdatePermissionsRequest"
+                            "$ref": "#/definitions/UpdatePermissionsRequest"
                         }
                     }
                 ],
@@ -806,31 +1173,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_rbac.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -863,19 +1230,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_subscription.SubscriptionResponse"
+                            "$ref": "#/definitions/SubscriptionResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -912,7 +1279,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_module_subscription.AssignRequest"
+                            "$ref": "#/definitions/AssignRequest"
                         }
                     }
                 ],
@@ -920,25 +1287,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_module_subscription.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -946,7 +1313,100 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse": {
+        "AssignRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "planId": {
+                    "type": "string"
+                }
+            }
+        },
+        "AssignRoleRequest": {
+            "type": "object",
+            "required": [
+                "roleId",
+                "userId"
+            ],
+            "properties": {
+                "roleId": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "ConnectorResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastHealthCheckAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "CreateRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "slug"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "slug": {
+                    "type": "string",
+                    "minLength": 2
+                }
+            }
+        },
+        "CreateRoleRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "ErrorResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -954,7 +1414,26 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_auditlog.LogResponse": {
+        "InviteRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "role"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "admin",
+                        "member"
+                    ]
+                }
+            }
+        },
+        "LogResponse": {
             "type": "object",
             "properties": {
                 "action": {
@@ -980,7 +1459,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_auth.LoginRequest": {
+        "LoginRequest": {
             "type": "object",
             "required": [
                 "email",
@@ -995,7 +1474,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_auth.LogoutResponse": {
+        "LogoutResponse": {
             "type": "object",
             "properties": {
                 "success": {
@@ -1003,85 +1482,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_auth.RefreshRequest": {
-            "type": "object",
-            "required": [
-                "refreshToken"
-            ],
-            "properties": {
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_module_auth.RegisterRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "password"
-            ],
-            "properties": {
-                "displayName": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string",
-                    "minLength": 8
-                }
-            }
-        },
-        "internal_module_auth.TokenResponse": {
-            "type": "object",
-            "properties": {
-                "accessToken": {
-                    "type": "string"
-                },
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_module_organization.CreateRequest": {
-            "type": "object",
-            "required": [
-                "name",
-                "slug"
-            ],
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "slug": {
-                    "type": "string",
-                    "minLength": 2
-                }
-            }
-        },
-        "internal_module_organization.InviteRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "role"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "member"
-                    ]
-                }
-            }
-        },
-        "internal_module_organization.MemberResponse": {
+        "MemberResponse": {
             "type": "object",
             "properties": {
                 "displayName": {
@@ -1101,7 +1502,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_organization.MembershipResponse": {
+        "MembershipResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1111,7 +1512,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "organization": {
-                    "$ref": "#/definitions/internal_module_organization.OrgResponse"
+                    "$ref": "#/definitions/OrgResponse"
                 },
                 "organizationId": {
                     "type": "string"
@@ -1124,7 +1525,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_organization.OrgResponse": {
+        "OrgResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1144,51 +1545,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_organization.SuccessResponse": {
-            "type": "object",
-            "properties": {
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "internal_module_rbac.AssignRoleRequest": {
-            "type": "object",
-            "required": [
-                "roleId",
-                "userId"
-            ],
-            "properties": {
-                "roleId": {
-                    "type": "string"
-                },
-                "userId": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_module_rbac.CreateRoleRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "internal_module_rbac.PermissionResponse": {
+        "PermissionResponse": {
             "type": "object",
             "properties": {
                 "action": {
@@ -1205,83 +1562,7 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_rbac.RoleResponse": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "organizationId": {
-                    "type": "string"
-                },
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/internal_module_rbac.PermissionResponse"
-                    }
-                }
-            }
-        },
-        "internal_module_rbac.RoleRowResponse": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "organizationId": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_module_rbac.SuccessResponse": {
-            "type": "object",
-            "properties": {
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "internal_module_rbac.UpdatePermissionsRequest": {
-            "type": "object",
-            "properties": {
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "internal_module_subscription.AssignRequest": {
-            "type": "object",
-            "required": [
-                "planId"
-            ],
-            "properties": {
-                "planId": {
-                    "type": "string"
-                }
-            }
-        },
-        "internal_module_subscription.PlanResponse": {
+        "PlanResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1301,7 +1582,84 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_subscription.SubscriptionResponse": {
+        "RefreshRequest": {
+            "type": "object",
+            "required": [
+                "refreshToken"
+            ],
+            "properties": {
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "RegisterRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 8
+                }
+            }
+        },
+        "RoleResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/PermissionResponse"
+                    }
+                }
+            }
+        },
+        "RoleRowResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                }
+            }
+        },
+        "SubscriptionResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1320,7 +1678,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "plan": {
-                    "$ref": "#/definitions/internal_module_subscription.PlanResponse"
+                    "$ref": "#/definitions/PlanResponse"
                 },
                 "planId": {
                     "type": "string"
@@ -1330,11 +1688,55 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_subscription.SuccessResponse": {
+        "SuccessResponse": {
             "type": "object",
             "properties": {
                 "success": {
                     "type": "boolean"
+                }
+            }
+        },
+        "TokenResponse": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "UpdatePermissionsRequest": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "UpdateRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "inactive",
+                        "error"
+                    ]
                 }
             }
         }

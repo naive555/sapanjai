@@ -59,11 +59,12 @@ apps/backend/
     server/        Echo wiring: middleware stack, error handler, route mounting
     middleware/    RequireAuth, RequireOrg, RequirePermission, request ID
     module/        one package per domain: auth, organization, rbac,
-                   auditlog, subscription, health
+                   auditlog, subscription, connector, health
     worker/        the Job interface + interval scheduler with Redis locking
     job/           registered jobs (sessioncleanup)
     infra/         database (pgx pool + sqlc-generated queries), redis
-    shared/        apperror, httpx, logger (incl. log redaction)
+    shared/        apperror, httpx, logger (incl. log redaction), envelope
+                   (envelope encryption for connector config)
   migrations/      goose SQL migrations, embedded into the binaries
   docs/            generated OpenAPI spec (committed)
 
@@ -145,6 +146,12 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `POST /subscription/assign` | org | Upsert the org's plan |
 | `GET /plans` | auth | All plans (global, not org-scoped) |
 | `GET /audit-logs` | org | Org's logs, newest first — `userId`, `action`, `limit` (1–100, default 50) |
+| `POST /connectors` | perm:`connector:write` | Create a connector; `config` is sealed with envelope encryption |
+| `GET /connectors` | perm:`connector:read` | Org's connectors, oldest first |
+| `GET /connectors/:connectorId` | perm:`connector:read` | One connector (never includes `config`) |
+| `PATCH /connectors/:connectorId` | perm:`connector:write` | Partial update; a supplied `config` is re-sealed |
+| `DELETE /connectors/:connectorId` | perm:`connector:delete` | Remove a connector |
+| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | Probe the upstream — `501` until a real adapter is registered |
 
 ¹ reads `Authorization` if present, but does not require it.
 
@@ -297,6 +304,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` | `username` / `password` / `sapanjai` | also configure the compose `db` container and the container-side `DATABASE_URL` |
 | `REDIS_URL` | — | **required** |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | **required**, min 32 chars each |
+| `CONNECTOR_MASTER_KEY` | — | **required**, base64 of exactly 32 bytes — generate with `openssl rand -base64 32`. Wraps every connector's envelope-encryption data key; the value in `.env.example` is a working dev key, not a placeholder to leave in place for anything real. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |

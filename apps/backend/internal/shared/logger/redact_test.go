@@ -14,6 +14,7 @@ func TestIsSensitive(t *testing.T) {
 		"password", "newPassword", "new_password",
 		"token", "accessToken", "access_token", "refreshToken", "refresh-token",
 		"cookie", "Set-Cookie", "secret", "apiKey", "api_key",
+		"encryptedConfig", "encrypted_config", "connectorConfig", "masterKey", "master_key", "dataKey",
 	}
 	for _, key := range sensitive {
 		if !IsSensitive(key) {

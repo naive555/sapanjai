@@ -17,7 +17,7 @@
 - **public** — no auth
 - **auth** — valid, non-blacklisted access JWT
 - **org** — auth + `x-organization-id` header + caller is a member of that org
-- **perm:`<action>`** — org + RBAC permission check
+- **perm:`<action>`** — org + RBAC permission check. First used by the Connectors routes below: the permission check runs *before* membership is resolved, so a non-member gets 403 `Missing permission: <action>`, never `Not a member of this organization`.
 
 ### Error responses
 
@@ -50,6 +50,9 @@ Service error map (service throws code → HTTP response):
 | `ROLE_NOT_FOUND`        | 404    | Role not found                                   |
 | `FORBIDDEN`             | 403    | Insufficient permissions                         |
 | `NOT_FOUND`             | 404    | Resource not found                               |
+| `CONNECTOR_NAME_TAKEN`  | 409    | Connector name already taken                     |
+| `INVALID_CONNECTOR_TYPE`| 422    | Unsupported connector type                       |
+| `HEALTH_CHECK_UNSUPPORTED` | 501 | Health check not supported for this connector type |
 | (unknown)               | 500    | Internal server error                            |
 
 Global: unknown route → 404 `Route not found`; body validation failure → 422 `Validation failed`; malformed JSON → 400 `Invalid request body`.
@@ -100,7 +103,7 @@ Permission semantics: `*` grants everything; exact `resource:verb` match; `resou
 | ----------- | ----- | ----- | -------- |
 | `GET /audit-logs` | org | `userId?`, `action?`, `limit?` (1–100, default 50) | Org's logs, newest first. |
 
-Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written).
+Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below).
 
 ### Subscription (`/subscription`)
 
@@ -109,6 +112,33 @@ Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invi
 | `GET /subscription` | org | — | Org's subscription incl. plan (nullable if none). |
 | `POST /subscription/assign` | org | `{ planId }` | Upsert org subscription. ⚠️ Source has no admin check — see quirks in 01-source-analysis.md. |
 | `GET /plans` | auth | — | All available plans: `[{ id, name, limits, createdAt }]`. **Not in the source app** — added in Phase 6 so the frontend subscription page can populate a plan picker (plan ids are server-generated UUIDs with no fixed/knowable value otherwise). Global, not org-scoped, so `auth` not `org` guard. |
+
+### Connectors (`/connectors`)
+
+Org-scoped upstream connections (DB creds, API keys, ...) for the Managed MCP
+Gateway product (`docs/05-mcp-gateway.md`). This is the **generic skeleton
+only** — no per-type adapter logic yet; every connector uses `type: "generic"`
+until a real integration (FlowAccount, PEAK, ...) lands.
+
+| Method/Path | Guard | Body | Behavior |
+| ----------- | ----- | ---- | -------- |
+| `POST /connectors` | perm:`connector:write` | `{ name: 1-100, type: "generic", config: object }` | Seals `config` at rest with envelope encryption (fresh AES-256 data key per row, wrapped by `CONNECTOR_MASTER_KEY`) and stores it; new rows start `status: "inactive"`. Enforces the `max_connectors` plan limit. 409 `CONNECTOR_NAME_TAKEN` (unique per org); 422 `Validation failed` for an unrecognized `type` (the request validator rejects it before the service's own `INVALID_CONNECTOR_TYPE` check is ever reached). |
+| `GET /connectors` | perm:`connector:read` | — | Org's connectors, oldest first. |
+| `GET /connectors/:connectorId` | perm:`connector:read` | — | One connector. 404 `NOT_FOUND` for another org's id — indistinguishable from a nonexistent one. |
+| `PATCH /connectors/:connectorId` | perm:`connector:write` | `{ name?, status?, config? }` | Partial update; unset fields are left unchanged. A supplied `config` is re-sealed under a brand-new data key (the old ciphertext is overwritten, not versioned). `type` is immutable — there is no `type` field to patch. |
+| `DELETE /connectors/:connectorId` | perm:`connector:delete` | — | `{ success: true }`. 404 `NOT_FOUND` if already gone or not this org's. |
+| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | — | Probes the upstream and records `status`/`lastHealthCheckAt`. **No per-type checker is registered yet**, so this always returns 501 `HEALTH_CHECK_UNSUPPORTED` and leaves the row untouched. Gated by `connector:write` (not `:read`) because it writes to the row. |
+
+Response shape (all endpoints except `DELETE`, which returns `{ success: true }`):
+
+```
+{ id, organizationId, name, type, status, lastHealthCheckAt, createdAt, updatedAt }
+```
+
+**`config` is never returned by any endpoint, ever** — not on create, not on
+update, not on get. The decrypted config exists only transiently inside the
+service (to seal it on write, or to hand it to a health-check `Checker`); no
+DTO or log line carries it.
 
 ### API docs
 
@@ -123,6 +153,7 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | `DATABASE_URL` | — | `postgres://user:pass@host:5432/sapanjai` |
 | `REDIS_URL` | — | required at boot |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | min 32 chars |
+| `CONNECTOR_MASTER_KEY` | — | base64, exactly 32 bytes (`openssl rand -base64 32`); master key wrapping every connector's envelope-encryption data key |
 | `JWT_ACCESS_EXPIRES_IN` | 15m | duration string |
 | `JWT_REFRESH_EXPIRES_IN` | 604800 | **seconds** (integer) |
 | `LOG_LEVEL` | info | fatal/error/warn/info/debug/trace |

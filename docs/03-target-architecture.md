@@ -40,6 +40,7 @@ sapanjai/
 │   │   │   │   ├── rbac/
 │   │   │   │   ├── auditlog/
 │   │   │   │   ├── subscription/
+│   │   │   │   ├── connector/    #   org-scoped connections, envelope-encrypted config
 │   │   │   │   └── health/
 │   │   │   ├── worker/           # Job interface, registry, interval scheduler, redis lock
 │   │   │   ├── job/               # job implementations (sessioncleanup, …)
@@ -49,6 +50,7 @@ sapanjai/
 │   │   │   │   └── redis/        # client + RedisAuth helpers (blacklist, login attempts)
 │   │   │   └── shared/
 │   │   │       ├── apperror/     # typed error codes → HTTP mapping (replaces ERROR_MAP)
+│   │   │       ├── envelope/     # envelope encryption: KeyProvider seam + AES-256-GCM
 │   │   │       └── logger/       # slog setup, redaction
 │   │   ├── migrations/           # goose SQL (ported from drizzle migrations)
 │   │   ├── sqlc.yaml
@@ -75,6 +77,7 @@ sapanjai/
 - **Graceful shutdown**: `signal.NotifyContext` + `echo.Shutdown(ctx)` + pool/redis close — mirrors source SIGTERM/SIGINT handling.
 - **Config**: fail fast at boot if required env is missing (source only checked REDIS_URL; improve to validate all, incl. 32-char secret minimum).
 - **Background jobs**: `cmd/worker` is a separate process sharing the API's config/store/logger. Jobs implement `worker.Job` (`Name`/`Interval`/`Run`) and are registered in `cmd/worker/main.go`. The scheduler adds per-run timeouts, panic recovery, structured logging, and a Redis lock (`worker:lock:<job>`) held for ~one interval so a multi-replica fleet runs each job about once per interval. Failed runs release the lock immediately so the next tick retries. The guarantee jobs may rely on is therefore **at most one run per interval fleet-wide**, not merely "no two runs at once" — chosen so non-idempotent future jobs (mail, billing, webhooks) are safe to register without re-deriving the coordination story. Job outcomes are exposed on the worker's internal `GET /health` (`WORKER_PORT`, default 3001) — not part of the public API contract.
+- **Secrets at rest**: `internal/shared/envelope` implements envelope encryption — each connector's `config` is sealed under a fresh AES-256-GCM data key, and that data key is wrapped by a `KeyProvider` (today: `EnvKeyProvider`, holding `CONNECTOR_MASTER_KEY`). Swapping to a KMS/Vault-backed provider is a one-line change in `server.New` — no caller of `envelope.Encryptor` changes. The organization id is passed as AES-GCM additional authenticated data, so a row's ciphertext fails to open under any other tenant's id, layered on top of (not instead of) every query's `WHERE organization_id = $N` scoping.
 
 ## Frontend scope (initial dashboard)
 
@@ -173,3 +176,23 @@ Not treated as deviations (kept bug-for-bug): duplicate actions in a `permission
    kept for `SESSION_CLEANUP_RETENTION` (default 30d) rather than deleted
    on revocation, so refresh-token reuse detection still recognises a
    replayed token as a family reuse instead of an unknown session.
+
+## Deviations resolved during Phase 8 (connector module)
+
+The connector module (`docs/05-mcp-gateway.md`'s generic skeleton) is new —
+there is no source app to diverge from — but it made three decisions worth
+recording, since a later phase adding a real adapter needs them held constant:
+
+1. **`type` and `status` are plain `text` columns, not a Postgres enum.**
+   Extending the type set is then one Go constant (`connector.Type`) and no
+   migration — a `CHECK` constraint or enum would need both every time an
+   integration (FlowAccount, PEAK, ...) is added.
+2. **`server.New` gained an `error` return.** Building the connector's
+   `envelope.KeyProvider` from `CONNECTOR_MASTER_KEY` is fallible wiring;
+   swallowing that failure was judged worse than the two call-site edits
+   (`cmd/api/main.go`, the integration test's `setupTestServer`) it cost.
+3. **`RequirePermission` went from unit-tested-only to production traffic.**
+   It existed since Phase 4 for RBAC parity but no route used it; the
+   Connectors routes are its first callers. No middleware code changed —
+   only the "no route uses this" claims in `CLAUDE.md` and the guard's own
+   doc comment, which were now false.

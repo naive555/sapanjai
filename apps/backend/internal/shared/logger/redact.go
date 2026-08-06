@@ -21,16 +21,20 @@ const Censor = "[REDACTED]"
 // "refresh_token", "refreshToken", "REFRESH-TOKEN" all collapse to the same
 // entry.
 var sensitiveKeys = map[string]struct{}{
-	"authorization": {},
-	"cookie":        {},
-	"setcookie":     {},
-	"password":      {},
-	"newpassword":   {},
-	"token":         {},
-	"accesstoken":   {},
-	"refreshtoken":  {},
-	"secret":        {},
-	"apikey":        {},
+	"authorization":   {},
+	"cookie":          {},
+	"setcookie":       {},
+	"password":        {},
+	"newpassword":     {},
+	"token":           {},
+	"accesstoken":     {},
+	"refreshtoken":    {},
+	"secret":          {},
+	"apikey":          {},
+	"connectorconfig": {},
+	"encryptedconfig": {},
+	"masterkey":       {},
+	"datakey":         {},
 }
 
 // IsSensitive reports whether a log attribute or query parameter with this key

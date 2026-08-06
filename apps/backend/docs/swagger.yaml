@@ -1,11 +1,86 @@
 basePath: /
 definitions:
-  github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse:
+  AssignRequest:
+    properties:
+      planId:
+        type: string
+    required:
+    - planId
+    type: object
+  AssignRoleRequest:
+    properties:
+      roleId:
+        type: string
+      userId:
+        type: string
+    required:
+    - roleId
+    - userId
+    type: object
+  ConnectorResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      lastHealthCheckAt:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      status:
+        type: string
+      type:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  CreateRequest:
+    properties:
+      name:
+        minLength: 1
+        type: string
+      slug:
+        minLength: 2
+        type: string
+    required:
+    - name
+    - slug
+    type: object
+  CreateRoleRequest:
+    properties:
+      description:
+        type: string
+      name:
+        minLength: 1
+        type: string
+      permissions:
+        items:
+          type: string
+        type: array
+    required:
+    - name
+    type: object
+  ErrorResponse:
     properties:
       message:
         type: string
     type: object
-  internal_module_auditlog.LogResponse:
+  InviteRequest:
+    properties:
+      email:
+        type: string
+      role:
+        enum:
+        - admin
+        - member
+        type: string
+    required:
+    - email
+    - role
+    type: object
+  LogResponse:
     properties:
       action:
         type: string
@@ -22,7 +97,7 @@ definitions:
       userId:
         type: string
     type: object
-  internal_module_auth.LoginRequest:
+  LoginRequest:
     properties:
       email:
         type: string
@@ -32,19 +107,84 @@ definitions:
     - email
     - password
     type: object
-  internal_module_auth.LogoutResponse:
+  LogoutResponse:
     properties:
       success:
         type: boolean
     type: object
-  internal_module_auth.RefreshRequest:
+  MemberResponse:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      joinedAt:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  MembershipResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      organization:
+        $ref: '#/definitions/OrgResponse'
+      organizationId:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  OrgResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  PermissionResponse:
+    properties:
+      action:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      roleId:
+        type: string
+    type: object
+  PlanResponse:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      limits:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+    type: object
+  RefreshRequest:
     properties:
       refreshToken:
         type: string
     required:
     - refreshToken
     type: object
-  internal_module_auth.RegisterRequest:
+  RegisterRequest:
     properties:
       displayName:
         minLength: 1
@@ -58,120 +198,7 @@ definitions:
     - email
     - password
     type: object
-  internal_module_auth.TokenResponse:
-    properties:
-      accessToken:
-        type: string
-      refreshToken:
-        type: string
-    type: object
-  internal_module_organization.CreateRequest:
-    properties:
-      name:
-        minLength: 1
-        type: string
-      slug:
-        minLength: 2
-        type: string
-    required:
-    - name
-    - slug
-    type: object
-  internal_module_organization.InviteRequest:
-    properties:
-      email:
-        type: string
-      role:
-        enum:
-        - admin
-        - member
-        type: string
-    required:
-    - email
-    - role
-    type: object
-  internal_module_organization.MemberResponse:
-    properties:
-      displayName:
-        type: string
-      email:
-        type: string
-      joinedAt:
-        type: string
-      role:
-        type: string
-      userId:
-        type: string
-    type: object
-  internal_module_organization.MembershipResponse:
-    properties:
-      createdAt:
-        type: string
-      id:
-        type: string
-      organization:
-        $ref: '#/definitions/internal_module_organization.OrgResponse'
-      organizationId:
-        type: string
-      role:
-        type: string
-      userId:
-        type: string
-    type: object
-  internal_module_organization.OrgResponse:
-    properties:
-      createdAt:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      slug:
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  internal_module_organization.SuccessResponse:
-    properties:
-      success:
-        type: boolean
-    type: object
-  internal_module_rbac.AssignRoleRequest:
-    properties:
-      roleId:
-        type: string
-      userId:
-        type: string
-    required:
-    - roleId
-    - userId
-    type: object
-  internal_module_rbac.CreateRoleRequest:
-    properties:
-      description:
-        type: string
-      name:
-        minLength: 1
-        type: string
-      permissions:
-        items:
-          type: string
-        type: array
-    required:
-    - name
-    type: object
-  internal_module_rbac.PermissionResponse:
-    properties:
-      action:
-        type: string
-      createdAt:
-        type: string
-      id:
-        type: string
-      roleId:
-        type: string
-    type: object
-  internal_module_rbac.RoleResponse:
+  RoleResponse:
     properties:
       createdAt:
         type: string
@@ -185,10 +212,10 @@ definitions:
         type: string
       permissions:
         items:
-          $ref: '#/definitions/internal_module_rbac.PermissionResponse'
+          $ref: '#/definitions/PermissionResponse'
         type: array
     type: object
-  internal_module_rbac.RoleRowResponse:
+  RoleRowResponse:
     properties:
       createdAt:
         type: string
@@ -201,39 +228,7 @@ definitions:
       organizationId:
         type: string
     type: object
-  internal_module_rbac.SuccessResponse:
-    properties:
-      success:
-        type: boolean
-    type: object
-  internal_module_rbac.UpdatePermissionsRequest:
-    properties:
-      permissions:
-        items:
-          type: string
-        type: array
-    type: object
-  internal_module_subscription.AssignRequest:
-    properties:
-      planId:
-        type: string
-    required:
-    - planId
-    type: object
-  internal_module_subscription.PlanResponse:
-    properties:
-      createdAt:
-        type: string
-      id:
-        type: string
-      limits:
-        items:
-          type: integer
-        type: array
-      name:
-        type: string
-    type: object
-  internal_module_subscription.SubscriptionResponse:
+  SubscriptionResponse:
     properties:
       createdAt:
         type: string
@@ -246,16 +241,46 @@ definitions:
       organizationId:
         type: string
       plan:
-        $ref: '#/definitions/internal_module_subscription.PlanResponse'
+        $ref: '#/definitions/PlanResponse'
       planId:
         type: string
       updatedAt:
         type: string
     type: object
-  internal_module_subscription.SuccessResponse:
+  SuccessResponse:
     properties:
       success:
         type: boolean
+    type: object
+  TokenResponse:
+    properties:
+      accessToken:
+        type: string
+      refreshToken:
+        type: string
+    type: object
+  UpdatePermissionsRequest:
+    properties:
+      permissions:
+        items:
+          type: string
+        type: array
+    type: object
+  UpdateRequest:
+    properties:
+      config:
+        additionalProperties: {}
+        type: object
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+      status:
+        enum:
+        - active
+        - inactive
+        - error
+        type: string
     type: object
 info:
   contact: {}
@@ -290,20 +315,20 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/internal_module_auditlog.LogResponse'
+              $ref: '#/definitions/LogResponse'
             type: array
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Query audit logs
@@ -319,26 +344,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_auth.LoginRequest'
+          $ref: '#/definitions/LoginRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_auth.TokenResponse'
+            $ref: '#/definitions/TokenResponse'
         "401":
           description: INVALID_CREDENTIALS
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "429":
           description: TOO_MANY_ATTEMPTS
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Log in
       tags:
       - auth
@@ -356,18 +381,18 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_auth.RefreshRequest'
+          $ref: '#/definitions/RefreshRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_auth.LogoutResponse'
+            $ref: '#/definitions/LogoutResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Log out
       tags:
       - auth
@@ -381,22 +406,22 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_auth.RefreshRequest'
+          $ref: '#/definitions/RefreshRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_auth.TokenResponse'
+            $ref: '#/definitions/TokenResponse'
         "401":
           description: INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Rotate a refresh token
       tags:
       - auth
@@ -410,25 +435,260 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_auth.RegisterRequest'
+          $ref: '#/definitions/RegisterRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_auth.TokenResponse'
+            $ref: '#/definitions/TokenResponse'
         "409":
           description: EMAIL_TAKEN
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Register a new user
       tags:
       - auth
+  /connectors:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/ConnectorResponse'
+            type: array
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:read'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List connectors
+      tags:
+      - connectors
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Connector payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ConnectorResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:write / LIMIT_EXCEEDED'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: CONNECTOR_NAME_TAKEN
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Validation failed / INVALID_CONNECTOR_TYPE
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a connector
+      tags:
+      - connectors
+  /connectors/{connectorId}:
+    delete:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Connector ID
+        in: path
+        name: connectorId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:delete'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a connector
+      tags:
+      - connectors
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Connector ID
+        in: path
+        name: connectorId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ConnectorResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:read'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a connector
+      tags:
+      - connectors
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Connector ID
+        in: path
+        name: connectorId
+        required: true
+        type: string
+      - description: Connector patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ConnectorResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:write'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a connector
+      tags:
+      - connectors
+  /connectors/{connectorId}/health-check:
+    post:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Connector ID
+        in: path
+        name: connectorId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ConnectorResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: connector:write'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: NOT_FOUND
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "501":
+          description: HEALTH_CHECK_UNSUPPORTED
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Check a connector's health
+      tags:
+      - connectors
   /health:
     get:
       produces:
@@ -451,7 +711,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/internal_module_organization.MembershipResponse'
+              $ref: '#/definitions/MembershipResponse'
             type: array
       security:
       - BearerAuth: []
@@ -467,22 +727,22 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_organization.CreateRequest'
+          $ref: '#/definitions/CreateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_organization.OrgResponse'
+            $ref: '#/definitions/OrgResponse'
         "409":
           description: SLUG_TAKEN
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create an organization
@@ -503,34 +763,34 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_organization.InviteRequest'
+          $ref: '#/definitions/InviteRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_organization.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "404":
           description: USER_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "409":
           description: ALREADY_MEMBER
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Invite a member
@@ -551,16 +811,16 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/internal_module_organization.MemberResponse'
+              $ref: '#/definitions/MemberResponse'
             type: array
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: List organization members
@@ -585,19 +845,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_organization.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "404":
           description: MEMBER_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Remove a member
@@ -612,12 +872,12 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/internal_module_subscription.PlanResponse'
+              $ref: '#/definitions/PlanResponse'
             type: array
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: List subscription plans
@@ -638,30 +898,30 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_rbac.AssignRoleRequest'
+          $ref: '#/definitions/AssignRoleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_rbac.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "404":
           description: MEMBER_NOT_FOUND / ROLE_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Assign a role to a member
@@ -682,16 +942,16 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/internal_module_rbac.RoleResponse'
+              $ref: '#/definitions/RoleResponse'
             type: array
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: List roles
@@ -711,26 +971,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_rbac.CreateRoleRequest'
+          $ref: '#/definitions/CreateRoleRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_rbac.RoleRowResponse'
+            $ref: '#/definitions/RoleRowResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Create a role
@@ -756,30 +1016,30 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_rbac.UpdatePermissionsRequest'
+          $ref: '#/definitions/UpdatePermissionsRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_rbac.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "404":
           description: ROLE_NOT_FOUND
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Replace a role's permissions
@@ -799,15 +1059,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_subscription.SubscriptionResponse'
+            $ref: '#/definitions/SubscriptionResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Get the organization's subscription
@@ -828,26 +1088,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_module_subscription.AssignRequest'
+          $ref: '#/definitions/AssignRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_module_subscription.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Missing x-organization-id header
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "403":
           description: Not a member of this organization
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "422":
           description: Validation failed
           schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       security:
       - BearerAuth: []
       summary: Assign a subscription plan
