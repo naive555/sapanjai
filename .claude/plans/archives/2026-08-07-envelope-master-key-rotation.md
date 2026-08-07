@@ -1,4 +1,48 @@
-# Plan — Envelope Encryption / Key Management: master-key rotation support
+# Envelope Encryption / Key Management — master-key rotation support — Implementation Plan
+
+> **Status: ✅ All 8 steps complete (2026-08-07).** Verified live, not just
+> read through: `go build ./...` and `go vet ./...` are clean; `go test ./...`
+> passes across the whole backend, including the 12 new envelope tests
+> (21/21 in `internal/shared/envelope`) plus the unrelated `connector` and
+> `server` integration suites (unaffected — confirmed by re-running them, not
+> assumed). `golangci-lint run` reports only pre-existing gofmt/CRLF churn on
+> files this plan never touched — a repo-wide Windows `core.autocrlf`
+> artifact already recorded in project memory — and none of the files this
+> plan edited are ever in that flagged set (checked directly with
+> `gofmt -l`, not inferred from one lint run).
+>
+> What shipped: `KeyProvider.Unwrap` is now key-ID aware (new
+> `ErrUnknownKeyID` sentinel); `EnvKeyProvider` holds a primary master key
+> plus zero or more retired keys via `NewEnvKeyProvider(primary, retired...)`,
+> loaded from the new `CONNECTOR_MASTER_KEY_PREVIOUS` env var through the new
+> `DecodeMasterKeys` helper; `Encryptor.OpenAndRotate` implements
+> rotate-on-read — it opens under whichever key the envelope's `kid` names
+> and, only when that key is no longer primary, also returns a freshly
+> re-sealed replacement for the caller to persist — with plain `Open` reduced
+> to a thin wrapper over it. `config.go` and `server.go` wire the retired
+> keys through end to end. `.env.example`, `.env.docker.example`,
+> `README.md`, and `CLAUDE.md` all document the new variable and the
+> rotation procedure (promote → retire → deploy → let rotate-on-read migrate
+> rows → drop the retired key).
+>
+> One correction made along the way, not a deviation: `.env.example`'s
+> comment claimed rotating `CONNECTOR_MASTER_KEY` "makes stored connector
+> configs unreadable." That was true before this plan and is false after —
+> the stale comment was rewritten rather than left in place.
+>
+> Explicitly out of scope, exactly as the plan's own "Out of scope" section
+> called it: `connector.Service` still calls plain `Open`, not
+> `OpenAndRotate` — wiring it to persist the rotated blob needs a narrow
+> sqlc query touching only `encrypted_config` (the existing `UpdateConnector`
+> also rewrites `name`/`status` and bumps `updated_at`, which a silent
+> re-encryption must not do) and requires the `sqlc` CLI. That caller-side
+> wiring, and a later bulk re-encryption `worker.Job` sweep, remain the next
+> tasks — nothing in this change makes rotation active for connector rows yet,
+> only possible.
+>
+> Target executor: **Sonnet**.
+
+---
 
 **Target package:** `apps/backend/internal/shared/envelope`
 **Status of the requirement:** mostly already built. This plan closes the one real gap.
@@ -207,3 +251,12 @@ task after that.
   decrypting silently (`TestEncryptor_Open_WrongAADFails`) — and the single blob is
   what makes the `v`/`kid` tagging this plan depends on possible. Renaming would churn
   the connector service and the DB column shape for no gain. Keep `Seal`/`Open`.
+
+## Commit history
+
+Target executor was Sonnet, so intermediate commits followed a repo-configured
+auto-commit hook after each edit burst rather than a hand-curated commit plan
+(matching the pattern already noted in the connector-module plan's archive).
+The work landed as `dfbc86e` (this plan) and `e169153` (`feat(envelope):
+implement master key rotation support with previous key handling`) — every
+step builds and passes tests individually.
