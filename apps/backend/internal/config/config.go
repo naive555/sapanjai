@@ -42,6 +42,12 @@ type Config struct {
 	// base64, so a malformed value fails at boot rather than on first use.
 	ConnectorMasterKey []byte
 
+	// ConnectorMasterKeysRetired are previous master keys kept for
+	// decrypt-only use, so rows sealed before a CONNECTOR_MASTER_KEY
+	// rotation still open under rotate-on-read. Newest-retired first;
+	// optional and nil when no rotation has happened yet.
+	ConnectorMasterKeysRetired [][]byte
+
 	WorkerPort       string
 	WorkerJobTimeout time.Duration
 
@@ -90,6 +96,13 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("CONNECTOR_MASTER_KEY must be a base64-encoded %d-byte key: %v", envelope.MasterKeyLen, err))
 	} else {
 		cfg.ConnectorMasterKey = masterKey
+	}
+
+	retiredKeys, err := envelope.DecodeMasterKeys(os.Getenv("CONNECTOR_MASTER_KEY_PREVIOUS"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("CONNECTOR_MASTER_KEY_PREVIOUS must be a comma-separated list of base64-encoded %d-byte keys: %v", envelope.MasterKeyLen, err))
+	} else {
+		cfg.ConnectorMasterKeysRetired = retiredKeys
 	}
 
 	accessExp, err := time.ParseDuration(getEnv("JWT_ACCESS_EXPIRES_IN", "15m"))

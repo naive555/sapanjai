@@ -305,6 +305,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `REDIS_URL` | — | **required** |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | **required**, min 32 chars each |
 | `CONNECTOR_MASTER_KEY` | — | **required**, base64 of exactly 32 bytes — generate with `openssl rand -base64 32`. Wraps every connector's envelope-encryption data key; the value in `.env.example` is a working dev key, not a placeholder to leave in place for anything real. |
+| `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |

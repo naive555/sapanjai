@@ -3,8 +3,11 @@ package envelope
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -269,4 +272,253 @@ func TestNewEnvKeyProvider_RejectsWrongLength(t *testing.T) {
 	if _, err := NewEnvKeyProvider(bytes.Repeat([]byte{1}, 16)); err != ErrMasterKeyLength {
 		t.Fatalf("NewEnvKeyProvider(16 bytes) error = %v, want ErrMasterKeyLength", err)
 	}
+}
+
+func TestNewEnvKeyProvider_RejectsWrongLengthRetiredKey(t *testing.T) {
+	if _, err := NewEnvKeyProvider(testKey(1), bytes.Repeat([]byte{2}, 16)); err != ErrMasterKeyLength {
+		t.Fatalf("NewEnvKeyProvider(bad retired key) error = %v, want ErrMasterKeyLength", err)
+	}
+}
+
+func TestEnvKeyProvider_Unwrap_RetiredKey(t *testing.T) {
+	ctx := context.Background()
+
+	sealerProvider, err := NewEnvKeyProvider(testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(sealer): %v", err)
+	}
+	wrapped, err := sealerProvider.Wrap(ctx, bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+
+	openerProvider, err := NewEnvKeyProvider(testKey(2), testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(opener): %v", err)
+	}
+	dataKey, err := openerProvider.Unwrap(ctx, sealerProvider.KeyID(), wrapped)
+	if err != nil {
+		t.Fatalf("Unwrap(retired key) error = %v, want nil", err)
+	}
+	if len(dataKey) != 32 {
+		t.Fatalf("Unwrap(retired key) len = %d, want 32", len(dataKey))
+	}
+}
+
+func TestEnvKeyProvider_Unwrap_UnknownKeyIDFails(t *testing.T) {
+	ctx := context.Background()
+
+	provider, err := NewEnvKeyProvider(testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider: %v", err)
+	}
+	if _, err := provider.Unwrap(ctx, "env:deadbeef", []byte("irrelevant")); err != ErrUnknownKeyID {
+		t.Fatalf("Unwrap(unknown key id) error = %v, want ErrUnknownKeyID", err)
+	}
+}
+
+func TestEnvKeyProvider_Wrap_AlwaysUsesPrimary(t *testing.T) {
+	ctx := context.Background()
+
+	provider, err := NewEnvKeyProvider(testKey(2), testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider: %v", err)
+	}
+	if provider.KeyID() != "env:"+hexPrefix(testKey(2)) {
+		t.Fatalf("KeyID() = %q, want primary key's id", provider.KeyID())
+	}
+
+	e := New(provider)
+	aad := []byte("org")
+	raw, err := e.Seal(ctx, []byte("secret"), aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	var s sealed
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if s.KeyID != provider.KeyID() {
+		t.Fatalf("sealed kid = %q, want primary key id %q", s.KeyID, provider.KeyID())
+	}
+
+	// A provider that only holds the retired key cannot open a fresh seal.
+	retiredOnly, err := NewEnvKeyProvider(testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(retired-only): %v", err)
+	}
+	if _, err := New(retiredOnly).Open(ctx, raw, aad); err != ErrOpen {
+		t.Fatalf("Open with retired-only provider error = %v, want ErrOpen", err)
+	}
+}
+
+func TestEncryptor_OpenAndRotate_AfterKeyRotation(t *testing.T) {
+	ctx := context.Background()
+	aad := []byte("org")
+	plaintext := []byte("secret-value")
+
+	oldProvider, err := NewEnvKeyProvider(testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(old): %v", err)
+	}
+	raw, err := New(oldProvider).Seal(ctx, plaintext, aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	newProvider, err := NewEnvKeyProvider(testKey(2), testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(new): %v", err)
+	}
+	e := New(newProvider)
+
+	got, rotated, err := e.OpenAndRotate(ctx, raw, aad)
+	if err != nil {
+		t.Fatalf("OpenAndRotate: %v", err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Fatalf("OpenAndRotate() plaintext = %q, want %q", got, plaintext)
+	}
+	if rotated == nil {
+		t.Fatal("OpenAndRotate() rotated = nil, want a re-sealed envelope")
+	}
+
+	var s sealed
+	if err := json.Unmarshal(rotated, &s); err != nil {
+		t.Fatalf("unmarshal rotated: %v", err)
+	}
+	if s.KeyID != newProvider.KeyID() {
+		t.Fatalf("rotated kid = %q, want new primary key id %q", s.KeyID, newProvider.KeyID())
+	}
+
+	// The rotated envelope opens under a provider that only knows the new
+	// key, and no longer opens under a provider that only knows the old one.
+	newOnly, err := NewEnvKeyProvider(testKey(2))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(new-only): %v", err)
+	}
+	if _, err := New(newOnly).Open(ctx, rotated, aad); err != nil {
+		t.Fatalf("Open(rotated) with new-only provider error = %v, want nil", err)
+	}
+	if _, err := New(oldProvider).Open(ctx, rotated, aad); err != ErrOpen {
+		t.Fatalf("Open(rotated) with old-only provider error = %v, want ErrOpen", err)
+	}
+}
+
+func TestEncryptor_OpenAndRotate_NoRotationWhenCurrent(t *testing.T) {
+	e := newTestEncryptor(t, 1)
+	ctx := context.Background()
+	aad := []byte("org")
+
+	raw, err := e.Seal(ctx, []byte("secret-value"), aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	_, rotated, err := e.OpenAndRotate(ctx, raw, aad)
+	if err != nil {
+		t.Fatalf("OpenAndRotate: %v", err)
+	}
+	if rotated != nil {
+		t.Fatalf("OpenAndRotate() rotated = %v, want nil (already sealed under current key)", rotated)
+	}
+}
+
+func TestEncryptor_OpenAndRotate_RetiredKeyDroppedFails(t *testing.T) {
+	ctx := context.Background()
+	aad := []byte("org")
+
+	oldProvider, err := NewEnvKeyProvider(testKey(1))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(old): %v", err)
+	}
+	raw, err := New(oldProvider).Seal(ctx, []byte("secret-value"), aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The old key was dropped instead of retired — rotation happened too
+	// early relative to this row being read.
+	newOnly, err := NewEnvKeyProvider(testKey(2))
+	if err != nil {
+		t.Fatalf("NewEnvKeyProvider(new-only): %v", err)
+	}
+	if _, _, err := New(newOnly).OpenAndRotate(ctx, raw, aad); err != ErrOpen {
+		t.Fatalf("OpenAndRotate(dropped key) error = %v, want ErrOpen", err)
+	}
+}
+
+func TestEncryptor_Open_TamperedWrappedDataKeyFails(t *testing.T) {
+	e := newTestEncryptor(t, 1)
+	ctx := context.Background()
+	aad := []byte("org")
+
+	raw, err := e.Seal(ctx, []byte("secret-value"), aad)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	var s sealed
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(s.DataKey) == 0 {
+		t.Fatal("empty wrapped data key, cannot tamper")
+	}
+	s.DataKey[len(s.DataKey)-1] ^= 0xFF
+
+	tampered, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal tampered: %v", err)
+	}
+
+	if _, err := e.Open(ctx, tampered, aad); err != ErrOpen {
+		t.Fatalf("Open(tampered dek) error = %v, want ErrOpen", err)
+	}
+}
+
+func TestDecodeMasterKeys(t *testing.T) {
+	valid1 := base64.StdEncoding.EncodeToString(testKey(1))
+	valid2 := base64.StdEncoding.EncodeToString(testKey(2))
+
+	tests := []struct {
+		name    string
+		encoded string
+		wantLen int
+		wantErr bool
+	}{
+		{"empty string", "", 0, false},
+		{"whitespace only", "   ", 0, false},
+		{"one valid key", valid1, 1, false},
+		{"two valid keys", valid1 + "," + valid2, 2, false},
+		{"whitespace and trailing comma tolerated", " " + valid1 + " , " + valid2 + " ,", 2, false},
+		{"one bad entry", valid1 + ",not-valid-base64!!!", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keys, err := DecodeMasterKeys(tt.encoded)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("DecodeMasterKeys(%q) error = nil, want error", tt.encoded)
+				}
+				if !strings.Contains(err.Error(), "entry 2") {
+					t.Fatalf("DecodeMasterKeys(%q) error = %v, want it to name entry 2", tt.encoded, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DecodeMasterKeys(%q) error = %v, want nil", tt.encoded, err)
+			}
+			if len(keys) != tt.wantLen {
+				t.Fatalf("DecodeMasterKeys(%q) len = %d, want %d", tt.encoded, len(keys), tt.wantLen)
+			}
+		})
+	}
+}
+
+func hexPrefix(key []byte) string {
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:4])
 }

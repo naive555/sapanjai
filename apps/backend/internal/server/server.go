@@ -77,7 +77,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	subHandler.RegisterPlans(e.Group("/plans"), guards)
 	auditlog.NewHandler(auditSvc).Register(e.Group("/audit-logs"), guards)
 
-	keyProvider, err := envelope.NewEnvKeyProvider(cfg.ConnectorMasterKey)
+	keyProvider, err := envelope.NewEnvKeyProvider(cfg.ConnectorMasterKey, cfg.ConnectorMasterKeysRetired...)
 	if err != nil {
 		return nil, fmt.Errorf("connector master key: %w", err)
 	}

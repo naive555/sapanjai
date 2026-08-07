@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // MasterKeyLen is the required decoded length of CONNECTOR_MASTER_KEY.
@@ -29,33 +30,86 @@ func DecodeMasterKey(encoded string) ([]byte, error) {
 	return key, nil
 }
 
+// DecodeMasterKeys decodes a comma-separated list of base64 master keys —
+// the shape of CONNECTOR_MASTER_KEY_PREVIOUS, the retired keys kept for
+// decrypt-only use across a rotation. Empty entries (from stray commas or
+// surrounding whitespace) are skipped; an empty or all-empty input returns
+// nil with no error, since retired keys are optional. A malformed entry's
+// error names its 1-based position in the list.
+func DecodeMasterKeys(encoded string) ([][]byte, error) {
+	var keys [][]byte
+	for i, part := range strings.Split(encoded, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, err := DecodeMasterKey(part)
+		if err != nil {
+			return nil, fmt.Errorf("entry %d: %w", i+1, err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+// envKeyID derives the identifier recorded for a master key: a truncated
+// hash, enough to tell two master keys apart across a rotation, far too
+// little to attack the key itself.
+func envKeyID(key []byte) string {
+	sum := sha256.Sum256(key)
+	return "env:" + hex.EncodeToString(sum[:4])
+}
+
 // EnvKeyProvider wraps data keys with a master key supplied through the
 // process environment (CONNECTOR_MASTER_KEY). It is the self-hosted and
 // development default; see KeyProvider for the managed-KMS path.
+//
+// It also holds retired master keys (CONNECTOR_MASTER_KEY_PREVIOUS) for
+// decrypt-only use, so rows sealed before a rotation still open under the
+// rotate-on-read pattern (Encryptor.OpenAndRotate) instead of being bricked
+// the moment the primary key changes.
 type EnvKeyProvider struct {
-	key   []byte
-	keyID string
+	primary   []byte
+	primaryID string
+	keys      map[string][]byte // keyID -> key, primary included
 }
 
-// NewEnvKeyProvider builds a provider from an already-decoded master key.
-func NewEnvKeyProvider(key []byte) (*EnvKeyProvider, error) {
-	if len(key) != MasterKeyLen {
+// NewEnvKeyProvider builds a provider from an already-decoded primary master
+// key plus zero or more retired master keys kept for decrypt-only use. Wrap
+// always uses primary; Unwrap accepts any key in primary or retired.
+func NewEnvKeyProvider(primary []byte, retired ...[]byte) (*EnvKeyProvider, error) {
+	if len(primary) != MasterKeyLen {
 		return nil, ErrMasterKeyLength
 	}
-	// A truncated hash of the key: enough to tell two master keys apart
-	// across a rotation, far too little to attack the key itself.
-	sum := sha256.Sum256(key)
-	return &EnvKeyProvider{key: key, keyID: "env:" + hex.EncodeToString(sum[:4])}, nil
+	primaryID := envKeyID(primary)
+	keys := map[string][]byte{primaryID: primary}
+	for _, key := range retired {
+		if len(key) != MasterKeyLen {
+			return nil, ErrMasterKeyLength
+		}
+		keys[envKeyID(key)] = key
+	}
+	return &EnvKeyProvider{primary: primary, primaryID: primaryID, keys: keys}, nil
 }
 
-func (p *EnvKeyProvider) KeyID() string { return p.keyID }
+func (p *EnvKeyProvider) KeyID() string { return p.primaryID }
 
 func (p *EnvKeyProvider) Wrap(_ context.Context, dataKey []byte) ([]byte, error) {
-	return sealAESGCM(p.key, dataKey, nil)
+	return sealAESGCM(p.primary, dataKey, nil)
 }
 
-func (p *EnvKeyProvider) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
-	return openAESGCM(p.key, wrapped, nil)
+// Unwrap opens wrapped with the master key identified by keyID. An empty
+// keyID (an envelope sealed before key-ID tagging existed — none in
+// practice, but handled explicitly) falls back to the primary key.
+func (p *EnvKeyProvider) Unwrap(_ context.Context, keyID string, wrapped []byte) ([]byte, error) {
+	if keyID == "" {
+		keyID = p.primaryID
+	}
+	key, ok := p.keys[keyID]
+	if !ok {
+		return nil, ErrUnknownKeyID
+	}
+	return openAESGCM(key, wrapped, nil)
 }
 
 var _ KeyProvider = (*EnvKeyProvider)(nil)

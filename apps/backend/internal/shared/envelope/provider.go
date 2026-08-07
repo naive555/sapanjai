@@ -6,7 +6,17 @@
 // has to change.
 package envelope
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrUnknownKeyID is returned by a provider asked to unwrap under a master
+// key it does not hold — the signature of a rotation that dropped a key
+// still referenced by stored data. Open collapses this into ErrOpen for
+// callers; the sentinel exists so a rotation job can tell "wrong key" apart
+// from "corrupt data".
+var ErrUnknownKeyID = errors.New("envelope: unknown key id")
 
 // KeyProvider wraps and unwraps data keys with the master key. This is the
 // swap point for a managed key service: a KMS/Vault provider implements the
@@ -23,6 +33,10 @@ type KeyProvider interface {
 	// version, KMS ciphertext framing, ...).
 	Wrap(ctx context.Context, dataKey []byte) ([]byte, error)
 
-	// Unwrap reverses Wrap.
-	Unwrap(ctx context.Context, wrapped []byte) ([]byte, error)
+	// Unwrap reverses Wrap. keyID is the KeyID recorded in the envelope at
+	// seal time. A provider that keeps retired master keys around for
+	// decrypt-only use selects on it (ErrUnknownKeyID if it holds none
+	// matching); a KMS provider may ignore it, since the KMS ciphertext in
+	// wrapped already identifies the key that sealed it.
+	Unwrap(ctx context.Context, keyID string, wrapped []byte) ([]byte, error)
 }

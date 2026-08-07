@@ -76,24 +76,53 @@ func (e *Encryptor) Seal(ctx context.Context, plaintext, aad []byte) (json.RawMe
 
 // Open reverses Seal. Every failure mode collapses to ErrOpen.
 func (e *Encryptor) Open(ctx context.Context, raw json.RawMessage, aad []byte) ([]byte, error) {
+	plaintext, _, err := e.OpenAndRotate(ctx, raw, aad)
+	return plaintext, err
+}
+
+// OpenAndRotate opens raw and, when it was sealed under a master key that is
+// no longer the provider's current one, also returns a freshly re-sealed
+// envelope for the caller to persist. rotated is nil when raw is already
+// current, so the common case allocates nothing beyond a plain Open.
+//
+// Rotation re-seals with a brand-new data key rather than re-wrapping the
+// old one under the new master key: same cost, and it retires the old data
+// key too, not just the master key that wrapped it.
+//
+// The caller decides whether and when to persist rotated — a failed write
+// is not a failed read, and the next read simply offers the rotation again.
+// This is the rotate-on-read half of key rotation; nothing sweeps rows that
+// are never read.
+func (e *Encryptor) OpenAndRotate(ctx context.Context, raw json.RawMessage, aad []byte) (plaintext []byte, rotated json.RawMessage, err error) {
 	var s sealed
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, ErrOpen
+		return nil, nil, ErrOpen
 	}
 	if s.Version != Version {
-		return nil, ErrOpen
+		return nil, nil, ErrOpen
 	}
 
-	dataKey, err := e.provider.Unwrap(ctx, s.DataKey)
+	dataKey, err := e.provider.Unwrap(ctx, s.KeyID, s.DataKey)
 	if err != nil {
-		return nil, ErrOpen
+		return nil, nil, ErrOpen
 	}
 
-	plaintext, err := openAESGCM(dataKey, s.Payload, aad)
+	plaintext, err = openAESGCM(dataKey, s.Payload, aad)
 	if err != nil {
-		return nil, ErrOpen
+		return nil, nil, ErrOpen
 	}
-	return plaintext, nil
+
+	if s.KeyID == e.provider.KeyID() {
+		return plaintext, nil, nil
+	}
+
+	rotated, err = e.Seal(ctx, plaintext, aad)
+	if err != nil {
+		// Sealing failed but the read already succeeded — surface the
+		// plaintext, just without a rotation to offer this time.
+		return plaintext, nil, nil
+	}
+	return plaintext, rotated, nil
 }
 
 // sealAESGCM returns nonce || ciphertext.
