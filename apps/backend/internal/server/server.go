@@ -16,6 +16,7 @@ import (
 	echoSwagger "github.com/swaggo/echo-swagger"
 
 	_ "github.com/sapanjai/backend/docs" // generated OpenAPI spec
+	"github.com/sapanjai/backend/internal/adapter/googlesheets"
 	"github.com/sapanjai/backend/internal/config"
 	"github.com/sapanjai/backend/internal/infra/database"
 	appredis "github.com/sapanjai/backend/internal/infra/redis"
@@ -84,10 +85,11 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	if err != nil {
 		return nil, fmt.Errorf("connector master key: %w", err)
 	}
-	// No Checkers are registered: per-type health probes land with their
-	// adapters (docs/05-mcp-gateway.md, Phase 2). Until then every
-	// health-check call resolves to 501 HEALTH_CHECK_UNSUPPORTED.
-	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(), log)
+	// googlesheets.NewChecker is the first real health-check adapter
+	// (docs/07-sheets-adapter-plan.md step 5); every other connector type
+	// still resolves to 501 HEALTH_CHECK_UNSUPPORTED with no Checker
+	// registered.
+	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(googlesheets.NewChecker()), log)
 	connector.NewHandler(connectorSvc).Register(e.Group("/connectors"), guards)
 
 	mcpKeySvc := mcpkey.NewService(store, log)

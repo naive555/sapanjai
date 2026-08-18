@@ -12,8 +12,14 @@ type Type string
 // Phase 2.
 const TypeGeneric Type = "generic"
 
+// TypeGoogleSheets is the first real adapter type — internal/adapter/
+// googlesheets, docs/07-sheets-adapter-plan.md step 5. Its Checker is
+// registered in internal/server/server.go.
+const TypeGoogleSheets Type = "google_sheets"
+
 var validTypes = map[Type]struct{}{
-	TypeGeneric: {},
+	TypeGeneric:      {},
+	TypeGoogleSheets: {},
 }
 
 // Status is a connector's last known health.

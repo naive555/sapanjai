@@ -27,7 +27,7 @@ See [`README.md`](README.md) for the quickstart, [`apps/frontend/README.md`](app
 ## Layout
 
 ```
-apps/backend/    Go API — cmd/{api,migrate,seed,worker}, internal/{config,server,middleware,module,worker,job,infra,shared}, migrations/
+apps/backend/    Go API — cmd/{api,migrate,seed,worker}, internal/{adapter,config,server,middleware,module,worker,job,infra,shared}, migrations/
 apps/frontend/   Next.js dashboard — app/{(auth),(dashboard)}/, lib/{api,auth,org}/, components/
 docs/            01-source-analysis · 02-api-contract · 03-target-architecture · 04-migration-plan · 05-mcp-gateway
 spikes/          throwaway feasibility spikes, each its own Go module — mcp-gateway/

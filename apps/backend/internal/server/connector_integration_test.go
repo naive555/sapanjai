@@ -256,6 +256,57 @@ func TestIntegration_ConnectorsInvalidType(t *testing.T) {
 	}
 }
 
+// TestIntegration_ConnectorsGoogleSheetsTypeAccepted proves "google_sheets"
+// is now a recognized connector type end to end through the request
+// validator and the service's own IsValidType check
+// (docs/07-sheets-adapter-plan.md step 5) — until this step it was rejected
+// exactly like "flowaccount" above. The health-check route itself is not
+// exercised here: it requires a real Google OAuth token exchange, which
+// this suite must not attempt (internal/adapter/googlesheets's own tests
+// mock the upstream instead).
+func TestIntegration_ConnectorsGoogleSheetsTypeAccepted(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "connectors-google-sheets")
+	headers := map[string]string{
+		"Authorization":     "Bearer " + org.Owner.AccessToken,
+		"x-organization-id": org.ID,
+	}
+
+	config := map[string]any{
+		"oauth": map[string]any{
+			"refresh_token": "1//0g-fake-refresh-token",
+			"client_id":     "fake.apps.googleusercontent.com",
+			"client_secret": "fake-client-secret",
+		},
+		"scope": map[string]any{
+			"spreadsheet_ids": []any{"1AbCFakeSpreadsheetId"},
+		},
+	}
+
+	resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/connectors",
+		map[string]any{"name": uniqueSlug("sheets-connector"), "type": "google_sheets", "config": config}, headers)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create: status = %d, want 200; body = %v", resp.StatusCode, body)
+	}
+	if body["type"] != "google_sheets" {
+		t.Fatalf("type = %v, want %q", body["type"], "google_sheets")
+	}
+	if _, ok := body["config"]; ok {
+		t.Fatalf("create response leaks a config key: %v", body)
+	}
+
+	connID, _ := body["id"].(string)
+	resp2, body2 := doJSON(t, client, ts.URL, http.MethodGet, "/connectors/"+connID, nil, headers)
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("get: status = %d, want 200; body = %v", resp2.StatusCode, body2)
+	}
+	if body2["type"] != "google_sheets" {
+		t.Fatalf("get type = %v, want %q", body2["type"], "google_sheets")
+	}
+}
+
 func TestIntegration_ConnectorsPermissionEnforcement(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	client := ts.Client()

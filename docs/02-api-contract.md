@@ -124,18 +124,44 @@ Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invi
 ### Connectors (`/connectors`)
 
 Org-scoped upstream connections (DB creds, API keys, ...) for the Managed MCP
-Gateway product (`docs/05-mcp-gateway.md`). This is the **generic skeleton
-only** — no per-type adapter logic yet; every connector uses `type: "generic"`
-until a real integration (FlowAccount, PEAK, ...) lands.
+Gateway product (`docs/05-mcp-gateway.md`). `type` accepts `"generic"` (the
+skeleton placeholder — no adapter, health-check always 501) and
+`"google_sheets"` (the first real adapter, `internal/adapter/googlesheets`,
+`docs/07-sheets-adapter-plan.md` step 5) — more per-type integrations
+(FlowAccount, PEAK, ...) land the same way.
 
 | Method/Path | Guard | Body | Behavior |
 | ----------- | ----- | ---- | -------- |
-| `POST /connectors` | perm:`connector:write` | `{ name: 1-100, type: "generic", config: object }` | Seals `config` at rest with envelope encryption (fresh AES-256 data key per row, wrapped by `CONNECTOR_MASTER_KEY`) and stores it; new rows start `status: "inactive"`. Enforces the `max_connectors` plan limit. 409 `CONNECTOR_NAME_TAKEN` (unique per org); 422 `Validation failed` for an unrecognized `type` (the request validator rejects it before the service's own `INVALID_CONNECTOR_TYPE` check is ever reached). |
+| `POST /connectors` | perm:`connector:write` | `{ name: 1-100, type: "generic" \| "google_sheets", config: object }` | Seals `config` at rest with envelope encryption (fresh AES-256 data key per row, wrapped by `CONNECTOR_MASTER_KEY`) and stores it; new rows start `status: "inactive"`. Enforces the `max_connectors` plan limit. 409 `CONNECTOR_NAME_TAKEN` (unique per org); 422 `Validation failed` for an unrecognized `type` (the request validator rejects it before the service's own `INVALID_CONNECTOR_TYPE` check is ever reached). `config` is not shape-validated against the type at create time — an unparsable `google_sheets` config still creates the row; it only surfaces as a failed health-check. |
 | `GET /connectors` | perm:`connector:read` | — | Org's connectors, oldest first. |
 | `GET /connectors/:connectorId` | perm:`connector:read` | — | One connector. 404 `NOT_FOUND` for another org's id — indistinguishable from a nonexistent one. |
 | `PATCH /connectors/:connectorId` | perm:`connector:write` | `{ name?, status?, config? }` | Partial update; unset fields are left unchanged. A supplied `config` is re-sealed under a brand-new data key (the old ciphertext is overwritten, not versioned). `type` is immutable — there is no `type` field to patch. |
 | `DELETE /connectors/:connectorId` | perm:`connector:delete` | — | `{ success: true }`. 404 `NOT_FOUND` if already gone or not this org's. |
-| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | — | Probes the upstream and records `status`/`lastHealthCheckAt`. **No per-type checker is registered yet**, so this always returns 501 `HEALTH_CHECK_UNSUPPORTED` and leaves the row untouched. Gated by `connector:write` (not `:read`) because it writes to the row. |
+| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | — | Probes the upstream and records `status`/`lastHealthCheckAt`. For `type: "generic"` (no checker registered) this always returns 501 `HEALTH_CHECK_UNSUPPORTED` and leaves the row untouched. For `type: "google_sheets"`, `googlesheets.Checker` parses `config`, refreshes the OAuth token, and reads metadata for the first allowlisted spreadsheet (or lists the first allowlisted Drive folder if none is allowlisted) — success writes `status: "active"`, any failure (bad config shape, expired/invalid refresh token, upstream error) writes `status: "error"` and still returns 200 with the updated row; the probe error itself is never returned to the caller or logged with credential material. Gated by `connector:write` (not `:read`) because it writes to the row. |
+
+**`google_sheets` config shape** (sealed the same as any other connector's
+`config` — never returned by any endpoint):
+
+```jsonc
+{
+  "oauth": { "refresh_token": "1//0g...", "client_id": "...apps.googleusercontent.com", "client_secret": "..." },
+  "scope": {
+    "spreadsheet_ids": ["1AbC...", "1XyZ..."],
+    "drive_folder_ids": ["0B1a..."],
+    "header_rows": { "1AbC...": 3 }
+  }
+}
+```
+
+`scope` is the security boundary: `spreadsheet_ids` / `drive_folder_ids` is
+an allowlist the adapter enforces on every call, independent of whatever the
+OAuth token itself can reach — an id absent from the allowlist is always
+rejected. At least one of `spreadsheet_ids` / `drive_folder_ids` must be
+non-empty. `header_rows` is an optional per-spreadsheet override for the
+header row (default: row 1) — real customer sheets often carry a title
+banner above the real header. Onboarding is manual credential paste for the
+MVP (`docs/07-sheets-adapter-plan.md` §1 Decision 2) — no OAuth consent flow
+in the dashboard yet.
 
 Response shape (all endpoints except `DELETE`, which returns `{ success: true }`):
 
