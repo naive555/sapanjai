@@ -1,6 +1,6 @@
 # Google Sheets/Drive MCP Adapter — execution tracker
 
-> **Status: 🟡 in progress (planned 2026-08-18).** 1 / 12 steps complete.
+> **Status: 🟡 in progress (planned 2026-08-18).** 2 / 12 steps complete.
 > **All four decisions confirmed by the owner 2026-08-18** — no step is decision-blocked.
 > **Full plan with per-step detail:** [`docs/07-sheets-adapter-plan.md`](../../docs/07-sheets-adapter-plan.md)
 > **Spec:** [`docs/06-sheets-adapter.md`](../../docs/06-sheets-adapter.md) · **Architecture:** [`docs/05-mcp-gateway.md`](../../docs/05-mcp-gateway.md)
@@ -34,8 +34,8 @@ Confirmed by the owner; no longer blocking. Full reasoning in `docs/07` §1.
 
 ## Steps
 
-- [x] **1. Extract `ActionMatches` + `rbac.Principal`** — ✅ done 2026-08-18, reviewed. Pure refactor confirmed: `service_test.go` +121/−0, `internal/middleware/` untouched, non-member still `(false, nil)`, owner still skips the permissions query. Uncommitted. Caveat: verified under `go vet` only (golangci-lint not installed) and with the integration suite skipped (no DB/Redis).
-- [ ] **2. `mcp_api_keys` migration + PAT module** — migration `00008`, `make sqlc`, mint/list/revoke routes, contract + swagger. *(gated by Decision 1)*
+- [x] **1. Extract `ActionMatches` + `rbac.Principal`** — ✅ done 2026-08-18, reviewed. Pure refactor confirmed: `service_test.go` +121/−0, `internal/middleware/` untouched, non-member still `(false, nil)`, owner still skips the permissions query. Committed as `f9c6e64`. Re-verified afterwards under the real golangci-lint v2 with the integration suite actually running — clean.
+- [x] **2. `mcp_api_keys` migration + PAT module** — ✅ done 2026-08-18, reviewed. Migration `00008` additive; SHA-256 hashing verified against the DB (0/63 rows hold a raw token, all 63 are 64-char hex); list response proven not to leak `apiKey`; 6 integration tests ran with 0 skips; lint clean. Uncommitted. Note: `scopes` column ships unreachable by design — step 3 adds the write path and the RBAC intersection.
 - [ ] **3. `RequireMCPKey` + `POST /mcp/:connectorId` + one trivial tool** ⚠️ **risk retirement** — stateless streamable HTTP, both enforcement layers, audit events. **Port the pattern from `spikes/mcp-gateway/` (read-only reference — never import it).** Watch the request-context trap. Verified with MCP Inspector *and* a real client.
 - [ ] **4. Redis token-bucket rate limiter** — `mcp:ratelimit:<connectorId>`, `RATE_LIMITED`, `mcp.ratelimit.hit`. Lands before any Google API call exists. **Counts upstream Google calls, not MCP tool calls.**
 - [ ] **5. `google_sheets` connector type** — config schema, **allowlist**, OAuth exchange, real health checker. New `internal/adapter/` package; official Google clients + `oauth2.ReuseTokenSource`; narrow `sheetsAPI` interface as the mock seam. *(gated by Decision 2)*
