@@ -1,8 +1,6 @@
 # Env — the .example templates alongside these are the tracked ones
-.env
-.env.docker
-.env.local
-.env.*.local
+.env*
+!.env.example.*
 
 # Node / Next.js
 node_modules/
