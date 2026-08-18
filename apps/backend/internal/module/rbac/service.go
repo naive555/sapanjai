@@ -7,7 +7,6 @@ package rbac
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -166,22 +165,28 @@ func (s *Service) AssignRole(ctx context.Context, organizationID, userID, roleID
 	return s.store.AssignMemberRole(ctx, db.AssignMemberRoleParams{MembershipID: membership.ID, RoleID: roleID})
 }
 
-// HasPermission reports whether userID can perform action in
-// organizationID. Mirrors RBACRepository.getUserPermissions +
-// RBACService.hasPermission: no membership -> false; owner role bypasses
-// the roles tables entirely ("*"); otherwise the caller's roles' permission
-// actions are checked for "*", an exact match, or a "<resource>:*"
-// wildcard.
-func (s *Service) HasPermission(ctx context.Context, userID, organizationID uuid.UUID, action string) (bool, error) {
+// Authorize resolves userID's membership and granted action set in
+// organizationID once, returning a *Principal a caller can run any number
+// of Allows(action) checks against. This is what makes a bulk caller (e.g.
+// filtering an MCP tool catalog against ~10 actions) cost one membership
+// lookup plus one permission query instead of one pair per action.
+//
+// Preserves HasPermission's existing no-membership behavior: pgx.ErrNoRows
+// is not an error here either, it yields a Principal with a nil Actions set
+// that Allows() will always deny (mirroring the old "no membership ->
+// false"). An owner's Actions is left unfetched — ListPermissionActionsByUserOrg
+// is never called for an owner, matching HasPermission's owner bypass, so
+// Authorize costs owners the same single query it always did.
+func (s *Service) Authorize(ctx context.Context, userID, organizationID uuid.UUID) (*Principal, error) {
 	membership, err := s.store.GetMembership(ctx, db.GetMembershipParams{UserID: userID, OrganizationID: organizationID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return &Principal{UserID: userID, OrganizationID: organizationID}, nil
 		}
-		return false, err
+		return nil, err
 	}
 	if membership.Role == "owner" {
-		return true, nil
+		return &Principal{UserID: userID, OrganizationID: organizationID, Role: membership.Role}, nil
 	}
 
 	actions, err := s.store.ListPermissionActionsByUserOrg(ctx, db.ListPermissionActionsByUserOrgParams{
@@ -189,18 +194,26 @@ func (s *Service) HasPermission(ctx context.Context, userID, organizationID uuid
 		OrganizationID: organizationID,
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	return &Principal{UserID: userID, OrganizationID: organizationID, Role: membership.Role, Actions: actions}, nil
+}
+
+// HasPermission reports whether userID can perform action in
+// organizationID. Mirrors RBACRepository.getUserPermissions +
+// RBACService.hasPermission: no membership -> false; owner role bypasses
+// the roles tables entirely ("*"); otherwise the caller's roles' permission
+// actions are checked for "*", an exact match, or a "<resource>:*"
+// wildcard. A thin wrapper over Authorize(...).Allows(action) since
+// step 1 of docs/07-sheets-adapter-plan.md — the single-action call site
+// (RequirePermission) is unchanged, the semantics now live in one place.
+func (s *Service) HasPermission(ctx context.Context, userID, organizationID uuid.UUID, action string) (bool, error) {
+	principal, err := s.Authorize(ctx, userID, organizationID)
+	if err != nil {
 		return false, err
 	}
-
-	resource, _, _ := strings.Cut(action, ":")
-	wildcard := resource + ":*"
-
-	for _, a := range actions {
-		if a == "*" || a == action || a == wildcard {
-			return true, nil
-		}
-	}
-	return false, nil
+	return principal.Allows(action), nil
 }
 
 // setPermissions replaces roleID's permission set: delete then re-insert,

@@ -166,6 +166,127 @@ func TestHasPermission_DatabaseErrorPropagates(t *testing.T) {
 	}
 }
 
+// ---- Authorize ----
+
+func TestAuthorize_OwnerSkipsPermissionsQuery(t *testing.T) {
+	userID, orgID := uuid.New(), uuid.New()
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{Role: "owner"}, nil
+		},
+		listPermissionActionsByUserOrg: func(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error) {
+			t.Fatal("ListPermissionActionsByUserOrg should not be called for an owner")
+			return nil, nil
+		},
+	}
+	svc := NewService(store)
+
+	principal, err := svc.Authorize(context.Background(), userID, orgID)
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if principal.Role != "owner" {
+		t.Errorf("Role = %q, want %q", principal.Role, "owner")
+	}
+	if !principal.Allows("anything:at-all") {
+		t.Error("expected owner principal to allow anything")
+	}
+}
+
+func TestAuthorize_MemberWithGrants(t *testing.T) {
+	userID, orgID := uuid.New(), uuid.New()
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{Role: "member"}, nil
+		},
+		listPermissionActionsByUserOrg: func(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error) {
+			return []string{"project:*"}, nil
+		},
+	}
+	svc := NewService(store)
+
+	principal, err := svc.Authorize(context.Background(), userID, orgID)
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !principal.Allows("project:create") {
+		t.Error("expected project:* to allow project:create")
+	}
+	if principal.Allows("billing:read") {
+		t.Error("expected project:* to not allow billing:read")
+	}
+}
+
+func TestAuthorize_MemberWithNoGrants(t *testing.T) {
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{Role: "member"}, nil
+		},
+		listPermissionActionsByUserOrg: func(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error) {
+			return []string{}, nil
+		},
+	}
+	svc := NewService(store)
+
+	principal, err := svc.Authorize(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if principal.Allows("project:read") {
+		t.Error("expected a member with no grants to be denied")
+	}
+}
+
+func TestAuthorize_NonMemberAllowsNothing(t *testing.T) {
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{}, pgx.ErrNoRows
+		},
+	}
+	svc := NewService(store)
+
+	principal, err := svc.Authorize(context.Background(), uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if principal.Allows("project:read") {
+		t.Error("expected a non-member principal to allow nothing")
+	}
+}
+
+func TestAuthorize_MembershipStoreErrorPropagates(t *testing.T) {
+	dbErr := errors.New("connection reset")
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{}, dbErr
+		},
+	}
+	svc := NewService(store)
+
+	_, err := svc.Authorize(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected the raw db error to propagate, got %v", err)
+	}
+}
+
+func TestAuthorize_PermissionsStoreErrorPropagates(t *testing.T) {
+	dbErr := errors.New("connection reset")
+	store := &mockRBACStore{
+		getMembership: func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
+			return db.Membership{Role: "member"}, nil
+		},
+		listPermissionActionsByUserOrg: func(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error) {
+			return nil, dbErr
+		},
+	}
+	svc := NewService(store)
+
+	_, err := svc.Authorize(context.Background(), uuid.New(), uuid.New())
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected the raw db error to propagate, got %v", err)
+	}
+}
+
 // ---- ListRoles ----
 
 func TestListRoles_GroupsPermissionsByRole(t *testing.T) {

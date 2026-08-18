@@ -1,6 +1,7 @@
 # Google Sheets/Drive MCP Adapter — execution tracker
 
-> **Status: ⬜ not started (planned 2026-08-18).** 0 / 12 steps complete.
+> **Status: 🟡 in progress (planned 2026-08-18).** 1 / 12 steps complete.
+> **All four decisions confirmed by the owner 2026-08-18** — no step is decision-blocked.
 > **Full plan with per-step detail:** [`docs/07-sheets-adapter-plan.md`](../../docs/07-sheets-adapter-plan.md)
 > **Spec:** [`docs/06-sheets-adapter.md`](../../docs/06-sheets-adapter.md) · **Architecture:** [`docs/05-mcp-gateway.md`](../../docs/05-mcp-gateway.md)
 >
@@ -18,9 +19,9 @@
 
 ---
 
-## Blocking: three decisions need owner confirmation
+## Decisions — ✅ all confirmed 2026-08-18
 
-Do not start the gated step until the owner confirms. Full reasoning in `docs/07` §1.
+Confirmed by the owner; no longer blocking. Full reasoning in `docs/07` §1.
 
 | # | Decision | Resolution | Gates |
 | - | -------- | ---------- | ----- |
@@ -33,7 +34,7 @@ Do not start the gated step until the owner confirms. Full reasoning in `docs/07
 
 ## Steps
 
-- [ ] **1. Extract `ActionMatches` + `rbac.Principal`** — pure refactor, existing tests must pass unmodified. *(gated by Decision 3)*
+- [x] **1. Extract `ActionMatches` + `rbac.Principal`** — ✅ done 2026-08-18, reviewed. Pure refactor confirmed: `service_test.go` +121/−0, `internal/middleware/` untouched, non-member still `(false, nil)`, owner still skips the permissions query. Uncommitted. Caveat: verified under `go vet` only (golangci-lint not installed) and with the integration suite skipped (no DB/Redis).
 - [ ] **2. `mcp_api_keys` migration + PAT module** — migration `00008`, `make sqlc`, mint/list/revoke routes, contract + swagger. *(gated by Decision 1)*
 - [ ] **3. `RequireMCPKey` + `POST /mcp/:connectorId` + one trivial tool** ⚠️ **risk retirement** — stateless streamable HTTP, both enforcement layers, audit events. **Port the pattern from `spikes/mcp-gateway/` (read-only reference — never import it).** Watch the request-context trap. Verified with MCP Inspector *and* a real client.
 - [ ] **4. Redis token-bucket rate limiter** — `mcp:ratelimit:<connectorId>`, `RATE_LIMITED`, `mcp.ratelimit.hit`. Lands before any Google API call exists. **Counts upstream Google calls, not MCP tool calls.**
@@ -48,6 +49,10 @@ Do not start the gated step until the owner confirms. Full reasoning in `docs/07
 
 **Every step must end green:** repo builds, `make test` and `make lint` pass, nothing
 half-wired. A step that leaves the build broken until the next one is wrong — split it.
+
+**Stop between steps.** The owner is asked before each step starts — confirming the
+plan was not standing authorization to run it end to end. Finish a step, have the work
+reviewed, report it, then wait. Never queue several steps in one go.
 
 ---
 

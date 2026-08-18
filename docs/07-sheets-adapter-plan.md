@@ -1,6 +1,7 @@
 # Google Sheets/Drive MCP Adapter — Implementation Plan
 
-> **Status: not started.** Planning only — no code written for this yet.
+> **Status: in progress.** All four decisions **confirmed by the owner 2026-08-18**;
+> step 1 started. Later steps still gated only by their stated dependencies.
 > **Spec:** [`06-sheets-adapter.md`](06-sheets-adapter.md) (read-only MVP).
 > **Architecture it builds on:** [`05-mcp-gateway.md`](05-mcp-gateway.md) Phase 1 + Phase 2.
 > **Execution tracker:** [`.claude/plans/2026-08-18-sheets-adapter.md`](../.claude/plans/2026-08-18-sheets-adapter.md)
