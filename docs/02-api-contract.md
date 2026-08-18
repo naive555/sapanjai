@@ -145,10 +145,10 @@ DTO or log line carries it.
 ### MCP keys (`/mcp-keys`)
 
 Org-scoped, revocable Personal Access Tokens (PATs) that MCP clients present
-as a bearer credential (`docs/07-sheets-adapter-plan.md` Decision 1). This
-step ships the credential only — no MCP protocol endpoint exists yet, and
-`scopes` is stored but not yet enforced (that lands with the MCP gateway
-route, which intersects it with the creator's live RBAC grant).
+as a bearer credential (`docs/07-sheets-adapter-plan.md` Decision 1).
+`scopes` is enforced by the MCP gateway below: it intersects a key's
+(nullable) `scopes` with the creator's live RBAC grant, re-resolved on every
+request — a key can only ever narrow that grant, never widen it.
 
 | Method/Path | Guard | Body | Behavior |
 | ----------- | ----- | ---- | -------- |
@@ -162,6 +162,83 @@ Response shapes:
 POST /mcp-keys  -> { id, name, apiKey, expiresAt, createdAt }
 GET  /mcp-keys  -> [{ id, organizationId, userId, name, scopes, lastUsedAt, expiresAt, revokedAt, createdAt }]
 ```
+
+### MCP gateway (`POST /mcp/:connectorId`)
+
+Not a REST route — one Streamable HTTP MCP endpoint per connector, speaking
+the [Model Context Protocol](https://modelcontextprotocol.io) JSON-RPC 2.0
+envelope over a single `POST`. This section describes the envelope and
+gateway-specific behavior rather than a request/response table, per
+`docs/05-mcp-gateway.md`. Implemented in `docs/07-sheets-adapter-plan.md`
+step 3, which proves the full authorization path (PAT → org → connector →
+RBAC-filtered tool list → `tools/call` → audit) against one trivial tool
+before any Google API code exists.
+
+**Transport.** `mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}`:
+every `POST` is self-contained (no `Mcp-Session-Id`, no server-side session
+table), and the response is plain `application/json` rather than SSE
+framing. `Content-Type: application/json` and `Accept:
+application/json, text/event-stream` are both required on every request (the
+SDK rejects a POST missing either). `GET`/`DELETE` on this route return 405.
+
+**Auth.** `Authorization: Bearer sk_live_...` — an MCP key minted via
+`POST /mcp-keys` above, **not** a JWT access token. Rejections are always
+401 `{ "message": "Unauthorized" }` with a `WWW-Authenticate` header set (so
+MCP clients offer to re-authenticate instead of failing silently):
+`Bearer realm="sapanjai"` when no token was presented at all,
+`Bearer realm="sapanjai", error="invalid_token"` when one was presented but
+rejected (unknown hash, revoked, or expired — these three are
+indistinguishable in the response body, by design, so a probing client
+learns nothing about which reason applied). The org is bound to the key,
+never supplied by the client — MCP clients have no per-request header
+analogous to `x-organization-id` (`docs/05-mcp-gateway.md`).
+
+**Connector resolution.** `:connectorId` is resolved scoped to the key's
+organization. A connector belonging to another org is 404
+`{ "message": "Resource not found" }` — byte-identical to a nonexistent id,
+so the id cannot be used to probe for another tenant's connectors.
+
+**RBAC filtering — two layers, both enforced on every request:**
+
+1. **Construction-time.** A fresh `*mcp.Server` is built per request, and
+   only tools the caller's principal is permitted to use are registered on
+   it — an unpermitted tool never appears in `tools/list` and calling it
+   anyway gets the SDK's own "unknown tool" protocol error.
+2. **Call-time.** An `mcp.Middleware` re-checks the RBAC action on every
+   `tools/call` and scrubs `tools/list`, so a permission change takes effect
+   on the very next call rather than the next reconnect — the tool list is
+   never itself an authorization boundary.
+
+The principal is the caller's live RBAC grant (`rbac.Service.Authorize`,
+re-resolved on every request — never cached on the key) intersected with the
+key's own `scopes` when non-`NULL` (Decision 1). An owner-held key with a
+non-`NULL` `scopes` list is narrowed the same way a member's is: the owner
+bypass does not survive scoping, or a scoped key held by an owner would
+silently grant everything.
+
+**Denials.** A missing-permission `tools/call` returns
+`CallToolResult{ IsError: true, Content: [{ text: "Missing permission: <action>" }] }`
+— a normal tool result, not a JSON-RPC error, so the model sees the refusal
+and can adapt rather than the turn aborting. The text is byte-identical to
+the REST 403 body above.
+
+**Tool catalog (step 3):**
+
+| Tool | Permission | Description | Returns |
+| ---- | ---------- | ------------ | ------- |
+| `sapanjai_describe_connector` | `connector:read` | Describes the connector this session is bound to. Takes no arguments — the connector is fixed by the URL, not model-supplied. | `{ name, type, status }` — structurally incapable of returning `config`; the decrypted connector config never leaves `connector.Service`, same invariant as the REST `/connectors` routes. |
+
+**Audit.** Best-effort (a failed write never fails the MCP call), same
+`GET /audit-logs` trail as everything else:
+
+| Action | Written when | Metadata |
+| ------ | ------------ | -------- |
+| `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
+| `mcp.tool.called` | A `tools/call` the caller was permitted to make, recorded before dispatch | `connector_id`, `tool` |
+| `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
+
+Metadata never carries the bearer token, decrypted connector config, or a
+whole request/tool-argument struct — only the small, explicit fields above.
 
 ### API docs
 

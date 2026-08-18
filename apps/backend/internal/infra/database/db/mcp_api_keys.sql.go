@@ -50,6 +50,31 @@ func (q *Queries) CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (Mcp
 	return i, err
 }
 
+const getMCPKeyByHash = `-- name: GetMCPKeyByHash :one
+SELECT id, organization_id, user_id, name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at FROM mcp_api_keys WHERE key_hash = $1
+`
+
+// Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
+// key_hash carries a unique index (migration 00008), so this is a single
+// indexed read — no Redis cache in front of it, per Decision 1.
+func (q *Queries) GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKey, error) {
+	row := q.db.QueryRow(ctx, getMCPKeyByHash, keyHash)
+	var i McpApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Name,
+		&i.KeyHash,
+		&i.Scopes,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getMCPKeyByName = `-- name: GetMCPKeyByName :one
 SELECT id, organization_id, user_id, name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at FROM mcp_api_keys WHERE organization_id = $1 AND name = $2
 `
@@ -127,4 +152,16 @@ func (q *Queries) RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const stampMCPKeyLastUsed = `-- name: StampMCPKeyLastUsed :exec
+UPDATE mcp_api_keys SET last_used_at = now() WHERE id = $1
+`
+
+// Best-effort bookkeeping: called after a successful RequireMCPKey
+// authentication. A failure to stamp must never fail the MCP request, so
+// the caller logs and swallows any error from this query.
+func (q *Queries) StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, stampMCPKeyLastUsed, id)
+	return err
 }

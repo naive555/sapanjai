@@ -87,7 +87,7 @@ func (s *Service) Create(ctx context.Context, organizationID, actorID uuid.UUID,
 		OrganizationID: organizationID,
 		UserID:         actorID,
 		Name:           name,
-		KeyHash:        hashToken(rawToken),
+		KeyHash:        HashToken(rawToken),
 		ExpiresAt:      expiresAt,
 	})
 	if err != nil {
@@ -129,7 +129,10 @@ func generateToken() (string, error) {
 	return tokenPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// hashToken returns the hex-encoded SHA-256 digest of a raw token.
+// HashToken returns the hex-encoded SHA-256 digest of a raw token. Exported
+// so internal/middleware.RequireMCPKey can hash a presented bearer token the
+// same way before its GetMCPKeyByHash lookup — one hashing implementation,
+// two callers (mint-time here, verify-time there).
 //
 // Deliberate departure from CLAUDE.md's bcrypt-cost-12 rule: that rule
 // exists for *passwords* — low-entropy secrets a human chose, where the
@@ -140,7 +143,7 @@ func generateToken() (string, error) {
 // differently, so equal inputs don't produce equal outputs). SHA-256 is
 // deterministic, so key_hash carries a unique index and revocation/lookup
 // is a single indexed read. Do not "fix" this to bcrypt.
-func hashToken(rawToken string) string {
+func HashToken(rawToken string) string {
 	sum := sha256.Sum256([]byte(rawToken))
 	return hex.EncodeToString(sum[:])
 }

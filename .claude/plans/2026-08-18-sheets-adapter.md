@@ -1,6 +1,6 @@
 # Google Sheets/Drive MCP Adapter — execution tracker
 
-> **Status: 🟡 in progress (planned 2026-08-18).** 2 / 12 steps complete.
+> **Status: 🟡 in progress (planned 2026-08-18).** 3 / 12 steps complete — the riskiest unknown (MCP handshake + RBAC end to end) is retired.
 > **All four decisions confirmed by the owner 2026-08-18** — no step is decision-blocked.
 > **Full plan with per-step detail:** [`docs/07-sheets-adapter-plan.md`](../../docs/07-sheets-adapter-plan.md)
 > **Spec:** [`docs/06-sheets-adapter.md`](../../docs/06-sheets-adapter.md) · **Architecture:** [`docs/05-mcp-gateway.md`](../../docs/05-mcp-gateway.md)
@@ -36,7 +36,11 @@ Confirmed by the owner; no longer blocking. Full reasoning in `docs/07` §1.
 
 - [x] **1. Extract `ActionMatches` + `rbac.Principal`** — ✅ done 2026-08-18, reviewed. Pure refactor confirmed: `service_test.go` +121/−0, `internal/middleware/` untouched, non-member still `(false, nil)`, owner still skips the permissions query. Committed as `f9c6e64`. Re-verified afterwards under the real golangci-lint v2 with the integration suite actually running — clean.
 - [x] **2. `mcp_api_keys` migration + PAT module** — ✅ done 2026-08-18, reviewed. Migration `00008` additive; SHA-256 hashing verified against the DB (0/63 rows hold a raw token, all 63 are 64-char hex); list response proven not to leak `apiKey`; 6 integration tests ran with 0 skips; lint clean. Uncommitted. Note: `scopes` column ships unreachable by design — step 3 adds the write path and the RBAC intersection.
-- [ ] **3. `RequireMCPKey` + `POST /mcp/:connectorId` + one trivial tool** ⚠️ **risk retirement** — stateless streamable HTTP, both enforcement layers, audit events. **Port the pattern from `spikes/mcp-gateway/` (read-only reference — never import it).** Watch the request-context trap. Verified with MCP Inspector *and* a real client.
+- [x] **3. `RequireMCPKey` + `POST /mcp/:connectorId` + one trivial tool** — ✅ done 2026-08-18, reviewed. ⚠️ **risk retired: the SDK mounts cleanly in Echo and the whole auth path works end to end.** Verified live by driving JSON-RPC against a running server: `initialize` → `tools/list` → `tools/call` all succeed; a connector config containing a planted secret appears in neither the tool response nor the API log; revoke flips the next call to 401; audit rows land clean. 9 integration tests, 0 skips. Uncommitted.
+  - Owner+scopes resolved correctly: `Principal.Narrow` clears `Role` so an owner's bypass cannot survive scoping.
+  - **Discovery — SDK v1.7.0 clients send `server/discover`, not `initialize`** (protocol ≥2026-07-28, SEP-2575). Session-start audit fires on both.
+  - **Discovery — import cycle:** `internal/middleware` cannot import `internal/module/rbac` (every handler already imports `middleware`). Worked around with a resolver closure injected from `server.go`, typed `func(...) (any, error)` + a type assertion. Contained and documented; revisit if a third caller appears.
+  - **Known wart (not live, fails closed):** a key scope *broader* than the user's grant collapses to nothing — scope `connector:*` held by a user with only `connector:read` yields zero permissions rather than `connector:read`. Nothing writes `scopes` yet; **fix when step 10's mint-with-scopes UI lands**, or a picker offering "all connector actions" will mint dead keys.
 - [ ] **4. Redis token-bucket rate limiter** — `mcp:ratelimit:<connectorId>`, `RATE_LIMITED`, `mcp.ratelimit.hit`. Lands before any Google API call exists. **Counts upstream Google calls, not MCP tool calls.**
 - [ ] **5. `google_sheets` connector type** — config schema, **allowlist**, OAuth exchange, real health checker. New `internal/adapter/` package; official Google clients + `oauth2.ReuseTokenSource`; narrow `sheetsAPI` interface as the mock seam. *(gated by Decision 2)*
 - [ ] **6. `sheets_list_spreadsheets` + `sheets_describe_spreadsheet`** — first real data tools; `describe` is the prerequisite for everything after.

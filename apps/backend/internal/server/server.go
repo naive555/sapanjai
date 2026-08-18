@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
@@ -23,6 +24,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/auth"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/health"
+	"github.com/sapanjai/backend/internal/module/mcp"
 	"github.com/sapanjai/backend/internal/module/mcpkey"
 	"github.com/sapanjai/backend/internal/module/organization"
 	"github.com/sapanjai/backend/internal/module/rbac"
@@ -90,6 +92,26 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 
 	mcpKeySvc := mcpkey.NewService(store, log)
 	mcpkey.NewHandler(mcpKeySvc).Register(e.Group("/mcp-keys"), guards)
+
+	// The MCP gateway (docs/07-sheets-adapter-plan.md step 3) uses a
+	// different credential than every other route: a long-lived PAT
+	// (mcp_api_keys), not the JWT pair RequireAuth/RequireOrg/
+	// RequirePermission verify. RequireMCPKey re-resolves the caller's live
+	// RBAC grant via rbacSvc.Authorize on every request rather than trusting
+	// anything cached on the key itself, then narrows it by the key's own
+	// scopes. This closure — not a direct method value — is what lets
+	// internal/middleware avoid importing internal/module/rbac (an import
+	// cycle; see appmw.MCPPrincipalResolver's doc comment): server.go
+	// already imports both, so it is the natural place to compose them.
+	resolveMCPPrincipal := func(ctx context.Context, userID, organizationID uuid.UUID, scopes []string) (any, error) {
+		principal, err := rbacSvc.Authorize(ctx, userID, organizationID)
+		if err != nil {
+			return nil, err
+		}
+		return principal.Narrow(scopes), nil
+	}
+	mcpSvc := mcp.NewService(connectorSvc, auditSvc, log)
+	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 
 	return e, nil
 }

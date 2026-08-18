@@ -32,6 +32,16 @@ const (
 	ActionConnectorCreated = "connector.created"
 	ActionConnectorUpdated = "connector.updated"
 	ActionConnectorDeleted = "connector.deleted"
+
+	// MCP gateway actions (internal/module/mcp), written from the
+	// tools/call-time enforcement middleware — see docs/07-sheets-adapter-plan.md
+	// step 3. All three are written; metadata never carries the bearer
+	// token, decrypted connector config, or a whole request/tool-argument
+	// struct (CLAUDE.md's redaction ground rule) — only connector_id, tool,
+	// and (for a denial) missing_permission.
+	ActionMCPSessionStarted = "mcp.session.started"
+	ActionMCPToolCalled     = "mcp.tool.called"
+	ActionMCPToolDenied     = "mcp.tool.denied"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

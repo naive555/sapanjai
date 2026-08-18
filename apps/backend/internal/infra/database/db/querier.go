@@ -29,6 +29,10 @@ type Querier interface {
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
+	// Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
+	// key_hash carries a unique index (migration 00008), so this is a single
+	// indexed read — no Redis cache in front of it, per Decision 1.
+	GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKey, error)
 	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
@@ -52,6 +56,10 @@ type Querier interface {
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	// Best-effort bookkeeping: called after a successful RequireMCPKey
+	// authentication. A failure to stamp must never fail the MCP request, so
+	// the caller logs and swallows any error from this query.
+	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
 	UpsertOrgSubscription(ctx context.Context, arg UpsertOrgSubscriptionParams) error

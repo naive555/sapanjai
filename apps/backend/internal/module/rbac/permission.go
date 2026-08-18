@@ -55,3 +55,52 @@ func (p *Principal) Allows(action string) bool {
 	}
 	return ActionMatches(p.Actions, action)
 }
+
+// Narrow intersects p's live RBAC grant with an MCP key's own (nullable)
+// scopes column, implementing docs/07-sheets-adapter-plan.md Decision 1: "a
+// key can only ever narrow, never widen". Lives here, next to Allows and
+// ActionMatches, because it is the same permission semantics applied twice
+// rather than a new concept — internal/middleware.RequireMCPKey calls it
+// (via a function value injected from server.go, to avoid that package
+// importing this one — see mcpkey.go's mcpPrincipalResolver doc comment)
+// immediately after Authorize resolves the caller's live grant.
+//
+// scopes == nil (SQL NULL) means the key carries no independent
+// restriction: p is returned unchanged, owner bypass included. That is
+// exactly "whatever the user can do in this org, re-resolved per request" —
+// the same value Authorize would have produced for a plain JWT caller.
+//
+// scopes != nil narrows. The effective action set becomes the subset of the
+// *scopes list itself* that p already permits — each candidate is checked
+// with p.Allows on the original, un-narrowed p, so an owner's bypass still
+// participates in that membership test: an owner minting a scoped key is
+// entitled to grant any action they hold, including ones only reachable via
+// the bypass, but only the ones actually named in scopes.
+//
+// The returned Principal deliberately has Role == "" (never "owner"), with
+// Actions set to that intersected list. This is the load-bearing line: if
+// the narrowed Principal kept Role == "owner", its own Allows() would
+// short-circuit to true for *every* action regardless of Actions, and the
+// scoping this method exists to enforce would be silently discarded — a
+// scoped key minted by an owner would grant everything, not just its
+// scopes. Clearing Role forces the narrowed Principal's Allows() to fall
+// through to ActionMatches against exactly the intersected set, for owners
+// and members alike.
+func (p *Principal) Narrow(scopes []string) *Principal {
+	if scopes == nil {
+		return p
+	}
+
+	kept := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		if p.Allows(scope) {
+			kept = append(kept, scope)
+		}
+	}
+
+	return &Principal{
+		UserID:         p.UserID,
+		OrganizationID: p.OrganizationID,
+		Actions:        kept,
+	}
+}

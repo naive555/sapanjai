@@ -294,17 +294,22 @@ func TestService_Revoke_ErrorPropagates(t *testing.T) {
 	}
 }
 
-// ---- hashToken sanity (belt-and-braces on the documented deviation) ----
+// ---- HashToken sanity (belt-and-braces on the documented deviation) ----
+//
+// Exported in step 3 (docs/07-sheets-adapter-plan.md) so
+// internal/middleware.RequireMCPKey can hash a presented bearer token with
+// the exact same function used at mint time; this test still exercises it
+// through the package's public surface.
 
 func TestHashToken_DeterministicAndNotBcrypt(t *testing.T) {
 	token := "sk_live_abc123"
-	h1 := hashToken(token)
-	h2 := hashToken(token)
+	h1 := HashToken(token)
+	h2 := HashToken(token)
 	if h1 != h2 {
-		t.Fatalf("hashToken is not deterministic: %q != %q (bcrypt would salt differently each call)", h1, h2)
+		t.Fatalf("HashToken is not deterministic: %q != %q (bcrypt would salt differently each call)", h1, h2)
 	}
 	sum := sha256.Sum256([]byte(token))
 	if h1 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("hashToken(%q) = %q, want sha256 hex digest", token, h1)
+		t.Fatalf("HashToken(%q) = %q, want sha256 hex digest", token, h1)
 	}
 }
