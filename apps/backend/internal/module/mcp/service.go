@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,6 +24,18 @@ import (
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/rbac"
 )
+
+// toolCallCost is the floor every tools/call charges against its
+// connector's rate-limit bucket, per docs/07-sheets-adapter-plan.md step 4:
+// "the bucket counts upstream Google API requests, not MCP tool calls," but
+// step 3's trivial tool (and every tool up to step 5) makes zero upstream
+// calls. Charging nothing would let a tool call be free right up until the
+// first real adapter ships, so every tools/call is worth a floor of 1 unit
+// — the gateway itself is worth limiting. A real adapter that issues N
+// upstream requests (step 7's paged sheet scan) charges N by calling
+// Service.ChargeRateLimit directly, mid-execution, per page fetched,
+// instead of relying on this dispatch-time floor.
+const toolCallCost = 1
 
 // ServerName and ServerVersion identify this gateway to clients during the
 // initialize handshake.
@@ -42,18 +55,49 @@ type connectorGetter interface {
 
 var _ connectorGetter = (*connector.Service)(nil)
 
+// rateLimiter is the subset of *appredis.RateLimiter this depends on,
+// narrowed so unit tests can hand-mock it without importing infra/redis
+// (mirrors connectorGetter's reasoning). n is charged in whole units — see
+// toolCallCost's doc comment for what "a unit" means today and how that
+// changes once a real adapter lands.
+type rateLimiter interface {
+	Take(ctx context.Context, connectorID string, n int) (allowed bool, retryAfter time.Duration, err error)
+}
+
 // Service builds per-request *mcp.Server instances scoped to one
 // authenticated principal and one resolved connector, wiring both
 // enforcement layers plus best-effort audit writes.
 type Service struct {
 	connectors connectorGetter
+	limiter    rateLimiter
 	audit      *auditlog.Service
 	log        *slog.Logger
 }
 
-// NewService builds an mcp Service.
-func NewService(connectors connectorGetter, audit *auditlog.Service, log *slog.Logger) *Service {
-	return &Service{connectors: connectors, audit: audit, log: log}
+// NewService builds an mcp Service. limiter may be nil — every call site
+// that constructs a Service without one (every unit test in this package
+// today) gets no rate limiting rather than a nil-pointer panic; server.go's
+// production wiring always supplies a real *appredis.RateLimiter.
+func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, log *slog.Logger) *Service {
+	return &Service{connectors: connectors, limiter: limiter, audit: audit, log: log}
+}
+
+// ChargeRateLimit charges n units against connectorID's upstream-request
+// budget directly, bypassing the per-tools/call dispatch check in enforce.
+// This is the seam docs/07-sheets-adapter-plan.md step 4 asks for and step
+// 7 will use: a tool whose handler makes N upstream Google API calls (the
+// paged sheet scan) calls this once per page fetched, mid-execution,
+// instead of paying a single floor-of-1 charge at dispatch time. No caller
+// exists yet — step 3's trivial tool and this step's dispatch-time floor
+// are the only rate-limit consumers today — but the method is exported now
+// so a future tools_sheets.go can reach the same bucket enforce already
+// checks, without either duplicating RateLimiter wiring or reaching past
+// Service's own encapsulation of it.
+func (s *Service) ChargeRateLimit(ctx context.Context, connectorID uuid.UUID, n int) (allowed bool, retryAfter time.Duration, err error) {
+	if s.limiter == nil {
+		return true, 0, nil
+	}
+	return s.limiter.Take(ctx, connectorID.String(), n)
 }
 
 // ResolveConnector fetches connectorID scoped to organizationID — always the
@@ -165,6 +209,37 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 					s.auditToolDenied(ctx, p, conn, params.Name, action)
 					return PermissionDenied(action), nil
 				}
+				// Rate-limit check runs after the permission check (an
+				// unpermitted call should never spend budget) and before
+				// dispatch — landed here, ahead of any real adapter, so no
+				// tool ever ships able to reach a Google API unguarded
+				// (docs/07-sheets-adapter-plan.md step 4). toolCallCost is
+				// the dispatch-time floor; a real adapter charges its own
+				// per-upstream-request cost mid-execution via
+				// Service.ChargeRateLimit instead of relying solely on
+				// this floor.
+				if s.limiter != nil {
+					allowed, retryAfter, limitErr := s.limiter.Take(ctx, conn.ID.String(), toolCallCost)
+					if limitErr != nil {
+						// A genuine infra failure (Redis unreachable, a
+						// malformed script result) is not the same outcome
+						// as an exhausted bucket: fail closed with a
+						// readable IsError rather than either admitting an
+						// unmetered call or aborting the whole JSON-RPC
+						// turn with a protocol error the model can't act
+						// on (see this file's package doc comment on the
+						// two failure channels).
+						if s.log != nil {
+							s.log.Error("mcp rate limiter check failed", "error", limitErr,
+								"connector_id", conn.ID, "tool", params.Name)
+						}
+						return ErrorResult(limitErr), nil
+					}
+					if !allowed {
+						s.auditRateLimitHit(ctx, p, conn, params.Name)
+						return RateLimited(retryAfter), nil
+					}
+				}
 				// Audited before dispatch: this records that a permitted
 				// call was attempted, independent of whatever the tool's
 				// own handler later returns (success or its own IsError).
@@ -197,8 +272,9 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 	}
 }
 
-// auditSessionStarted, auditToolCalled, and auditToolDenied all funnel
-// through recordAudit. Every metadata map here is deliberately tiny and
+// auditSessionStarted, auditToolCalled, auditToolDenied, and
+// auditRateLimitHit all funnel through recordAudit. Every metadata map here
+// is deliberately tiny and
 // explicit — connector_id, tool, missing_permission — never the request
 // envelope, never a tool argument (which, once real adapters land, could be
 // business data such as a spreadsheet cell value or a partner name; see
@@ -223,6 +299,17 @@ func (s *Service) auditToolDenied(ctx context.Context, p *rbac.Principal, conn d
 		"connector_id":       conn.ID.String(),
 		"tool":               tool,
 		"missing_permission": action,
+	})
+}
+
+// auditRateLimitHit records mcp.ratelimit.hit when a tools/call is refused
+// at dispatch time because its connector's upstream-request bucket is
+// exhausted — a quota failure, not an authorization one, hence no
+// missing_permission field (contrast auditToolDenied above).
+func (s *Service) auditRateLimitHit(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
+	s.recordAudit(ctx, auditlog.ActionMCPRateLimitHit, p, map[string]string{
+		"connector_id": conn.ID.String(),
+		"tool":         tool,
 	})
 }
 

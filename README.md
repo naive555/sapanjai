@@ -308,6 +308,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
+| `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) step 4. Charges 1 unit per `tools/call` today; a real adapter charges per upstream request instead |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |
 | `WORKER_JOB_TIMEOUT` | `5m` | per-run timeout, any job |
 | `SESSION_CLEANUP_INTERVAL` | `1h` | |
@@ -316,7 +317,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 
 `DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname. `.env.docker` supplies the rest of the env for the containerized api/worker — throwaway dev placeholders, and it deliberately omits `DATABASE_URL` for the same reason. Like `.env`, it is git-ignored and created from a tracked template: `cp .env.docker.example .env.docker` before your first `docker compose up`.
 
-Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (max 5 / 15 min), `worker:lock:<jobName>` (TTL ≈ job interval).
+Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (max 5 / 15 min), `worker:lock:<jobName>` (TTL ≈ job interval), `mcp:ratelimit:<connectorId>` (token bucket, idle TTL 2 min).
 
 ## Docker
 

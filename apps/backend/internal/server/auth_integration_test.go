@@ -32,7 +32,13 @@ import (
 // Redis assertions. Each test uses unique emails (uuid-suffixed) rather
 // than flushing Redis wholesale, so cases stay isolated without touching
 // data outside their own keys.
-func setupTestServer(t *testing.T) (*httptest.Server, *config.Config, *database.Store) {
+//
+// configure is optional and applied to the *config.Config after its
+// defaults are set but before server.New builds against it — e.g. the MCP
+// rate-limit test lowers MCPRateLimitPerMin so it can trip the bucket in a
+// handful of calls instead of issuing 61 real ones. Existing callers that
+// pass none get the same defaults as before this parameter existed.
+func setupTestServer(t *testing.T, configure ...func(*config.Config)) (*httptest.Server, *config.Config, *database.Store) {
 	t.Helper()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -69,6 +75,10 @@ func setupTestServer(t *testing.T) (*httptest.Server, *config.Config, *database.
 		JWTAccessExpiresIn:  15 * time.Minute,
 		JWTRefreshExpiresIn: 7 * 24 * time.Hour,
 		ConnectorMasterKey:  bytes.Repeat([]byte{7}, envelope.MasterKeyLen), // fixed test key
+		MCPRateLimitPerMin:  60,                                             // matches config.Load's own default
+	}
+	for _, mutate := range configure {
+		mutate(cfg)
 	}
 
 	pool, err := database.New(ctx, databaseURL)

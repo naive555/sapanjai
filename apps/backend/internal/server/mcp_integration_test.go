@@ -3,10 +3,13 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/sapanjai/backend/internal/config"
 )
 
 // ---- helpers ----
@@ -375,6 +378,68 @@ func TestIntegration_MCP_HappyPath(t *testing.T) {
 		}
 		if !sawToolCalled {
 			t.Error("no mcp.tool.called audit row found")
+		}
+	})
+}
+
+// ---- rate limiting (docs/07-sheets-adapter-plan.md step 4) ----
+
+// TestIntegration_MCP_RateLimitTripsAndAudits exhausts a connector's
+// per-minute bucket and confirms the next tools/call is refused cleanly —
+// IsError with a RATE_LIMITED message stating a retry-after in seconds,
+// never a protocol error or an HTTP failure — plus exactly one
+// mcp.ratelimit.hit audit row. MCPRateLimitPerMin is set to 2 for this test
+// via setupTestServer's configure hook, so tripping the limit takes 3 calls
+// instead of the production default's 61.
+func TestIntegration_MCP_RateLimitTripsAndAudits(t *testing.T) {
+	ts, _, _ := setupTestServer(t, func(cfg *config.Config) {
+		cfg.MCPRateLimitPerMin = 2
+	})
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-ratelimit")
+	connID := createTestConnector(t, client, ts.URL, org, "conn-ratelimit")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "ratelimit-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	// The first 2 calls spend the whole budget: capacity 2, floor of 1 unit
+	// charged per tools/call (no real adapter exists yet to charge more).
+	for i := 0; i < 2; i++ {
+		res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
+		if err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
+		if res.IsError {
+			t.Fatalf("call %d unexpectedly errored: %v", i+1, res.Content)
+		}
+	}
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
+	if err != nil {
+		t.Fatalf("3rd call: transport/protocol error %v, want a clean IsError result", err)
+	}
+	if !res.IsError {
+		t.Fatal("3rd call succeeded, want RATE_LIMITED: the 2-token budget was already spent")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "RATE_LIMITED") {
+		t.Errorf("text = %q, want it to mention RATE_LIMITED", text.Text)
+	}
+	if !strings.Contains(text.Text, "Retry after") || !strings.Contains(text.Text, "seconds") {
+		t.Errorf("text = %q, want a stated retry-after in seconds so the agent can adapt", text.Text)
+	}
+
+	t.Run("audit trail has exactly one ratelimit hit", func(t *testing.T) {
+		_, rows := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.ratelimit.hit", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		if len(rows) != 1 {
+			t.Fatalf("mcp.ratelimit.hit rows = %d, want exactly 1 (one 3rd-call denial, nothing else in this org)", len(rows))
 		}
 	})
 }

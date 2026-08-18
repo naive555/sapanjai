@@ -49,6 +49,14 @@ const (
 
 	MCPKeyNotFound  = "MCP_KEY_NOT_FOUND"
 	MCPKeyNameTaken = "MCP_KEY_NAME_TAKEN"
+
+	// RateLimited is the MCP gateway's rate-limit exhaustion code
+	// (docs/07-sheets-adapter-plan.md step 4). No REST route emits it
+	// today — internal/module/mcp/errors.go's RateLimited helper builds a
+	// tool-specific CallToolResult with the concrete retry-after instead of
+	// this generic message — but the code lives here so it has exactly one
+	// definition, ready for a future REST caller.
+	RateLimited = "RATE_LIMITED"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -77,6 +85,8 @@ var Map = map[string]mapping{
 
 	MCPKeyNotFound:  {404, "MCP key not found"},
 	MCPKeyNameTaken: {409, "MCP key name already taken"},
+
+	RateLimited: {429, "Rate limit exceeded, try again later"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

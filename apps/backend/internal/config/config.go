@@ -54,6 +54,13 @@ type Config struct {
 	SessionCleanupInterval  time.Duration
 	SessionCleanupRetention time.Duration
 	SessionCleanupBatchSize int
+
+	// MCPRateLimitPerMin caps upstream-Google-API requests per connector,
+	// per minute (internal/infra/redis.RateLimiter, key
+	// "mcp:ratelimit:<connectorId>"), enforced in internal/module/mcp
+	// before a tools/call is dispatched. See
+	// docs/07-sheets-adapter-plan.md step 4.
+	MCPRateLimitPerMin int
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -147,6 +154,16 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("SESSION_CLEANUP_BATCH_SIZE must be between 1 and %d", maxCleanupBatchSize))
 	default:
 		cfg.SessionCleanupBatchSize = batchSize
+	}
+
+	mcpRateLimit, err := strconv.Atoi(getEnv("MCP_RATE_LIMIT_PER_MIN", "60"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("MCP_RATE_LIMIT_PER_MIN is not a valid integer: %v", err))
+	case mcpRateLimit < 1:
+		problems = append(problems, "MCP_RATE_LIMIT_PER_MIN must be greater than zero")
+	default:
+		cfg.MCPRateLimitPerMin = mcpRateLimit
 	}
 
 	if len(problems) > 0 {

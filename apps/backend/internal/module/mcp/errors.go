@@ -3,6 +3,7 @@ package mcp
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -35,6 +36,26 @@ func PermissionDenied(action string) *gomcp.CallToolResult {
 		IsError: true,
 		Content: []gomcp.Content{&gomcp.TextContent{
 			Text: fmt.Sprintf("Missing permission: %s", action),
+		}},
+	}
+}
+
+// RateLimited builds the CallToolResult a tools/call returns when the
+// connector's upstream-API rate-limit bucket
+// (internal/infra/redis.RateLimiter, key "mcp:ratelimit:<connectorId>") is
+// exhausted — docs/07-sheets-adapter-plan.md step 4. Like PermissionDenied,
+// this takes the IsError channel rather than a Go error: a JSON-RPC
+// protocol error would abort the agent's turn with no explanation, while an
+// ordinary tool result with a stated retry-after lets it back off and try
+// again. apperror.RateLimited carries the code's static (status, message)
+// pair for a future REST caller, but the retry-after is per-call and can
+// only be expressed here, next to the value that produced it.
+func RateLimited(retryAfter time.Duration) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf("RATE_LIMITED: this connector's request budget is exhausted. Retry after %d seconds.",
+				int64(retryAfter.Round(time.Second).Seconds())),
 		}},
 	}
 }

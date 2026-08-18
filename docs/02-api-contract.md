@@ -55,7 +55,13 @@ Service error map (service throws code → HTTP response):
 | `HEALTH_CHECK_UNSUPPORTED` | 501 | Health check not supported for this connector type |
 | `MCP_KEY_NOT_FOUND`     | 404    | MCP key not found                                |
 | `MCP_KEY_NAME_TAKEN`    | 409    | MCP key name already taken                       |
+| `RATE_LIMITED`          | 429    | Rate limit exceeded, try again later             |
 | (unknown)               | 500    | Internal server error                            |
+
+`RATE_LIMITED` has exactly one definition (`apperror.Map`, for a future REST
+caller) but no REST route emits it today — the MCP gateway's rate limiter
+(below) never surfaces it as an HTTP status at all, since a `tools/call`
+denial is a `CallToolResult{ IsError: true }`, not an HTTP error response.
 
 Global: unknown route → 404 `Route not found`; body validation failure → 422 `Validation failed`; malformed JSON → 400 `Invalid request body`.
 
@@ -236,9 +242,35 @@ the REST 403 body above.
 | `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
 | `mcp.tool.called` | A `tools/call` the caller was permitted to make, recorded before dispatch | `connector_id`, `tool` |
 | `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
+| `mcp.ratelimit.hit` | A permitted `tools/call` refused because its connector's rate-limit bucket is exhausted (step 4) | `connector_id`, `tool` |
 
 Metadata never carries the bearer token, decrypted connector config, or a
 whole request/tool-argument struct — only the small, explicit fields above.
+
+**Rate limiting (step 4).** Every connector has its own token bucket
+(`internal/infra/redis.RateLimiter`, Redis key `mcp:ratelimit:<connectorId>`),
+capacity `MCP_RATE_LIMIT_PER_MIN` tokens (default 60), refilling continuously
+over 60 seconds. The bucket counts **upstream API requests**, not MCP tool
+calls — Google's own quotas (~60 req/min/user, ~300 req/min/project) are
+counted in API requests, so a limiter keyed to tool calls would measure the
+wrong thing. Step 3's trivial tool (and every tool before a real adapter
+lands) makes zero upstream calls, so every `tools/call` charges a floor of 1
+unit today; a real adapter charges N units for N upstream requests instead
+(the paged sheet scan in step 7 charges 1 unit per page fetched, mid-scan,
+rather than paying the whole scan's cost up front). The check runs after the
+permission check and before dispatch, so an unpermitted call never spends
+budget.
+
+An exhausted bucket is a normal tool result, not a protocol error or an HTTP
+failure:
+```
+CallToolResult{ IsError: true, Content: [{ text:
+  "RATE_LIMITED: this connector's request budget is exhausted. Retry after <n> seconds." }] }
+```
+`<n>` is always a whole number of seconds (rounded up), so the agent can back
+off a concrete amount rather than guessing. Each denial writes a best-effort
+`mcp.ratelimit.hit` audit row (`connector_id`, `tool`) — see the audit table
+above.
 
 ### API docs
 
@@ -256,6 +288,7 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | `CONNECTOR_MASTER_KEY` | — | base64, exactly 32 bytes (`openssl rand -base64 32`); master key wrapping every connector's envelope-encryption data key |
 | `JWT_ACCESS_EXPIRES_IN` | 15m | duration string |
 | `JWT_REFRESH_EXPIRES_IN` | 604800 | **seconds** (integer) |
+| `MCP_RATE_LIMIT_PER_MIN` | 60 | per-connector upstream-API token-bucket capacity, tokens/minute (`mcp:ratelimit:<connectorId>`) — see the MCP gateway section above |
 | `LOG_LEVEL` | info | fatal/error/warn/info/debug/trace |
 | `NODE_ENV` → rename `APP_ENV` | development | dev enables pretty logging |
 

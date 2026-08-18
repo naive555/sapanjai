@@ -42,6 +42,14 @@ const (
 	ActionMCPSessionStarted = "mcp.session.started"
 	ActionMCPToolCalled     = "mcp.tool.called"
 	ActionMCPToolDenied     = "mcp.tool.denied"
+
+	// ActionMCPRateLimitHit is written when a connector's rate-limit
+	// bucket (internal/infra/redis.RateLimiter) is exhausted at
+	// tools/call dispatch time — docs/07-sheets-adapter-plan.md step 4.
+	// Metadata carries connector_id and tool, the same shape as
+	// ActionMCPToolDenied, minus missing_permission (this is a quota
+	// failure, not an authorization one).
+	ActionMCPRateLimitHit = "mcp.ratelimit.hit"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

@@ -110,7 +110,8 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		}
 		return principal.Narrow(scopes), nil
 	}
-	mcpSvc := mcp.NewService(connectorSvc, auditSvc, log)
+	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin)
+	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, log)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 
 	return e, nil
