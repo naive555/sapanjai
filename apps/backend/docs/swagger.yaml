@@ -48,6 +48,19 @@ definitions:
     - name
     - slug
     type: object
+  CreateResponse:
+    properties:
+      apiKey:
+        type: string
+      createdAt:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   CreateRoleRequest:
     properties:
       description:
@@ -111,6 +124,29 @@ definitions:
     properties:
       success:
         type: boolean
+    type: object
+  MCPKeyResponse:
+    properties:
+      createdAt:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      lastUsedAt:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      revokedAt:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      userId:
+        type: string
     type: object
   MemberResponse:
     properties:
@@ -702,6 +738,116 @@ paths:
       summary: Health check
       tags:
       - health
+  /mcp-keys:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/MCPKeyResponse'
+            type: array
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: mcpkey:read'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List MCP API keys
+      tags:
+      - mcp-keys
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: MCP key payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/CreateResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: mcpkey:write'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: MCP_KEY_NAME_TAKEN
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create an MCP API key
+      tags:
+      - mcp-keys
+  /mcp-keys/{keyId}:
+    delete:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: MCP key ID
+        in: path
+        name: keyId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/SuccessResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: 'Missing permission: mcpkey:delete'
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: MCP_KEY_NOT_FOUND
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke an MCP API key
+      tags:
+      - mcp-keys
   /organizations:
     get:
       produces:

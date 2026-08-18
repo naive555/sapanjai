@@ -53,6 +53,8 @@ Service error map (service throws code → HTTP response):
 | `CONNECTOR_NAME_TAKEN`  | 409    | Connector name already taken                     |
 | `INVALID_CONNECTOR_TYPE`| 422    | Unsupported connector type                       |
 | `HEALTH_CHECK_UNSUPPORTED` | 501 | Health check not supported for this connector type |
+| `MCP_KEY_NOT_FOUND`     | 404    | MCP key not found                                |
+| `MCP_KEY_NAME_TAKEN`    | 409    | MCP key name already taken                       |
 | (unknown)               | 500    | Internal server error                            |
 
 Global: unknown route → 404 `Route not found`; body validation failure → 422 `Validation failed`; malformed JSON → 400 `Invalid request body`.
@@ -139,6 +141,27 @@ Response shape (all endpoints except `DELETE`, which returns `{ success: true }`
 update, not on get. The decrypted config exists only transiently inside the
 service (to seal it on write, or to hand it to a health-check `Checker`); no
 DTO or log line carries it.
+
+### MCP keys (`/mcp-keys`)
+
+Org-scoped, revocable Personal Access Tokens (PATs) that MCP clients present
+as a bearer credential (`docs/07-sheets-adapter-plan.md` Decision 1). This
+step ships the credential only — no MCP protocol endpoint exists yet, and
+`scopes` is stored but not yet enforced (that lands with the MCP gateway
+route, which intersects it with the creator's live RBAC grant).
+
+| Method/Path | Guard | Body | Behavior |
+| ----------- | ----- | ---- | -------- |
+| `POST /mcp-keys` | perm:`mcpkey:write` | `{ name: 1-100, expiresInDays?: int ≥ 1 }` | Mints a token of the form `sk_live_<base64url(32 random bytes)>` and stores only its SHA-256 hash (`key_hash`, unique-indexed) — never bcrypt, and deliberately so: the token is 256 bits of CSPRNG output, not a human-chosen password, so brute force is moot and a lookup-by-hash needs a deterministic digest. `expiresInDays`, if given, sets an absolute `expires_at`; omitted means the key never expires. 409 `MCP_KEY_NAME_TAKEN` (unique per org). **The raw token is returned in this response's `apiKey` field and nowhere else** — it is never stored, never logged, and cannot be recovered later. |
+| `GET /mcp-keys` | perm:`mcpkey:read` | — | Org's keys, oldest first. Never includes `key_hash` or the raw token. |
+| `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | — | Sets `revoked_at`; `{ success: true }`. Idempotent — revoking an already-revoked key re-stamps `revoked_at` and still succeeds. 404 `MCP_KEY_NOT_FOUND` for another org's id — indistinguishable from a nonexistent one. |
+
+Response shapes:
+
+```
+POST /mcp-keys  -> { id, name, apiKey, expiresAt, createdAt }
+GET  /mcp-keys  -> [{ id, organizationId, userId, name, scopes, lastUsedAt, expiresAt, revokedAt, createdAt }]
+```
 
 ### API docs
 

@@ -46,6 +46,9 @@ const (
 	ConnectorNameTaken     = "CONNECTOR_NAME_TAKEN"
 	InvalidConnectorType   = "INVALID_CONNECTOR_TYPE"
 	HealthCheckUnsupported = "HEALTH_CHECK_UNSUPPORTED"
+
+	MCPKeyNotFound  = "MCP_KEY_NOT_FOUND"
+	MCPKeyNameTaken = "MCP_KEY_NAME_TAKEN"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -71,6 +74,9 @@ var Map = map[string]mapping{
 	ConnectorNameTaken:     {409, "Connector name already taken"},
 	InvalidConnectorType:   {422, "Unsupported connector type"},
 	HealthCheckUnsupported: {501, "Health check not supported for this connector type"},
+
+	MCPKeyNotFound:  {404, "MCP key not found"},
+	MCPKeyNameTaken: {409, "MCP key name already taken"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

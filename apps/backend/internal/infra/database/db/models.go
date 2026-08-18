@@ -33,6 +33,19 @@ type Connector struct {
 	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
+type McpApiKey struct {
+	ID             uuid.UUID        `json:"id"`
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	UserID         uuid.UUID        `json:"user_id"`
+	Name           string           `json:"name"`
+	KeyHash        string           `json:"key_hash"`
+	Scopes         []string         `json:"scopes"`
+	LastUsedAt     pgtype.Timestamp `json:"last_used_at"`
+	ExpiresAt      pgtype.Timestamp `json:"expires_at"`
+	RevokedAt      pgtype.Timestamp `json:"revoked_at"`
+	CreatedAt      time.Time        `json:"created_at"`
+}
+
 type MemberRole struct {
 	ID           uuid.UUID `json:"id"`
 	MembershipID uuid.UUID `json:"membership_id"`

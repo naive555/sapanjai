@@ -23,6 +23,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/auth"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/health"
+	"github.com/sapanjai/backend/internal/module/mcpkey"
 	"github.com/sapanjai/backend/internal/module/organization"
 	"github.com/sapanjai/backend/internal/module/rbac"
 	"github.com/sapanjai/backend/internal/module/subscription"
@@ -86,6 +87,9 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	// health-check call resolves to 501 HEALTH_CHECK_UNSUPPORTED.
 	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(), log)
 	connector.NewHandler(connectorSvc).Register(e.Group("/connectors"), guards)
+
+	mcpKeySvc := mcpkey.NewService(store, log)
+	mcpkey.NewHandler(mcpKeySvc).Register(e.Group("/mcp-keys"), guards)
 
 	return e, nil
 }

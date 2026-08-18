@@ -16,6 +16,7 @@ type Querier interface {
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
+	CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (McpApiKey, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (Membership, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreatePermission(ctx context.Context, arg CreatePermissionParams) error
@@ -28,6 +29,7 @@ type Querier interface {
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
+	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
@@ -38,6 +40,7 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
+	ListMCPKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]McpApiKey, error)
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error)
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationMembersRow, error)
 	ListPermissionActionsByUserOrg(ctx context.Context, arg ListPermissionActionsByUserOrgParams) ([]string, error)
@@ -46,6 +49,7 @@ type Querier interface {
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
 	QueryAuditLogs(ctx context.Context, arg QueryAuditLogsParams) ([]AuditLog, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
+	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
