@@ -254,11 +254,31 @@ silently grant everything.
 and can adapt rather than the turn aborting. The text is byte-identical to
 the REST 403 body above.
 
-**Tool catalog (step 3):**
+**Tool catalog (step 6):** every entry also carries a connector-type gate —
+a tool is only ever registered against a connector of its own type, checked
+alongside `Permission` before `tools/list` or `tools/call` can reach it, so a
+`google_sheets`-only tool never appears against a `generic` connector (or
+vice versa) regardless of what the caller is permitted to do.
 
-| Tool | Permission | Description | Returns |
-| ---- | ---------- | ------------ | ------- |
-| `sapanjai_describe_connector` | `connector:read` | Describes the connector this session is bound to. Takes no arguments — the connector is fixed by the URL, not model-supplied. | `{ name, type, status }` — structurally incapable of returning `config`; the decrypted connector config never leaves `connector.Service`, same invariant as the REST `/connectors` routes. |
+| Tool | Connector type | Permission | Description | Returns |
+| ---- | --------------- | ---------- | ------------ | ------- |
+| `sapanjai_describe_connector` | any | `connector:read` | Describes the connector this session is bound to. Takes no arguments — the connector is fixed by the URL, not model-supplied. | `{ name, type, status }` — structurally incapable of returning `config`; the decrypted connector config never leaves `connector.Service`, same invariant as the REST `/connectors` routes. |
+| `sheets_list_spreadsheets` | `google_sheets` | `sheets:read` | Lists every spreadsheet the connector's own allowlist (`config.scope.spreadsheet_ids`) grants access to, with each one's title. The OAuth account behind the connector may be able to reach other spreadsheets too; only allowlisted ones are ever returned. Takes no arguments. | `{ spreadsheets: [{ spreadsheet_id, title, accessible }] }` — `accessible` is `false` for an allowlisted id the OAuth token can no longer read (a revoked share, a deleted file); reported per-item rather than failing the whole call. |
+| `sheets_describe_spreadsheet` | `google_sheets` | `sheets:read` | Schema discovery (docs/06-sheets-adapter.md §4.1): one spreadsheet's title, every tab's name and row/column count, and each tab's column headers, optionally with a few sample data rows. Sheets has no schema, so this is meant to be called before `sheets_query_rows`/`sheets_read_range`. Input: `{ spreadsheet_id: string (required), include_sample_rows: int 0-5, default 0 }`. | `{ spreadsheet_id, title, sheets: [{ name, row_count, column_count, columns: [{ index, letter, header }], sample_rows: [[string]] }] }` |
+
+**Google Sheets tool guardrails (step 6).** `spreadsheet_id` is checked
+against the connector's stored allowlist on **every** call — freshly
+decrypted and re-parsed each time, never a value cached from
+connector-creation or session-start time, so a narrowed allowlist takes
+effect on the very next call. An id absent from the allowlist returns
+`IsError: true` with a `SPREADSHEET_NOT_ALLOWED` result (docs/06-sheets-
+adapter.md §8), naming `sheets_list_spreadsheets` as the recovery path — not
+a JSON-RPC protocol error, so the model can adapt rather than the turn
+aborting. `include_sample_rows` outside `0-5` is rejected before any config
+decryption or upstream call. The connector's OAuth access token is cached
+in-process per connector id (`golang.org/x/oauth2.ReuseTokenSource`,
+deliberately not Redis — a derived access token is a live credential) and
+reused across calls against the same connector.
 
 **Audit.** Best-effort (a failed write never fails the MCP call), same
 `GET /audit-logs` trail as everything else:
@@ -266,7 +286,7 @@ the REST 403 body above.
 | Action | Written when | Metadata |
 | ------ | ------------ | -------- |
 | `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
-| `mcp.tool.called` | A `tools/call` the caller was permitted to make, recorded before dispatch | `connector_id`, `tool` |
+| `mcp.tool.called` | A `tools/call` the caller was permitted to make, recorded before dispatch | `connector_id`, `tool`, plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them (never any other argument, and never a cell value) |
 | `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
 | `mcp.ratelimit.hit` | A permitted `tools/call` refused because its connector's rate-limit bucket is exhausted (step 4) | `connector_id`, `tool` |
 

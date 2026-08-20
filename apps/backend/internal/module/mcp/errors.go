@@ -60,6 +60,53 @@ func RateLimited(retryAfter time.Duration) *gomcp.CallToolResult {
 	}
 }
 
+// SpreadsheetNotAllowed builds the CallToolResult docs/06-sheets-adapter.md
+// §8's SPREADSHEET_NOT_ALLOWED describes: spreadsheetID is real enough that
+// the connector's own OAuth token might well be able to reach it, but it is
+// absent from this connector's allowlist (config.scope.spreadsheet_ids) —
+// checked fresh on every call (googlesheets.Config.IsSpreadsheetAllowed),
+// never against a value cached from connector-creation time. The message
+// names the recovery path per docs/06 §8's "must state a fix": call
+// sheets_list_spreadsheets to see what this connector can actually reach.
+func SpreadsheetNotAllowed(spreadsheetID string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"SPREADSHEET_NOT_ALLOWED: %q is not on this connector's allowlist. "+
+					"Call sheets_list_spreadsheets to see which spreadsheets this connector can access.",
+				spreadsheetID),
+		}},
+	}
+}
+
+// invalidSampleRowCount builds the CallToolResult
+// sheets_describe_spreadsheet returns when include_sample_rows falls
+// outside its documented 0-maxSampleRows bound (docs/06-sheets-adapter.md
+// §4.1). Checked before any config decryption or network call, so an
+// out-of-range value never spends a byte of the connector's OAuth
+// credential or rate-limit budget.
+func invalidSampleRowCount(n int) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf("include_sample_rows must be between 0 and %d (got %d).", maxSampleRows, n),
+		}},
+	}
+}
+
+// missingSpreadsheetID builds the CallToolResult a sheets_* tool returns
+// when the model omitted a required spreadsheet_id — a plain input error,
+// checked before config decryption or the allowlist, so it costs nothing.
+func missingSpreadsheetID() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "spreadsheet_id is required. Call sheets_list_spreadsheets to see which ids this connector can access.",
+		}},
+	}
+}
+
 // ErrorResult converts a service-level error into a CallToolResult with
 // IsError set: apperror.Resolve's message for a known *apperror.Error
 // (matching the text the REST API would return for the same failure), or a

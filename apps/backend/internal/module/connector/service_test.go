@@ -631,3 +631,55 @@ func TestService_CheckHealth_DecryptFailurePropagates(t *testing.T) {
 		t.Fatalf("expected a plain (non-apperror) error, got *apperror.Error(%s)", appErr.Code)
 	}
 }
+
+// ---- OpenConfig (docs/07-sheets-adapter-plan.md step 6: the MCP gateway's
+// seam onto an already-fetched row's decrypted config) ----
+
+func TestService_OpenConfig_DecryptsAndParses(t *testing.T) {
+	orgID := uuid.New()
+	crypto := newTestCrypto(t)
+	config := map[string]any{"oauth": map[string]any{"refresh_token": "rt"}}
+	plaintext, _ := json.Marshal(config)
+	sealed, err := crypto.Seal(context.Background(), plaintext, aad(orgID))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	svc := NewService(&mockConnectorStore{}, crypto, newTestAudit(&spyQuerier{}), allowAllLimiter(), NewRegistry(), newTestLog())
+
+	got, err := svc.OpenConfig(context.Background(), orgID, sealed)
+	if err != nil {
+		t.Fatalf("OpenConfig: %v", err)
+	}
+	oauth, ok := got["oauth"].(map[string]any)
+	if !ok || oauth["refresh_token"] != "rt" {
+		t.Fatalf("OpenConfig = %v, want the decrypted config back", got)
+	}
+}
+
+// TestService_OpenConfig_ScopedToOrganization proves the AAD binding: a
+// config sealed under one organization cannot be opened under another's id
+// — the same tenant-isolation defense-in-depth CheckHealth already relies
+// on via openConfig, now reachable through the exported wrapper too.
+func TestService_OpenConfig_ScopedToOrganization(t *testing.T) {
+	crypto := newTestCrypto(t)
+	sealed, err := crypto.Seal(context.Background(), []byte(`{"a":1}`), aad(uuid.New()))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	svc := NewService(&mockConnectorStore{}, crypto, newTestAudit(&spyQuerier{}), allowAllLimiter(), NewRegistry(), newTestLog())
+
+	if _, err := svc.OpenConfig(context.Background(), uuid.New(), sealed); err == nil {
+		t.Fatal("expected an error opening config sealed under a different organization id")
+	}
+}
+
+func TestService_OpenConfig_PropagatesDecryptError(t *testing.T) {
+	svc := NewService(&mockConnectorStore{}, &failingSealer{err: errors.New("decrypt boom")}, newTestAudit(&spyQuerier{}), allowAllLimiter(), NewRegistry(), newTestLog())
+
+	_, err := svc.OpenConfig(context.Background(), uuid.New(), json.RawMessage(`{"v":1,"kid":"x","dek":"AA==","ct":"AA=="}`))
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+}

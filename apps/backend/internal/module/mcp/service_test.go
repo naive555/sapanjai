@@ -191,11 +191,19 @@ func TestEnforce_PermissionDeniedTextMatchesRESTBody(t *testing.T) {
 // ---- ResolveConnector: tenant isolation ----
 
 type fakeConnectorGetter struct {
-	get func(ctx context.Context, organizationID, connectorID uuid.UUID) (db.Connector, error)
+	get        func(ctx context.Context, organizationID, connectorID uuid.UUID) (db.Connector, error)
+	openConfig func(ctx context.Context, organizationID uuid.UUID, encryptedConfig json.RawMessage) (map[string]any, error)
 }
 
 func (f *fakeConnectorGetter) Get(ctx context.Context, organizationID, connectorID uuid.UUID) (db.Connector, error) {
 	return f.get(ctx, organizationID, connectorID)
+}
+
+func (f *fakeConnectorGetter) OpenConfig(ctx context.Context, organizationID uuid.UUID, encryptedConfig json.RawMessage) (map[string]any, error) {
+	if f.openConfig == nil {
+		return nil, errors.New("fakeConnectorGetter: OpenConfig not configured")
+	}
+	return f.openConfig(ctx, organizationID, encryptedConfig)
 }
 
 func TestResolveConnector_DelegatesToConnectorService(t *testing.T) {

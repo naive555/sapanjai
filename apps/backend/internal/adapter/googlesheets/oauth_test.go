@@ -49,6 +49,52 @@ func TestTokenSourceCache_DifferentConnectorsGetDifferentSources(t *testing.T) {
 	}
 }
 
+// TestTokenSourceCache_RotatedCredentialRebuilds is the regression test for
+// a bug found reviewing step 6: the cache keyed only on connector id, so a
+// customer who rotated a leaked refresh token through PATCH /connectors/:id
+// kept being served the TokenSource built from the OLD credential until the
+// process restarted. Nothing in production ever called Delete, and the two
+// code paths involved (the REST handler that rotates, the MCP tool handler
+// that reads) are in different modules on different requests, so no manual
+// eviction was ever going to happen reliably.
+func TestTokenSourceCache_RotatedCredentialRebuilds(t *testing.T) {
+	cache := NewTokenSourceCache()
+	id := uuid.New()
+
+	leaked := testOAuthConfig()
+	rotated := testOAuthConfig()
+	rotated.RefreshToken = "1//0g-rotated-after-a-leak"
+
+	before := cache.Get(context.Background(), id, leaked)
+	after := cache.Get(context.Background(), id, rotated)
+
+	if before == after {
+		t.Fatal("a rotated refresh token still resolved to the TokenSource built from the retired credential")
+	}
+
+	// ...while an unchanged credential must still hit the cache, which is
+	// the whole point of holding one.
+	again := cache.Get(context.Background(), id, rotated)
+	if again != after {
+		t.Fatal("an unchanged credential rebuilt its TokenSource instead of reusing the cached one")
+	}
+}
+
+// A rotation of the client secret alone (same refresh token) must also
+// rebuild — all three credential fields feed the fingerprint.
+func TestTokenSourceCache_RotatedClientSecretRebuilds(t *testing.T) {
+	cache := NewTokenSourceCache()
+	id := uuid.New()
+
+	original := testOAuthConfig()
+	rotated := testOAuthConfig()
+	rotated.ClientSecret = "rotated-secret"
+
+	if cache.Get(context.Background(), id, original) == cache.Get(context.Background(), id, rotated) {
+		t.Fatal("a rotated client secret still resolved to the previously cached TokenSource")
+	}
+}
+
 func TestTokenSourceCache_DeleteEvicts(t *testing.T) {
 	cache := NewTokenSourceCache()
 	id := uuid.New()

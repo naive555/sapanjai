@@ -22,9 +22,29 @@ type Entry struct {
 	Permission string
 	// Description is mirrored into the mcp.Tool for the model.
 	Description string
-	// Register adds the tool to s, closing over conn rather than reading it
-	// from a model-supplied argument — see registerDescribeConnector.
-	Register func(s *gomcp.Server, conn db.Connector)
+	// ConnectorType restricts this entry to connectors of exactly this
+	// type — checked by Service.BuildServer alongside Permission before an
+	// entry is ever registered. The zero value ("") means "every connector
+	// type": sapanjai_describe_connector, step 3's connector-agnostic tool,
+	// leaves this unset. Google Sheets tools (tools_sheets.go, step 6) set
+	// it to connector.TypeGoogleSheets so they never appear against a
+	// "generic" or any other non-Sheets connector — there would be nothing
+	// for their handler to decrypt into a valid Config, and advertising a
+	// tool that can only ever fail is worse than not advertising it.
+	ConnectorType connector.Type
+	// Register adds the tool to s. svc is the owning *Service — closed over
+	// by tools that need it (Google Sheets tools call back into svc to
+	// decrypt conn's config fresh on every invocation and to reach the
+	// shared OAuth token-source cache); conn is closed over rather than
+	// read from any model-supplied argument, see registerDescribeConnector.
+	Register func(s *gomcp.Server, svc *Service, conn db.Connector)
+}
+
+// appliesTo reports whether e should even be considered for conn, before
+// any RBAC check: an entry whose ConnectorType is set only ever targets
+// that one connector type.
+func (e Entry) appliesTo(conn db.Connector) bool {
+	return e.ConnectorType == "" || string(e.ConnectorType) == conn.Type
 }
 
 // Catalog returns every tool the gateway knows how to expose, permitted or
@@ -41,6 +61,8 @@ func Catalog() []Entry {
 			Description: "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials.",
 			Register:    registerDescribeConnector,
 		},
+		sheetsListSpreadsheetsEntry,
+		sheetsDescribeSpreadsheetEntry,
 	}
 }
 
@@ -70,7 +92,7 @@ type describeConnectorOutput struct {
 	Status string `json:"status" jsonschema:"the connector's last known health status: active, inactive, or error"`
 }
 
-func registerDescribeConnector(s *gomcp.Server, conn db.Connector) {
+func registerDescribeConnector(s *gomcp.Server, _ *Service, conn db.Connector) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sapanjai_describe_connector",
 		Description: "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials.",

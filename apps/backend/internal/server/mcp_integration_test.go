@@ -35,6 +35,46 @@ func createTestConnector(t *testing.T, client *http.Client, baseURL string, org 
 	return id
 }
 
+// createGoogleSheetsTestConnector creates a "google_sheets" connector in org
+// via POST /connectors, using org's owner as the caller, with a config that
+// allowlists exactly one spreadsheet id — a fake but plausibly-shaped
+// refresh token/client id/secret, mirroring
+// connector_integration_test.go's TestIntegration_ConnectorsGoogleSheetsTypeAccepted.
+// Every test that uses this connector must stop short of any code path that
+// would actually exchange the refresh token (SPREADSHEET_NOT_ALLOWED and
+// input-bound rejections both do, by design — see tools_sheets.go's check
+// ordering) since this suite has no real Google credentials and must not
+// attempt real network calls.
+func createGoogleSheetsTestConnector(t *testing.T, client *http.Client, baseURL string, org createdOrg, name, allowlistedSpreadsheetID string) string {
+	t.Helper()
+
+	config := map[string]any{
+		"oauth": map[string]any{
+			"refresh_token": "1//0g-fake-refresh-token",
+			"client_id":     "fake.apps.googleusercontent.com",
+			"client_secret": "fake-client-secret",
+		},
+		"scope": map[string]any{
+			"spreadsheet_ids": []any{allowlistedSpreadsheetID},
+		},
+	}
+
+	resp, body := doJSON(t, client, baseURL, http.MethodPost, "/connectors",
+		map[string]any{"name": name, "type": "google_sheets", "config": config},
+		map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create google_sheets connector: status = %d, want 200; body = %v", resp.StatusCode, body)
+	}
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatalf("create google_sheets connector: missing id: %v", body)
+	}
+	return id
+}
+
 // mintMCPKeyAs mints an MCP API key using callerToken as the bearer (must
 // carry mcpkey:write in org), and returns its id and raw apiKey — the
 // caller's only opportunity to see the raw value, mirroring
@@ -442,4 +482,190 @@ func TestIntegration_MCP_RateLimitTripsAndAudits(t *testing.T) {
 			t.Fatalf("mcp.ratelimit.hit rows = %d, want exactly 1 (one 3rd-call denial, nothing else in this org)", len(rows))
 		}
 	})
+}
+
+// ---- Google Sheets tools (docs/07-sheets-adapter-plan.md step 6) ----
+
+// TestIntegration_MCP_SheetsToolsInvisibleWithoutSheetsRead proves the
+// plan's required visibility test end to end: a member with some other
+// grant (mcpkey:write, enough to mint their own key) but no sheets:read
+// sees neither sheets_list_spreadsheets nor sheets_describe_spreadsheet
+// against a real google_sheets connector, and a direct call is refused.
+func TestIntegration_MCP_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-sheets-perm-denied")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "sheets-conn-perm-denied", "1AbCFakeSpreadsheetId")
+
+	member := registerUser(t, client, ts.URL, "mcp-sheets-perm-denied-member")
+	inviteMember(t, client, ts.URL, org, member.Email, "member")
+	roleID := createConnectorRole(t, client, ts.URL, org, []string{"mcpkey:write"})
+	assignConnectorRole(t, client, ts.URL, org, member.UserID, roleID)
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, member.AccessToken, "no-sheets-read")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	if got := toolNames(t, cs); len(got) != 0 {
+		t.Errorf("tools/list = %v, want no tools for a principal without sheets:read", got)
+	}
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sheets_describe_spreadsheet"})
+	if err != nil {
+		return // unregistered-tool protocol error is a refusal too
+	}
+	if !res.IsError {
+		t.Fatal("sheets_describe_spreadsheet succeeded for a principal without sheets:read")
+	}
+}
+
+// TestIntegration_MCP_SheetsToolsVisibleWithSheetsRead is the positive
+// counterpart: a member granted exactly sheets:read (nothing else) sees
+// both tools in tools/list. It never calls either tool — this suite has no
+// real Google credentials — visibility alone is the assertion.
+func TestIntegration_MCP_SheetsToolsVisibleWithSheetsRead(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-sheets-perm-granted")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "sheets-conn-perm-granted", "1AbCFakeSpreadsheetId")
+
+	member := registerUser(t, client, ts.URL, "mcp-sheets-perm-granted-member")
+	inviteMember(t, client, ts.URL, org, member.Email, "member")
+	roleID := createConnectorRole(t, client, ts.URL, org, []string{"mcpkey:write", "sheets:read"})
+	assignConnectorRole(t, client, ts.URL, org, member.UserID, roleID)
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, member.AccessToken, "with-sheets-read")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	got := toolNames(t, cs)
+	want := map[string]bool{"sheets_list_spreadsheets": true, "sheets_describe_spreadsheet": true}
+	if len(got) != 2 {
+		t.Fatalf("tools/list = %v, want exactly the 2 sheets tools", got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected tool %q in tools/list", name)
+		}
+	}
+}
+
+// TestIntegration_MCP_SheetsToolsAbsentFromGenericConnector proves
+// connector-type gating end to end: even the owner, who bypasses RBAC
+// entirely, never sees the Sheets tools against a plain "generic"
+// connector — mirrors TestIntegration_MCP_HappyPath's existing assertion
+// that a generic connector's tools/list is exactly
+// [sapanjai_describe_connector], now stated as its own test so a future
+// regression here is unambiguous about which invariant broke.
+func TestIntegration_MCP_SheetsToolsAbsentFromGenericConnector(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-sheets-wrong-type")
+	connID := createTestConnector(t, client, ts.URL, org, "generic-conn")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "wrong-type-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	got := toolNames(t, cs)
+	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
+		t.Fatalf("tools/list = %v, want only sapanjai_describe_connector against a generic connector", got)
+	}
+}
+
+// TestIntegration_MCP_DescribeSpreadsheet_SpreadsheetNotAllowed is the
+// plan's required allowlist test: connID's config allowlists exactly
+// "1AbCFakeSpreadsheetId"; calling describe with a different,
+// plausibly-real-shaped id must be rejected by the allowlist alone — before
+// any OAuth token exchange, which would fail loudly (this suite's refresh
+// token is fake) if the check ran too late or not at all. Also asserts the
+// mcp.tool.called audit row records spreadsheet_id, per docs/06-sheets-
+// adapter.md §7.
+func TestIntegration_MCP_DescribeSpreadsheet_SpreadsheetNotAllowed(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-sheets-not-allowed")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "sheets-conn-not-allowed", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "not-allowed-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	const notAllowedID = "1XyZDifferentRealLookingSpreadsheetId"
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name:      "sheets_describe_spreadsheet",
+		Arguments: map[string]any{"spreadsheet_id": notAllowedID},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError for a spreadsheet id absent from the allowlist")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "SPREADSHEET_NOT_ALLOWED") {
+		t.Errorf("text = %q, want it to mention SPREADSHEET_NOT_ALLOWED", text.Text)
+	}
+
+	t.Run("audit row records spreadsheet_id, never cell values", func(t *testing.T) {
+		_, rows := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.tool.called", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		var found bool
+		for _, r := range rows {
+			// doJSON/doJSONList decode the response body's JSON directly,
+			// so the metadata object (json.RawMessage on the wire) arrives
+			// here as a map[string]any, not a string to re-unmarshal.
+			meta, ok := r["metadata"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if meta["tool"] == "sheets_describe_spreadsheet" {
+				found = true
+				if meta["spreadsheet_id"] != notAllowedID {
+					t.Errorf("audit metadata spreadsheet_id = %v, want %q", meta["spreadsheet_id"], notAllowedID)
+				}
+			}
+		}
+		if !found {
+			t.Error("no mcp.tool.called audit row found for sheets_describe_spreadsheet")
+		}
+	})
+}
+
+// TestIntegration_MCP_DescribeSpreadsheet_IncludeSampleRowsBounded is the
+// plan's required bound test: include_sample_rows outside 0-5 must be
+// rejected — using the connector's *allowlisted* spreadsheet id, so the
+// rejection is unambiguously about the bound and not the allowlist, while
+// still never reaching the network (this suite has no real Google
+// credentials).
+func TestIntegration_MCP_DescribeSpreadsheet_IncludeSampleRowsBounded(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-sheets-bound")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "sheets-conn-bound", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "bound-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	for _, n := range []int{-1, 6} {
+		res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+			Name: "sheets_describe_spreadsheet",
+			Arguments: map[string]any{
+				"spreadsheet_id":      "1AbCFakeSpreadsheetId",
+				"include_sample_rows": n,
+			},
+		})
+		if err != nil {
+			t.Fatalf("include_sample_rows=%d: call: %v", n, err)
+		}
+		if !res.IsError {
+			t.Fatalf("include_sample_rows=%d: expected IsError, got success", n)
+		}
+	}
 }

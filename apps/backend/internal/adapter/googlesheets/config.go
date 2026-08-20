@@ -11,7 +11,22 @@
 // past the call that needed it.
 package googlesheets
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrSpreadsheetNotAllowed is returned by every adapter operation that reads
+// a spreadsheet whose id is absent from the connector's own allowlist
+// (config.scope.spreadsheet_ids) — "the spec's single most important
+// security boundary" (docs/06-sheets-adapter.md §3), enforced on every call
+// against the freshly decrypted config, never a value cached from
+// connector-creation time. Wrapped with the offending id via fmt.Errorf's
+// %w, so a caller can both errors.Is against this sentinel and read the id
+// out of Error() — the id is an allowlist entry, not a credential, so it is
+// safe to surface to the model (docs/06-sheets-adapter.md §8
+// SPREADSHEET_NOT_ALLOWED).
+var ErrSpreadsheetNotAllowed = errors.New("googlesheets: spreadsheet not on connector allowlist")
 
 // Config is the parsed, validated shape of a "google_sheets" connector's
 // decrypted config (docs/06-sheets-adapter.md §3):

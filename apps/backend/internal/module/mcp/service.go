@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/sapanjai/backend/internal/adapter/googlesheets"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/connector"
@@ -48,9 +49,14 @@ const (
 // narrowed so unit tests can hand-mock it. Get already does everything this
 // package needs for tenant isolation: it scopes by organization_id and
 // returns apperror.NotFound for a connector belonging to another org,
-// byte-indistinguishable from one that does not exist at all.
+// byte-indistinguishable from one that does not exist at all. OpenConfig
+// decrypts an already-fetched row's config scoped to its organization — the
+// seam step 6's Google Sheets tools use to reach a connector's live config
+// (never a value cached from connector-creation or session-start time) on
+// every single tool invocation.
 type connectorGetter interface {
 	Get(ctx context.Context, organizationID, connectorID uuid.UUID) (db.Connector, error)
+	OpenConfig(ctx context.Context, organizationID uuid.UUID, encryptedConfig json.RawMessage) (map[string]any, error)
 }
 
 var _ connectorGetter = (*connector.Service)(nil)
@@ -72,6 +78,16 @@ type Service struct {
 	limiter    rateLimiter
 	audit      *auditlog.Service
 	log        *slog.Logger
+
+	// sheetsTokens holds one OAuth TokenSource per connector id, shared
+	// across every request this long-lived Service instance handles — see
+	// googlesheets.TokenSourceCache's doc comment on why that reuse is
+	// deliberate (a refresh-derived access token is a live customer
+	// credential, kept in-process memory rather than Redis). Building it
+	// unconditionally in NewService keeps that constructor's signature
+	// stable for every existing call site; only Google Sheets tool
+	// handlers (tools_sheets.go) ever read from it.
+	sheetsTokens *googlesheets.TokenSourceCache
 }
 
 // NewService builds an mcp Service. limiter may be nil — every call site
@@ -79,7 +95,29 @@ type Service struct {
 // today) gets no rate limiting rather than a nil-pointer panic; server.go's
 // production wiring always supplies a real *appredis.RateLimiter.
 func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, log *slog.Logger) *Service {
-	return &Service{connectors: connectors, limiter: limiter, audit: audit, log: log}
+	return &Service{
+		connectors:   connectors,
+		limiter:      limiter,
+		audit:        audit,
+		log:          log,
+		sheetsTokens: googlesheets.NewTokenSourceCache(),
+	}
+}
+
+// openGoogleSheetsConfig decrypts conn's stored config and parses it as a
+// google_sheets Config. Called by every sheets_* tool handler on every
+// invocation — never cached across calls — so a narrowed allowlist in the
+// stored config takes effect on the very next call
+// (docs/07-sheets-adapter-plan.md step 5's design point, first exercised by
+// a real tool here in step 6). conn.OrganizationID is trusted as-is: it
+// came from ResolveConnector, which already scoped the row lookup to the
+// caller's own organization.
+func (s *Service) openGoogleSheetsConfig(ctx context.Context, conn db.Connector) (*googlesheets.Config, error) {
+	raw, err := s.connectors.OpenConfig(ctx, conn.OrganizationID, conn.EncryptedConfig)
+	if err != nil {
+		return nil, err
+	}
+	return googlesheets.ParseConfig(raw)
 }
 
 // ChargeRateLimit charges n units against connectorID's upstream-request
@@ -136,8 +174,11 @@ func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector) *gomcp.Serve
 
 	var granted, denied []string
 	for _, e := range Catalog() {
+		if !e.appliesTo(conn) {
+			continue
+		}
 		if p.Allows(e.Permission) {
-			e.Register(srv, conn)
+			e.Register(srv, s, conn)
 			granted = append(granted, e.Name)
 			continue
 		}
@@ -243,7 +284,7 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 				// Audited before dispatch: this records that a permitted
 				// call was attempted, independent of whatever the tool's
 				// own handler later returns (success or its own IsError).
-				s.auditToolCalled(ctx, p, conn, params.Name)
+				s.auditToolCalled(ctx, p, conn, params.Name, auditableToolFields(params.Arguments))
 				return next(ctx, method, req)
 
 			case "tools/list":
@@ -287,11 +328,52 @@ func (s *Service) auditSessionStarted(ctx context.Context, p *rbac.Principal, co
 	})
 }
 
-func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
-	s.recordAudit(ctx, auditlog.ActionMCPToolCalled, p, map[string]string{
+func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string, extra map[string]string) {
+	metadata := map[string]string{
 		"connector_id": conn.ID.String(),
 		"tool":         tool,
-	})
+	}
+	for k, v := range extra {
+		metadata[k] = v
+	}
+	s.recordAudit(ctx, auditlog.ActionMCPToolCalled, p, metadata)
+}
+
+// auditableToolFields extracts the small, explicit set of tools/call
+// argument keys that are ever copied into mcp.tool.called audit metadata:
+// spreadsheet_id and sheet_name identify *which* resource a call touched —
+// exactly what an audit trail needs — without ever touching the argument's
+// actual business data (a filter value, a cell value). This is deliberately
+// a fixed allowlist of key names, not "log the whole arguments object":
+// docs/06-sheets-adapter.md §7, "log the column name filtered on, but never
+// the value," and CLAUDE.md's "log individual fields, never a whole
+// request/body struct" both apply to tool arguments exactly as they do to
+// HTTP request bodies. Unknown fields (a future tool's own arguments) are
+// silently ignored rather than logged, and a non-object or malformed
+// Arguments payload yields no fields at all rather than an error — this is
+// audit best-effort, not request validation.
+func auditableToolFields(rawArgs json.RawMessage) map[string]string {
+	if len(rawArgs) == 0 {
+		return nil
+	}
+	var parsed struct {
+		SpreadsheetID string `json:"spreadsheet_id"`
+		SheetName     string `json:"sheet_name"`
+	}
+	if err := json.Unmarshal(rawArgs, &parsed); err != nil {
+		return nil
+	}
+	fields := make(map[string]string, 2)
+	if parsed.SpreadsheetID != "" {
+		fields["spreadsheet_id"] = parsed.SpreadsheetID
+	}
+	if parsed.SheetName != "" {
+		fields["sheet_name"] = parsed.SheetName
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
 }
 
 func (s *Service) auditToolDenied(ctx context.Context, p *rbac.Principal, conn db.Connector, tool, action string) {

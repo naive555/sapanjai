@@ -247,6 +247,24 @@ func (s *Service) CheckHealth(ctx context.Context, organizationID, connectorID u
 	return updated, nil
 }
 
+// OpenConfig decrypts an already-fetched connector row's config, scoped to
+// organizationID exactly as sealConfig bound it. Exported for a caller that
+// already holds a connector row (via Get) and needs the decrypted config
+// in-process to build an upstream client itself — the MCP gateway
+// (internal/module/mcp), whose tool handlers need a live Google client, not
+// just a health-check probe result. Same invariant as CheckHealth's own use
+// of openConfig: the returned map is this call's only copy and must never
+// reach a DTO, a log line, or an audit field. Re-decrypting on every call
+// (rather than caching the result) is deliberate — see
+// docs/07-sheets-adapter-plan.md step 5's "every tool calls [the allowlist]
+// on every request against the stored config, never against a value cached
+// from connector-creation time": a caller that re-fetches the row per
+// request and calls this each time automatically re-reads a narrowed
+// allowlist on the very next call.
+func (s *Service) OpenConfig(ctx context.Context, organizationID uuid.UUID, encryptedConfig json.RawMessage) (map[string]any, error) {
+	return s.openConfig(ctx, organizationID, encryptedConfig)
+}
+
 // get fetches connectorID scoped to organizationID, translating a missing
 // row into apperror.NotFound. Shared by Get/Update/Delete/CheckHealth.
 func (s *Service) get(ctx context.Context, organizationID, connectorID uuid.UUID) (db.Connector, error) {
