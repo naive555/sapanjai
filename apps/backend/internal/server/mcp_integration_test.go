@@ -543,9 +543,14 @@ func TestIntegration_MCP_SheetsToolsVisibleWithSheetsRead(t *testing.T) {
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 
 	got := toolNames(t, cs)
-	want := map[string]bool{"sheets_list_spreadsheets": true, "sheets_describe_spreadsheet": true, "sheets_query_rows": true}
-	if len(got) != 3 {
-		t.Fatalf("tools/list = %v, want exactly the 3 sheets tools", got)
+	want := map[string]bool{
+		"sheets_list_spreadsheets":    true,
+		"sheets_describe_spreadsheet": true,
+		"sheets_query_rows":           true,
+		"sheets_read_range":           true,
+	}
+	if len(got) != 4 {
+		t.Fatalf("tools/list = %v, want exactly the 4 sheets tools", got)
 	}
 	for _, name := range got {
 		if !want[name] {
@@ -885,5 +890,148 @@ func TestIntegration_MCP_QueryRows_InvalidFilterOperator(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("unsupported operator: expected IsError, got success")
+	}
+}
+
+// ---- sheets_read_range (docs/07-sheets-adapter-plan.md step 8) ----
+
+// TestIntegration_MCP_ReadRange_SpreadsheetNotAllowed mirrors
+// TestIntegration_MCP_QueryRows_SpreadsheetNotAllowed: the allowlist check
+// runs before any config-derived OAuth token exchange, so this is safe to
+// drive end to end against a fake refresh token — a well-formed, bounded
+// range is used so the rejection is unambiguously about the allowlist, not
+// the range's own shape.
+func TestIntegration_MCP_ReadRange_SpreadsheetNotAllowed(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-readrange-not-allowed")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "readrange-conn-not-allowed", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "readrange-not-allowed-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	const notAllowedID = "1XyZDifferentRealLookingSpreadsheetId"
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_read_range",
+		Arguments: map[string]any{
+			"spreadsheet_id": notAllowedID,
+			"range":          "Contracts!A1:D100",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError for a spreadsheet id absent from the allowlist")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "SPREADSHEET_NOT_ALLOWED") {
+		t.Errorf("text = %q, want it to mention SPREADSHEET_NOT_ALLOWED", text.Text)
+	}
+}
+
+// TestIntegration_MCP_ReadRange_UnboundedRangeRejected proves an unbounded
+// range (docs/07 step 8: a bare sheet name, a column-only range) is
+// rejected before any config decryption or network call — using the
+// connector's allowlisted spreadsheet id, so the rejection is unambiguously
+// about the range's own shape, and the error names the fix.
+func TestIntegration_MCP_ReadRange_UnboundedRangeRejected(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-readrange-unbounded")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "readrange-conn-unbounded", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "readrange-unbounded-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	for _, rangeStr := range []string{"Contracts", "Contracts!A:D"} {
+		res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+			Name: "sheets_read_range",
+			Arguments: map[string]any{
+				"spreadsheet_id": "1AbCFakeSpreadsheetId",
+				"range":          rangeStr,
+			},
+		})
+		if err != nil {
+			t.Fatalf("range=%q: call: %v", rangeStr, err)
+		}
+		if !res.IsError {
+			t.Fatalf("range=%q: expected IsError, got success", rangeStr)
+		}
+		text, ok := res.Content[0].(*gomcp.TextContent)
+		if !ok {
+			t.Fatalf("range=%q: content[0] = %#v, want *TextContent", rangeStr, res.Content[0])
+		}
+		if !strings.Contains(text.Text, "row bounds") {
+			t.Errorf("range=%q: text = %q, want it to name the fix (explicit row bounds)", rangeStr, text.Text)
+		}
+	}
+}
+
+// TestIntegration_MCP_ReadRange_MissingRange proves range is required and
+// checked before any config decryption or network call.
+func TestIntegration_MCP_ReadRange_MissingRange(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-readrange-missing")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "readrange-conn-missing", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "readrange-missing-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_read_range",
+		Arguments: map[string]any{
+			"spreadsheet_id": "1AbCFakeSpreadsheetId",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("missing range: expected IsError, got success")
+	}
+}
+
+// TestIntegration_MCP_ReadRange_OverCapRejected proves the pre-fetch
+// row/cell cap (docs/07 step 8: 1,000 rows, 20,000 cells) is enforced
+// before any config decryption or network call, using the connector's
+// allowlisted spreadsheet id so the rejection is unambiguously about the
+// range's size.
+func TestIntegration_MCP_ReadRange_OverCapRejected(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-readrange-overcap")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "readrange-conn-overcap", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "readrange-overcap-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_read_range",
+		Arguments: map[string]any{
+			"spreadsheet_id": "1AbCFakeSpreadsheetId",
+			"range":          "Contracts!A1:A1001",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("range spanning 1001 rows: expected IsError, got success")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "narrow the range") {
+		t.Errorf("text = %q, want it to name the fix (narrow the range)", text.Text)
 	}
 }

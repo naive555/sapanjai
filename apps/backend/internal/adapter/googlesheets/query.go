@@ -378,7 +378,20 @@ func projectRow(row []any, headerIndex map[string]int, columns []string) map[str
 // scan's retained buffer is already far smaller than this by construction,
 // so this guards against wide rows (many or large columns), not deep scans.
 func checkResultSize(out *QueryRowsOutput) error {
-	encoded, err := json.Marshal(out.Rows)
+	return checkEncodedSize(out.Rows)
+}
+
+// checkEncodedSize enforces the shared ~256KB response body cap (docs/06
+// §6, docs/07 step 7) against the JSON-encoded size of v — generalized out
+// of checkResultSize (docs/07 step 8: "generalize it ... rather than
+// duplicating the constant") so sheets_read_range's readrange.go can reuse
+// the exact same cap and constant instead of hand-rolling a second one.
+// v is whatever the caller has already decided is "the result actually
+// being returned" — sheets_query_rows' windowed Rows, sheets_read_range's
+// padded Rows — never a larger structure that would double-count bytes the
+// cap isn't meant to police.
+func checkEncodedSize(v any) error {
+	encoded, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("googlesheets: encode result: %w", err)
 	}

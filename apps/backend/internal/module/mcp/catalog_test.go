@@ -7,19 +7,19 @@ import (
 	"github.com/sapanjai/backend/internal/module/mcp"
 )
 
-// TestCatalog_HasExactlyTheStepSevenTools locks the catalog's contents so an
+// TestCatalog_HasExactlyTheStepEightTools locks the catalog's contents so an
 // accidental addition or removal fails loudly here rather than only
 // surfacing as an unexplained tools/list count somewhere else. Step 3
 // shipped sapanjai_describe_connector; step 6 added the two Google Sheets
-// read tools; step 7 adds sheets_query_rows.
-func TestCatalog_HasExactlyTheStepSevenTools(t *testing.T) {
+// read tools; step 7 added sheets_query_rows; step 8 adds sheets_read_range.
+func TestCatalog_HasExactlyTheStepEightTools(t *testing.T) {
 	cat := mcp.Catalog()
-	if len(cat) != 4 {
-		t.Fatalf("Catalog() has %d entries, want exactly 4 for step 7", len(cat))
+	if len(cat) != 5 {
+		t.Fatalf("Catalog() has %d entries, want exactly 5 for step 8", len(cat))
 	}
 
 	wantNames := []string{
-		"sapanjai_describe_connector", "sheets_list_spreadsheets", "sheets_describe_spreadsheet", "sheets_query_rows",
+		"sapanjai_describe_connector", "sheets_list_spreadsheets", "sheets_describe_spreadsheet", "sheets_query_rows", "sheets_read_range",
 	}
 	for i, want := range wantNames {
 		if cat[i].Name != want {
@@ -66,6 +66,11 @@ func TestPermissionFor(t *testing.T) {
 	action, known = mcp.PermissionFor("sheets_query_rows")
 	if !known || action != mcp.PermissionSheetsRead {
 		t.Errorf("sheets_query_rows: known=%v action=%q, want known=true action=%q", known, action, mcp.PermissionSheetsRead)
+	}
+
+	action, known = mcp.PermissionFor("sheets_read_range")
+	if !known || action != mcp.PermissionSheetsRead {
+		t.Errorf("sheets_read_range: known=%v action=%q, want known=true action=%q", known, action, mcp.PermissionSheetsRead)
 	}
 
 	if _, known := mcp.PermissionFor("not_a_real_tool"); known {

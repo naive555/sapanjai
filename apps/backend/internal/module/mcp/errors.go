@@ -144,6 +144,35 @@ func invalidResponseFormat(got string) *gomcp.CallToolResult {
 	}
 }
 
+// missingRange builds the CallToolResult sheets_read_range returns when
+// the model omitted a required range — checked before config decryption or
+// the network, same discipline as missingSpreadsheetID/missingSheetName.
+func missingRange() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "range is required, e.g. \"Contracts!A1:D100\". Call sheets_describe_spreadsheet to see this spreadsheet's tab names.",
+		}},
+	}
+}
+
+// invalidReadRangeInput builds the CallToolResult sheets_read_range returns
+// for any range-shape problem googlesheets.ValidateReadRangeInput catches:
+// unparseable A1 syntax (including a formula or a second range smuggled in
+// — docs/07-sheets-adapter-plan.md step 8's guardrail requirement), an
+// unbounded range with no explicit row bounds on both ends, or a range
+// spanning more rows/cells than the pre-fetch cap allows. Every message
+// these produce names a fix and echoes back only the range string (or a
+// column/sheet name) the caller itself supplied — never a cell value — so
+// echoing err.Error() straight to the model carries no business data,
+// mirroring invalidQueryRowsInput's same reasoning for sheets_query_rows.
+func invalidReadRangeInput(err error) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{Text: err.Error()}},
+	}
+}
+
 // SheetNotFound builds the CallToolResult docs/06-sheets-adapter.md §8's
 // SHEET_NOT_FOUND describes: sheetName is not one of this spreadsheet's own
 // tabs. Names the recovery path per §8's "must state a fix": call

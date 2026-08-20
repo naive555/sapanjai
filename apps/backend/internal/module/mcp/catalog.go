@@ -64,6 +64,7 @@ func Catalog() []Entry {
 		sheetsListSpreadsheetsEntry,
 		sheetsDescribeSpreadsheetEntry,
 		sheetsQueryRowsEntry,
+		sheetsReadRangeEntry,
 	}
 }
 

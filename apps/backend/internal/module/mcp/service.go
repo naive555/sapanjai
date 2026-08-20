@@ -366,10 +366,11 @@ func (s *Service) auditSessionStarted(ctx context.Context, p *rbac.Principal, co
 // for why this fires from a defer rather than before next() runs).
 // duration_ms is always recorded now that the timing is available;
 // row_count is added only when result's own StructuredContent carries a
-// top-level "count" field (currently just sheets_query_rows) — extracted
-// via rowCountFromResult, never by re-deriving it from anything the caller
-// passed in, so a future tool without a "count" field simply omits it
-// rather than reporting a misleading 0.
+// top-level "count" or "row_count" field (sheets_query_rows and
+// sheets_read_range, respectively, as of docs/07 step 8) — extracted via
+// rowCountFromResult, never by re-deriving it from anything the caller
+// passed in, so a future tool without either field simply omits it rather
+// than reporting a misleading 0.
 func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string, elapsed time.Duration, extra map[string]any, result gomcp.Result) {
 	metadata := map[string]any{
 		"connector_id": conn.ID.String(),
@@ -386,13 +387,17 @@ func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn d
 }
 
 // rowCountFromResult peeks a completed tools/call's StructuredContent for a
-// top-level "count" field — sheets_query_rows' output shape (docs/07 step
-// 7's Decision 4: count/offset/has_more/...) is the first and, today, only
-// tool whose output carries one. This never touches result.Content (the
-// human/agent-facing text) and never inspects "rows" or any other field, so
-// there is no path from here to a cell value landing in an audit row — only
-// an integer count the tool itself already decided was safe to name in its
-// own output schema.
+// top-level "count" or "row_count" field: sheets_query_rows' output shape
+// (docs/07 step 7's Decision 4: count/offset/has_more/...) names its field
+// "count", while sheets_read_range's (docs/07 step 8) names its
+// "row_count" — the more descriptive name for a tool whose output is a
+// literal row count, not a match count. Rather than force read_range's
+// public output schema to match query_rows' naming just so this internal
+// extractor could stay narrower, the probe checks both field names; either
+// way, the only thing ever pulled out is a single integer the tool itself
+// already decided was safe to name in its own output schema — never
+// "rows"/"cells" or any other field, so there is still no path from here
+// to a cell value landing in an audit row.
 func rowCountFromResult(result gomcp.Result) (int, bool) {
 	ctr, ok := result.(*gomcp.CallToolResult)
 	if !ok || ctr == nil || ctr.IsError {
@@ -403,12 +408,19 @@ func rowCountFromResult(result gomcp.Result) (int, bool) {
 		return 0, false
 	}
 	var probe struct {
-		Count *int `json:"count"`
+		Count    *int `json:"count"`
+		RowCount *int `json:"row_count"`
 	}
-	if err := json.Unmarshal(raw, &probe); err != nil || probe.Count == nil {
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		return 0, false
 	}
-	return *probe.Count, true
+	if probe.Count != nil {
+		return *probe.Count, true
+	}
+	if probe.RowCount != nil {
+		return *probe.RowCount, true
+	}
+	return 0, false
 }
 
 // auditableToolFields extracts the small, explicit set of tools/call

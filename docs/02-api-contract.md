@@ -266,6 +266,7 @@ vice versa) regardless of what the caller is permitted to do.
 | `sheets_list_spreadsheets` | `google_sheets` | `sheets:read` | Lists every spreadsheet the connector's own allowlist (`config.scope.spreadsheet_ids`) grants access to, with each one's title. The OAuth account behind the connector may be able to reach other spreadsheets too; only allowlisted ones are ever returned. Takes no arguments. | `{ spreadsheets: [{ spreadsheet_id, title, accessible }] }` — `accessible` is `false` for an allowlisted id the OAuth token can no longer read (a revoked share, a deleted file); reported per-item rather than failing the whole call. |
 | `sheets_describe_spreadsheet` | `google_sheets` | `sheets:read` | Schema discovery (docs/06-sheets-adapter.md §4.1): one spreadsheet's title, every tab's name and row/column count, and each tab's column headers, optionally with a few sample data rows. Sheets has no schema, so this is meant to be called before `sheets_query_rows`/`sheets_read_range`. Input: `{ spreadsheet_id: string (required), include_sample_rows: int 0-5, default 0 }`. | `{ spreadsheet_id, title, sheets: [{ name, row_count, column_count, columns: [{ index, letter, header }], sample_rows: [[string]] }] }` |
 | `sheets_query_rows` | `google_sheets` | `sheets:read` | The workhorse (step 7): filters one sheet's data rows by a structured column DSL (`eq`/`neq`/`contains`/`gt`/`lt`/`gte`/`lte`/`in`, AND-ed together), with column projection and offset/limit pagination. No Google Visualization Query Language is ever exposed — a filter value is always compared as literal text or a plain number, never evaluated as a formula, regardless of a leading `=`/`+`/`-`/`@`. Input: `{ spreadsheet_id, sheet_name, filters?: [{ column, op, value }], columns?: [string], limit?: int 1-200 default 50, offset?: int default 0, response_format?: "markdown" \| "json" default "markdown" }`. | See "Bounded scan" below for the response shape. |
+| `sheets_read_range` | `google_sheets` | `sheets:read` | The escape hatch (step 8): reads an explicit A1 range directly, for whatever `sheets_query_rows`' filter DSL cannot express — no filtering, no projection. The range is parsed and re-validated in our own code, never handed to Google opaquely; it must carry explicit numeric row bounds on both ends (a bare sheet name, or a column-only range like `A:D`, is rejected as unbounded — a row-only range like `1:100` is not, since its rows are still explicitly bounded). An omitted sheet name resolves to the spreadsheet's first tab. Input: `{ spreadsheet_id: string (required), range: string (required) }`. | `{ spreadsheet_id, range, sheet_name, columns: [string], rows: [[string]], row_count, column_count }` — `range` is always the fully resolved range actually read (sheet name and column bounds filled in); `rows` is padded to a rectangle `column_count` wide, never ragged. |
 
 **`sheets_query_rows`'s bounded scan (step 7).** The Sheets API has no
 server-side filter and no count endpoint, so an exact `total` over the whole
@@ -300,6 +301,31 @@ these ends the scan cleanly with `scan_complete: false`, never as an error.
 Response body over ~256KB returns `RESULT_TOO_LARGE` instead of a truncated
 result, naming `columns` projection or a narrower filter/limit as the fix.
 
+**`sheets_read_range`'s A1 parser (step 8).** `range` is agent-supplied
+input, not a trusted identifier — it is parsed into a sheet name and numeric
+column/row bounds in our own code, never passed through to Google opaquely.
+Anything that doesn't parse into that shape (a formula like
+`=IMPORTRANGE(...)`, a second range smuggled in after a comma, mismatched
+reference kinds across the `:`) is rejected before any network call, the
+same way a filter value is never interpolated into anything Google
+evaluates. A column reference past `ZZZ` — Google Sheets' own ceiling of
+18,278 columns per sheet — is rejected on the same grounds, since a narrow
+span of absurd column letters would otherwise clear both size caps below
+and spend a rate-limit unit on a call Google can only answer with a 400.
+Reversed bounds (`D10:A1`) are normalized into ascending order
+rather than rejected. Beyond the unbounded-range rejection above, a parsed
+range spanning more than 1,000 rows or 20,000 cells is rejected
+before `Values.Get` (naming "narrow the range" as the fix) — the same
+256KB `RESULT_TOO_LARGE` cap `sheets_query_rows` uses is then re-checked
+against the actual rows fetched, as a second line of defence. A row-only
+range's column span is resolved against the sheet's real width only once
+`SpreadsheetMeta` is available, so the cell-count check runs a second time
+at that point too. Exactly one rate-limit unit is charged for the single
+`Values.Get` call (never for the `SpreadsheetMeta` lookup, which rides the
+dispatch-time floor every `tools/call` already pays); unlike
+`sheets_query_rows`' scan, there is no partial answer to fall back to, so
+an exhausted bucket here is always `RATE_LIMITED`, never a degraded result.
+
 **Google Sheets tool guardrails.** `spreadsheet_id` is checked against the
 connector's stored allowlist on **every** call — freshly decrypted and
 re-parsed each time, never a value cached from connector-creation or
@@ -312,11 +338,13 @@ error, so the model can adapt rather than the turn aborting.
 or upstream call, and so are `sheets_query_rows`' own input errors: `limit`
 outside `1-200`, a negative `offset`, an unsupported filter `op`, or a value
 shaped wrong for its operator (an array for anything but `in`, a non-array
-for `in`) — all checked before any network call. A `sheet_name` absent from
-the spreadsheet's own tabs returns `SHEET_NOT_FOUND`; a filter or projection
-column absent from the sheet's header row returns `COLUMN_NOT_FOUND`, both
-naming `sheets_describe_spreadsheet` as the recovery path. The connector's
-OAuth access token is cached in-process per connector id
+for `in`) — all checked before any network call, as is every
+`sheets_read_range` range-shape error described above. A `sheet_name`
+absent from the spreadsheet's own tabs (or, for `sheets_read_range`, a
+sheet name parsed out of `range`) returns `SHEET_NOT_FOUND`; a filter or
+projection column absent from the sheet's header row returns
+`COLUMN_NOT_FOUND`, both naming `sheets_describe_spreadsheet` as the
+recovery path. The connector's OAuth access token is cached in-process per connector id
 (`golang.org/x/oauth2.ReuseTokenSource`, deliberately not Redis — a derived
 access token is a live credential) and reused across calls against the same
 connector.
@@ -327,7 +355,7 @@ connector.
 | Action | Written when | Metadata |
 | ------ | ------------ | -------- |
 | `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
-| `mcp.tool.called` | A `tools/call` the caller was permitted to make and whose rate-limit check passed, recorded once the call has actually finished (step 7: `duration_ms`/`row_count` don't exist until then) | `connector_id`, `tool`, `duration_ms`; plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them, `filter_columns` (column **names** `sheets_query_rows` filtered on — never the filter values) when present, and `row_count` when the tool's own output names a count (currently only `sheets_query_rows`) |
+| `mcp.tool.called` | A `tools/call` the caller was permitted to make and whose rate-limit check passed, recorded once the call has actually finished (step 7: `duration_ms`/`row_count` don't exist until then) | `connector_id`, `tool`, `duration_ms`; plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them, `filter_columns` (column **names** `sheets_query_rows` filtered on — never the filter values) when present, and `row_count` when the tool's own output names a count — `sheets_query_rows`' `count` field or `sheets_read_range`'s `row_count` field, never the range's own cell contents |
 | `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
 | `mcp.ratelimit.hit` | A permitted `tools/call` refused because its connector's rate-limit bucket is exhausted (step 4) | `connector_id`, `tool` |
 

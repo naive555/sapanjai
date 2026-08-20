@@ -78,9 +78,14 @@ func TestBuildServer_SheetsToolsVisibleForGoogleSheetsConnectorWithPermission(t 
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionSheetsRead}}, conn))
 	got := toolNames(t, cs)
-	want := map[string]bool{"sheets_list_spreadsheets": true, "sheets_describe_spreadsheet": true, "sheets_query_rows": true}
-	if len(got) != 3 {
-		t.Fatalf("tools/list = %v, want exactly the 3 sheets tools", got)
+	want := map[string]bool{
+		"sheets_list_spreadsheets":    true,
+		"sheets_describe_spreadsheet": true,
+		"sheets_query_rows":           true,
+		"sheets_read_range":           true,
+	}
+	if len(got) != 4 {
+		t.Fatalf("tools/list = %v, want exactly the 4 sheets tools", got)
 	}
 	for _, name := range got {
 		if !want[name] {
@@ -91,8 +96,9 @@ func TestBuildServer_SheetsToolsVisibleForGoogleSheetsConnectorWithPermission(t 
 
 // TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead is the plan's
 // required test: a principal with some unrelated grant (or none) must never
-// see sheets_list_spreadsheets / sheets_describe_spreadsheet / sheets_query_rows,
-// even against a google_sheets connector.
+// see sheets_list_spreadsheets / sheets_describe_spreadsheet /
+// sheets_query_rows / sheets_read_range, even against a google_sheets
+// connector.
 func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
 	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
@@ -118,7 +124,7 @@ func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
 				t.Errorf("tools/list = %v, want %d tool(s) unrelated to sheets:read", got, tc.wantOtherTools)
 			}
 			for _, name := range got {
-				if name == "sheets_list_spreadsheets" || name == "sheets_describe_spreadsheet" || name == "sheets_query_rows" {
+				if name == "sheets_list_spreadsheets" || name == "sheets_describe_spreadsheet" || name == "sheets_query_rows" || name == "sheets_read_range" {
 					t.Errorf("tools/list = %v, must not include a sheets:read-gated tool without the grant", got)
 				}
 			}

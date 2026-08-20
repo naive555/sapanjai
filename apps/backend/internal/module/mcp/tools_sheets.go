@@ -61,6 +61,14 @@ var sheetsQueryRowsEntry = Entry{
 	Register:      registerQueryRows,
 }
 
+var sheetsReadRangeEntry = Entry{
+	Name:          "sheets_read_range",
+	Permission:    PermissionSheetsRead,
+	Description:   sheetsReadRangeDescription,
+	ConnectorType: connector.TypeGoogleSheets,
+	Register:      registerReadRange,
+}
+
 // ---------------------------------------------------------------------------
 // sheets_list_spreadsheets
 // ---------------------------------------------------------------------------
@@ -436,4 +444,167 @@ func queryRowsPartialScanWarning(result *googlesheets.QueryRowsOutput) string {
 			"and count/scanned_rows are a lower bound, not a final answer. Narrow your filter to get a complete "+
 			"answer, or call again with offset=%d to see more of what has already matched.",
 		result.ScannedRows, result.NextOffset)
+}
+
+// ---------------------------------------------------------------------------
+// sheets_read_range
+// ---------------------------------------------------------------------------
+
+// sheetsReadRangeDescription is deliberate prompt surface, written with the
+// same care as sheetsQueryRowsDescription (docs/07-sheets-adapter-plan.md
+// step 8): it steers the model toward sheets_query_rows for anything the
+// filter DSL can express, spells out the one hard constraint on range
+// (explicit row bounds on both ends — anything else risks reading a whole
+// sheet, docs/06 §6's "life-or-death at 87GB"), and tells it how an
+// omitted sheet name resolves so a partial range still produces a
+// predictable read.
+const sheetsReadRangeDescription = "The escape hatch for what sheets_query_rows' filter DSL can't express: reads " +
+	"an explicit A1 range directly, with no filtering and no column projection. Prefer sheets_query_rows for " +
+	"anything expressible as a column filter — it pages, filters, and caps its output for you; use this tool only " +
+	"when you need an arbitrary block of cells (a header plus data, a specific region) the DSL cannot select. " +
+	"range must be A1 notation with explicit numeric row bounds on both ends, e.g. \"Contracts!A1:D100\" or " +
+	"\"Contracts!1:50\" (every column, rows 1-50) — a bare sheet name, a column-only range like \"A:D\", or " +
+	"anything else without row bounds is rejected, because that could mean reading the entire sheet. Call " +
+	"sheets_describe_spreadsheet first to learn tab names; if you omit the sheet name from range, the " +
+	"spreadsheet's first tab is used, and the result's range field always echoes back exactly what was resolved " +
+	"and read. A single call is capped at 1,000 rows and 20,000 cells — narrow the range and call again to read " +
+	"more."
+
+type readRangeInput struct {
+	SpreadsheetID string `json:"spreadsheet_id" jsonschema:"the spreadsheet id, from sheets_list_spreadsheets; must be on this connector's allowlist"`
+	Range         string `json:"range" jsonschema:"an A1-notation range with explicit numeric row bounds on both ends, e.g. \"Contracts!A1:D100\" or \"Contracts!1:50\"; a bare sheet name, a column-only range (\"A:D\"), or anything without row bounds is rejected. Omit the sheet name to read from the spreadsheet's first tab."`
+}
+
+// readRangeOutput is sheets_read_range's result shape (docs/07 step 8).
+// Range is always the fully resolved range actually read (sheet name
+// filled in, column bounds resolved for a row-only request), never the
+// caller's raw string, so the model always knows exactly what it got back
+// even when its own request left something implicit. RowCount is tagged
+// "row_count", not "count" — service.go's rowCountFromResult probes both
+// field names for exactly this reason, so this tool's audit row still
+// carries a row_count without widening that extractor to anything beyond
+// another integer count.
+type readRangeOutput struct {
+	SpreadsheetID string     `json:"spreadsheet_id"`
+	Range         string     `json:"range" jsonschema:"the fully resolved range actually read — sheet name and column bounds filled in even if range omitted them"`
+	SheetName     string     `json:"sheet_name"`
+	Columns       []string   `json:"columns" jsonschema:"the A1 column letter for each column in rows, in order"`
+	Rows          [][]string `json:"rows" jsonschema:"the range's cell values as text, one row per array; every row is padded to the same width as columns"`
+	RowCount      int        `json:"row_count"`
+	ColumnCount   int        `json:"column_count"`
+}
+
+func registerReadRange(s *gomcp.Server, svc *Service, conn db.Connector) {
+	gomcp.AddTool(s, &gomcp.Tool{
+		Name:        "sheets_read_range",
+		Description: sheetsReadRangeDescription,
+		Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
+	}, func(ctx context.Context, _ *gomcp.CallToolRequest, in readRangeInput) (*gomcp.CallToolResult, readRangeOutput, error) {
+		// Presence checks first, before any parsing, config decryption, or
+		// network call — same discipline as registerQueryRows's
+		// SpreadsheetID/SheetName checks.
+		if in.SpreadsheetID == "" {
+			return missingSpreadsheetID(), readRangeOutput{}, nil
+		}
+		if strings.TrimSpace(in.Range) == "" {
+			return missingRange(), readRangeOutput{}, nil
+		}
+
+		// ValidateReadRangeInput parses range (docs/07 step 8: "the A1
+		// range must be parsed and re-validated ... not a trusted
+		// identifier") and checks it for malformed syntax, unbounded row
+		// extent, and the pre-fetch row/cell cap — entirely networkless,
+		// so a bad range never spends a byte of the connector's OAuth
+		// credential or rate-limit budget, exactly like
+		// ValidateQueryRowsInput above.
+		adapterInput := googlesheets.ReadRangeInput{SpreadsheetID: in.SpreadsheetID, RangeStr: in.Range}
+		parsed, err := googlesheets.ValidateReadRangeInput(adapterInput)
+		if err != nil {
+			return invalidReadRangeInput(err), readRangeOutput{}, nil
+		}
+
+		cfg, err := svc.openGoogleSheetsConfig(ctx, conn)
+		if err != nil {
+			return ErrorResult(err), readRangeOutput{}, nil
+		}
+		if !cfg.IsSpreadsheetAllowed(in.SpreadsheetID) {
+			return SpreadsheetNotAllowed(in.SpreadsheetID), readRangeOutput{}, nil
+		}
+
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		// svc satisfies googlesheets.RateCharger, same seam sheets_query_rows
+		// uses; read_range charges it exactly once, for the single
+		// Values.Get call (docs/07 step 8: "charge one unit via
+		// RateCharger for the Values fetch").
+		result, err := googlesheets.ReadRange(ctx, ts, cfg, conn.ID, svc, adapterInput, parsed)
+		if err != nil {
+			var rlErr *googlesheets.RateLimitedError
+			switch {
+			case errors.Is(err, googlesheets.ErrSheetNotFound):
+				return SheetNotFound(sheetNameFromReadRangeError(err)), readRangeOutput{}, nil
+			case errors.Is(err, googlesheets.ErrResultTooLarge):
+				return ResultTooLarge(), readRangeOutput{}, nil
+			case errors.As(err, &rlErr):
+				// read_range has no partial answer to fall back to
+				// (contrast sheets_query_rows' scan, which ends cleanly
+				// with ScanComplete: false) — an exhausted bucket is
+				// always a full denial here.
+				return RateLimited(rlErr.RetryAfter), readRangeOutput{}, nil
+			default:
+				return ErrorResult(err), readRangeOutput{}, nil
+			}
+		}
+
+		out := readRangeOutput{
+			SpreadsheetID: result.SpreadsheetID,
+			Range:         result.Range,
+			SheetName:     result.SheetName,
+			Columns:       result.Columns,
+			Rows:          result.Rows,
+			RowCount:      result.RowCount,
+			ColumnCount:   result.ColumnCount,
+		}
+		return buildReadRangeResult(result), out, nil
+	})
+}
+
+// sheetNameFromReadRangeError recovers the offending sheet name from an
+// error wrapping googlesheets.ErrSheetNotFound, built as
+// fmt.Errorf("%w: %s", ErrSheetNotFound, sheetName) — the same trick as
+// columnNameFromError above. sheets_read_range needs this (unlike
+// sheets_query_rows, which already has sheet_name as a separate input
+// field to fall back on) because its only sheet-name signal is whatever
+// ParseA1Range extracted from range itself.
+func sheetNameFromReadRangeError(err error) string {
+	return strings.TrimPrefix(err.Error(), googlesheets.ErrSheetNotFound.Error()+": ")
+}
+
+// buildReadRangeResult renders result as the CallToolResult text the model
+// reads: a markdown table of the resolved range's cells, using the same
+// per-cell escaping discipline (escapeMarkdownCell) renderQueryRowsMarkdown
+// uses, so a cell containing "|" or a newline can't corrupt the table.
+func buildReadRangeResult(result *googlesheets.ReadRangeOutput) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{Content: []gomcp.Content{&gomcp.TextContent{Text: renderReadRangeMarkdown(result)}}}
+}
+
+// renderReadRangeMarkdown builds a markdown table headed by each column's
+// A1 letter (result.Columns), followed by a one-line summary naming the
+// resolved range, sheet, and dimensions actually read.
+func renderReadRangeMarkdown(result *googlesheets.ReadRangeOutput) string {
+	var b strings.Builder
+	if result.RowCount == 0 || result.ColumnCount == 0 {
+		fmt.Fprintf(&b, "No cells in %s (sheet %q).\n", result.Range, result.SheetName)
+		return b.String()
+	}
+	b.WriteString("| " + strings.Join(result.Columns, " | ") + " |\n")
+	b.WriteString("|" + strings.Repeat(" --- |", len(result.Columns)) + "\n")
+	for _, row := range result.Rows {
+		cells := make([]string, len(row))
+		for i, c := range row {
+			cells[i] = escapeMarkdownCell(c)
+		}
+		b.WriteString("| " + strings.Join(cells, " | ") + " |\n")
+	}
+	fmt.Fprintf(&b, "\nrange=%s sheet=%q row_count=%d column_count=%d\n", result.Range, result.SheetName, result.RowCount, result.ColumnCount)
+	return b.String()
 }
