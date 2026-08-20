@@ -265,20 +265,61 @@ vice versa) regardless of what the caller is permitted to do.
 | `sapanjai_describe_connector` | any | `connector:read` | Describes the connector this session is bound to. Takes no arguments — the connector is fixed by the URL, not model-supplied. | `{ name, type, status }` — structurally incapable of returning `config`; the decrypted connector config never leaves `connector.Service`, same invariant as the REST `/connectors` routes. |
 | `sheets_list_spreadsheets` | `google_sheets` | `sheets:read` | Lists every spreadsheet the connector's own allowlist (`config.scope.spreadsheet_ids`) grants access to, with each one's title. The OAuth account behind the connector may be able to reach other spreadsheets too; only allowlisted ones are ever returned. Takes no arguments. | `{ spreadsheets: [{ spreadsheet_id, title, accessible }] }` — `accessible` is `false` for an allowlisted id the OAuth token can no longer read (a revoked share, a deleted file); reported per-item rather than failing the whole call. |
 | `sheets_describe_spreadsheet` | `google_sheets` | `sheets:read` | Schema discovery (docs/06-sheets-adapter.md §4.1): one spreadsheet's title, every tab's name and row/column count, and each tab's column headers, optionally with a few sample data rows. Sheets has no schema, so this is meant to be called before `sheets_query_rows`/`sheets_read_range`. Input: `{ spreadsheet_id: string (required), include_sample_rows: int 0-5, default 0 }`. | `{ spreadsheet_id, title, sheets: [{ name, row_count, column_count, columns: [{ index, letter, header }], sample_rows: [[string]] }] }` |
+| `sheets_query_rows` | `google_sheets` | `sheets:read` | The workhorse (step 7): filters one sheet's data rows by a structured column DSL (`eq`/`neq`/`contains`/`gt`/`lt`/`gte`/`lte`/`in`, AND-ed together), with column projection and offset/limit pagination. No Google Visualization Query Language is ever exposed — a filter value is always compared as literal text or a plain number, never evaluated as a formula, regardless of a leading `=`/`+`/`-`/`@`. Input: `{ spreadsheet_id, sheet_name, filters?: [{ column, op, value }], columns?: [string], limit?: int 1-200 default 50, offset?: int default 0, response_format?: "markdown" \| "json" default "markdown" }`. | See "Bounded scan" below for the response shape. |
 
-**Google Sheets tool guardrails (step 6).** `spreadsheet_id` is checked
-against the connector's stored allowlist on **every** call — freshly
-decrypted and re-parsed each time, never a value cached from
-connector-creation or session-start time, so a narrowed allowlist takes
-effect on the very next call. An id absent from the allowlist returns
-`IsError: true` with a `SPREADSHEET_NOT_ALLOWED` result (docs/06-sheets-
-adapter.md §8), naming `sheets_list_spreadsheets` as the recovery path — not
-a JSON-RPC protocol error, so the model can adapt rather than the turn
-aborting. `include_sample_rows` outside `0-5` is rejected before any config
-decryption or upstream call. The connector's OAuth access token is cached
-in-process per connector id (`golang.org/x/oauth2.ReuseTokenSource`,
-deliberately not Redis — a derived access token is a live credential) and
-reused across calls against the same connector.
+**`sheets_query_rows`'s bounded scan (step 7).** The Sheets API has no
+server-side filter and no count endpoint, so an exact `total` over the whole
+sheet would mean either unbounded memory or hundreds of upstream calls per
+call — incompatible with never loading a whole sheet into memory
+(docs/06-sheets-adapter.md §6) at the spec's own target scale. This is a
+deliberate deviation from docs/06 §4.2's example output (`Decision 4`,
+`.claude/plans/2026-08-18-sheets-adapter.md`): instead of an unconditional
+`total`, the response is
+
+```jsonc
+{ "count": 50, "offset": 0, "has_more": true, "next_offset": 50,
+  "scanned_rows": 5000, "scan_complete": false, "rows": [ { "...": "..." } ] }
+```
+
+`total` (exact) is added **only** when `scan_complete` is `true` — the scan
+reached the sheet's real end within this call's budget. When `scan_complete`
+is `false`, there is no `total` field at all, and both the tool description
+and the result text tell the model `count`/`scanned_rows` are a lower bound,
+not a final answer, and to narrow the filter (or page forward with
+`next_offset`) rather than assume nothing else matches.
+
+The scan itself: pages of up to 5,000 rows are fetched via `Values.Get`,
+charging the connector's rate-limit bucket (see below) **one unit per page
+fetched**, not one per tool call; filters are evaluated in-process, retaining
+at most `offset + limit + 1` matched rows (the `+1` is what sets `has_more`
+without a second pass) so peak memory is one fetched page plus that small
+retained window, independent of the sheet's actual size. The scan stops at
+whichever comes first: enough matches, the sheet's real end, a scan budget of
+50,000 rows (configurable), or an exhausted rate-limit bucket — the last of
+these ends the scan cleanly with `scan_complete: false`, never as an error.
+Response body over ~256KB returns `RESULT_TOO_LARGE` instead of a truncated
+result, naming `columns` projection or a narrower filter/limit as the fix.
+
+**Google Sheets tool guardrails.** `spreadsheet_id` is checked against the
+connector's stored allowlist on **every** call — freshly decrypted and
+re-parsed each time, never a value cached from connector-creation or
+session-start time, so a narrowed allowlist takes effect on the very next
+call. An id absent from the allowlist returns `IsError: true` with a
+`SPREADSHEET_NOT_ALLOWED` result (docs/06-sheets-adapter.md §8), naming
+`sheets_list_spreadsheets` as the recovery path — not a JSON-RPC protocol
+error, so the model can adapt rather than the turn aborting.
+`include_sample_rows` outside `0-5` is rejected before any config decryption
+or upstream call, and so are `sheets_query_rows`' own input errors: `limit`
+outside `1-200`, a negative `offset`, an unsupported filter `op`, or a value
+shaped wrong for its operator (an array for anything but `in`, a non-array
+for `in`) — all checked before any network call. A `sheet_name` absent from
+the spreadsheet's own tabs returns `SHEET_NOT_FOUND`; a filter or projection
+column absent from the sheet's header row returns `COLUMN_NOT_FOUND`, both
+naming `sheets_describe_spreadsheet` as the recovery path. The connector's
+OAuth access token is cached in-process per connector id
+(`golang.org/x/oauth2.ReuseTokenSource`, deliberately not Redis — a derived
+access token is a live credential) and reused across calls against the same
+connector.
 
 **Audit.** Best-effort (a failed write never fails the MCP call), same
 `GET /audit-logs` trail as everything else:
@@ -286,12 +327,18 @@ reused across calls against the same connector.
 | Action | Written when | Metadata |
 | ------ | ------------ | -------- |
 | `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
-| `mcp.tool.called` | A `tools/call` the caller was permitted to make, recorded before dispatch | `connector_id`, `tool`, plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them (never any other argument, and never a cell value) |
+| `mcp.tool.called` | A `tools/call` the caller was permitted to make and whose rate-limit check passed, recorded once the call has actually finished (step 7: `duration_ms`/`row_count` don't exist until then) | `connector_id`, `tool`, `duration_ms`; plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them, `filter_columns` (column **names** `sheets_query_rows` filtered on — never the filter values) when present, and `row_count` when the tool's own output names a count (currently only `sheets_query_rows`) |
 | `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
 | `mcp.ratelimit.hit` | A permitted `tools/call` refused because its connector's rate-limit bucket is exhausted (step 4) | `connector_id`, `tool` |
 
-Metadata never carries the bearer token, decrypted connector config, or a
-whole request/tool-argument struct — only the small, explicit fields above.
+Metadata never carries the bearer token, decrypted connector config, a whole
+request/tool-argument struct, or a filter's actual value — only the small,
+explicit fields above. `mcp.tool.called` moved from before-dispatch to
+after-dispatch in step 7 specifically so `duration_ms`/`row_count` could join
+the row the spec calls for, rather than either being dropped or landing in a
+second row; it still fires exactly once per permitted, budgeted call,
+including when the tool's own handler panics (recorded via `defer`, ahead of
+the process's top-level recovery).
 
 **Rate limiting (step 4).** Every connector has its own token bucket
 (`internal/infra/redis.RateLimiter`, Redis key `mcp:ratelimit:<connectorId>`),

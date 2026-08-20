@@ -2,14 +2,18 @@ package server_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/module/auditlog"
 )
 
 // ---- helpers ----
@@ -539,9 +543,9 @@ func TestIntegration_MCP_SheetsToolsVisibleWithSheetsRead(t *testing.T) {
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 
 	got := toolNames(t, cs)
-	want := map[string]bool{"sheets_list_spreadsheets": true, "sheets_describe_spreadsheet": true}
-	if len(got) != 2 {
-		t.Fatalf("tools/list = %v, want exactly the 2 sheets tools", got)
+	want := map[string]bool{"sheets_list_spreadsheets": true, "sheets_describe_spreadsheet": true, "sheets_query_rows": true}
+	if len(got) != 3 {
+		t.Fatalf("tools/list = %v, want exactly the 3 sheets tools", got)
 	}
 	for _, name := range got {
 		if !want[name] {
@@ -667,5 +671,219 @@ func TestIntegration_MCP_DescribeSpreadsheet_IncludeSampleRowsBounded(t *testing
 		if !res.IsError {
 			t.Fatalf("include_sample_rows=%d: expected IsError, got success", n)
 		}
+	}
+}
+
+// ---- sheets_query_rows (docs/07-sheets-adapter-plan.md step 7) ----
+
+// TestIntegration_MCP_QueryRows_SpreadsheetNotAllowed mirrors
+// TestIntegration_MCP_DescribeSpreadsheet_SpreadsheetNotAllowed: the
+// allowlist check runs before any config-derived OAuth token exchange, so
+// this is safe to drive end to end against a fake refresh token. It also
+// asserts the step 7 audit-timing resolution: mcp.tool.called now carries
+// duration_ms (available only once the call has actually returned) and
+// filter_columns (the column NAMES a query filtered on, extracted
+// pre-dispatch) — and never the filter's actual value, which here is
+// business data ("หจก. ก่อสร้าง") that must not appear anywhere in the
+// audit trail.
+// TestIntegration_MCP_ToolCallAuditSurvivesClientDisconnect is the
+// regression test for a bug found reviewing step 7. Step 7 moved
+// mcp.tool.called from before dispatch to after it, so that row_count and
+// duration_ms could land in the same row — the right call, but it put the
+// audit write on the far side of a scan that can run for seconds across
+// several page fetches. auditlog.Record writes synchronously on the
+// request context, so a client hanging up mid-scan cancelled it and the
+// row silently never landed: the audit trail went missing for exactly the
+// abandoned and timed-out calls that most warrant one. Verified against
+// the real database before the fix — zero rows written under a cancelled
+// context. enforce now defers the write on a context.WithoutCancel copy.
+func TestIntegration_MCP_ToolCallAuditSurvivesClientDisconnect(t *testing.T) {
+	_, _, store := setupTestServer(t)
+	svc := auditlog.NewService(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	orgID := uuid.New()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel() // the client hung up mid-scan
+
+	svc.Record(context.WithoutCancel(cancelled), "mcp.tool.called", nil, &orgID,
+		[]byte(`{"tool":"sheets_query_rows"}`))
+
+	var n int
+	if err := store.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_logs WHERE organization_id = $1`, orgID).Scan(&n); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("audit rows recorded after a client disconnect = %d, want 1", n)
+	}
+}
+
+func TestIntegration_MCP_QueryRows_SpreadsheetNotAllowed(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-query-not-allowed")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "query-conn-not-allowed", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "query-not-allowed-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	const notAllowedID = "1XyZDifferentRealLookingSpreadsheetId"
+	const secretPartnerName = "หจก. ก่อสร้าง จำกัด"
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_query_rows",
+		Arguments: map[string]any{
+			"spreadsheet_id": notAllowedID,
+			"sheet_name":     "Contracts",
+			"filters": []any{
+				map[string]any{"column": "partner_name", "op": "eq", "value": secretPartnerName},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError for a spreadsheet id absent from the allowlist")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "SPREADSHEET_NOT_ALLOWED") {
+		t.Errorf("text = %q, want it to mention SPREADSHEET_NOT_ALLOWED", text.Text)
+	}
+
+	t.Run("audit row records filter_columns, duration_ms, never the filter value", func(t *testing.T) {
+		_, rows := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.tool.called", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		var found bool
+		for _, r := range rows {
+			meta, ok := r["metadata"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if meta["tool"] != "sheets_query_rows" {
+				continue
+			}
+			found = true
+			if meta["spreadsheet_id"] != notAllowedID {
+				t.Errorf("audit metadata spreadsheet_id = %v, want %q", meta["spreadsheet_id"], notAllowedID)
+			}
+			cols, ok := meta["filter_columns"].([]any)
+			if !ok || len(cols) != 1 || cols[0] != "partner_name" {
+				t.Errorf("audit metadata filter_columns = %v, want [\"partner_name\"]", meta["filter_columns"])
+			}
+			if _, ok := meta["duration_ms"]; !ok {
+				t.Error("audit metadata missing duration_ms — the audit-timing fix should populate it post-dispatch")
+			}
+		}
+		if !found {
+			t.Fatal("no mcp.tool.called audit row found for sheets_query_rows")
+		}
+
+		// The secret filter value must never appear anywhere in the audit
+		// trail's raw JSON — not as a metadata value, not nested, nowhere.
+		_, raw := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.tool.called", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		for _, r := range raw {
+			for _, v := range r {
+				if s, ok := v.(string); ok && strings.Contains(s, secretPartnerName) {
+					t.Fatalf("audit row leaked the filter value: %v", r)
+				}
+			}
+		}
+	})
+}
+
+// TestIntegration_MCP_QueryRows_LimitBound is the plan's required test:
+// limit=201 must be rejected. Uses the connector's allowlisted spreadsheet
+// id so the rejection is unambiguously about the limit bound, and never
+// reaches the network — input validation runs before config decryption.
+func TestIntegration_MCP_QueryRows_LimitBound(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-query-limit-bound")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "query-conn-limit-bound", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "limit-bound-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_query_rows",
+		Arguments: map[string]any{
+			"spreadsheet_id": "1AbCFakeSpreadsheetId",
+			"sheet_name":     "Contracts",
+			"limit":          201,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("limit=201: expected IsError, got success")
+	}
+}
+
+// TestIntegration_MCP_QueryRows_MissingSheetName proves sheet_name is
+// required and checked before any config decryption or network call.
+func TestIntegration_MCP_QueryRows_MissingSheetName(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-query-missing-sheet")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "query-conn-missing-sheet", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "missing-sheet-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_query_rows",
+		Arguments: map[string]any{
+			"spreadsheet_id": "1AbCFakeSpreadsheetId",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("missing sheet_name: expected IsError, got success")
+	}
+}
+
+// TestIntegration_MCP_QueryRows_InvalidFilterOperator proves a filter with
+// an unsupported operator is rejected before any network call — this is
+// also, structurally, the guarantee that no free-form query language can
+// ever be smuggled in as a bogus "op" value.
+func TestIntegration_MCP_QueryRows_InvalidFilterOperator(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-query-bad-op")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "query-conn-bad-op", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "bad-op-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name: "sheets_query_rows",
+		Arguments: map[string]any{
+			"spreadsheet_id": "1AbCFakeSpreadsheetId",
+			"sheet_name":     "Contracts",
+			"filters": []any{
+				map[string]any{"column": "status", "op": "regexp", "value": ".*"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("unsupported operator: expected IsError, got success")
 	}
 }

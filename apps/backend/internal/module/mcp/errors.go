@@ -107,6 +107,91 @@ func missingSpreadsheetID() *gomcp.CallToolResult {
 	}
 }
 
+// missingSheetName builds the CallToolResult sheets_query_rows returns when
+// the model omitted a required sheet_name — checked before config
+// decryption or the network, same as missingSpreadsheetID.
+func missingSheetName() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "sheet_name is required. Call sheets_describe_spreadsheet to see this spreadsheet's tab names.",
+		}},
+	}
+}
+
+// invalidQueryRowsInput builds the CallToolResult sheets_query_rows returns
+// for any input-shape problem ValidateQueryRowsInput or a Filter's own
+// Validate catches: limit out of 1-200, a negative offset, a filter with a
+// bad operator or a value shaped wrong for it. Every message these produce
+// names only column names, operator names, and numeric bounds — never a
+// filter's actual value — so echoing err.Error() straight to the model
+// carries no business data.
+func invalidQueryRowsInput(err error) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{Text: err.Error()}},
+	}
+}
+
+// invalidResponseFormat builds the CallToolResult sheets_query_rows returns
+// when response_format is set to anything other than "markdown" or "json".
+func invalidResponseFormat(got string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf("response_format must be \"markdown\" or \"json\" (got %q).", got),
+		}},
+	}
+}
+
+// SheetNotFound builds the CallToolResult docs/06-sheets-adapter.md §8's
+// SHEET_NOT_FOUND describes: sheetName is not one of this spreadsheet's own
+// tabs. Names the recovery path per §8's "must state a fix": call
+// sheets_describe_spreadsheet to see the spreadsheet's actual tab names.
+func SheetNotFound(sheetName string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"SHEET_NOT_FOUND: %q is not a tab in this spreadsheet. "+
+					"Call sheets_describe_spreadsheet to see its actual tab names.",
+				sheetName),
+		}},
+	}
+}
+
+// ColumnNotFound builds the CallToolResult docs/06-sheets-adapter.md §8's
+// COLUMN_NOT_FOUND describes: column names neither a filter column nor a
+// projected column that exists in the sheet's header row. column is a
+// header name (or the caller's attempt at one) — structural, not a
+// credential — so it is safe to echo back.
+func ColumnNotFound(column string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"COLUMN_NOT_FOUND: %q is not a column in this sheet. "+
+					"Call sheets_describe_spreadsheet to see the sheet's actual header row.",
+				column),
+		}},
+	}
+}
+
+// ResultTooLarge builds the CallToolResult docs/06-sheets-adapter.md §8's
+// RESULT_TOO_LARGE describes: the rows sheets_query_rows would return
+// exceed the response size cap once encoded. Names both recovery paths
+// §8 calls for: a narrower columns projection, or a smaller limit/more
+// selective filter.
+func ResultTooLarge() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "RESULT_TOO_LARGE: this query's result is too large to return. " +
+				"Use the columns argument to project fewer fields, or narrow your filter / lower limit to return fewer rows.",
+		}},
+	}
+}
+
 // ErrorResult converts a service-level error into a CallToolResult with
 // IsError set: apperror.Resolve's message for a known *apperror.Error
 // (matching the text the REST API would return for the same failure), or a

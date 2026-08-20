@@ -209,7 +209,7 @@ func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector) *gomcp.Serve
 // against SDK v1.7.0).
 func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware {
 	return func(next gomcp.MethodHandler) gomcp.MethodHandler {
-		return func(ctx context.Context, method string, req gomcp.Request) (gomcp.Result, error) {
+		return func(ctx context.Context, method string, req gomcp.Request) (result gomcp.Result, err error) {
 			switch method {
 			case "initialize", "server/discover":
 				// One HTTP POST per JSON-RPC call in Stateless mode, so
@@ -281,11 +281,44 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 						return RateLimited(retryAfter), nil
 					}
 				}
-				// Audited before dispatch: this records that a permitted
-				// call was attempted, independent of whatever the tool's
-				// own handler later returns (success or its own IsError).
-				s.auditToolCalled(ctx, p, conn, params.Name, auditableToolFields(params.Arguments))
-				return next(ctx, method, req)
+				// Audited via defer, *after* dispatch, not before —
+				// docs/07-sheets-adapter-plan.md step 7 surfaced a real
+				// gap here: spec §7's mcp.tool.called metadata wants
+				// row_count and duration_ms, and neither exists until the
+				// tool handler has actually run. Auditing before dispatch
+				// (steps 3-6's design) could only ever record
+				// spreadsheet_id/sheet_name; getting the two post-hoc
+				// fields into the *same* row means waiting for next() to
+				// return rather than emitting a second row per call or
+				// permanently dropping them. This still fires exactly once
+				// per permitted, budgeted call, before OR after a panic:
+				// the defer runs during unwind, ahead of Echo's Recover
+				// middleware (server.go) further up the call stack, so a
+				// handler bug still leaves an audit trail. filter_columns
+				// is extractable pre-dispatch from arguments (unchanged);
+				// row_count is peeled out of the tool's own StructuredContent
+				// post-dispatch by auditToolCalled, and only ever a column
+				// count/row count — never a cell value.
+				fields := auditableToolFields(params.Arguments)
+				start := time.Now()
+				// context.WithoutCancel, because moving this audit after
+				// dispatch put it on the far side of a scan that can run
+				// for seconds across several upstream page fetches: a
+				// client that hangs up or times out mid-scan cancels ctx,
+				// and auditlog.Record's write is synchronous on that same
+				// ctx, so the row would simply never land. Before-dispatch
+				// auditing never had that exposure — it wrote before the
+				// slow part. Dropping the record for exactly the abandoned
+				// and timed-out calls would gut the audit trail for the
+				// most data-intensive tool in the catalog, which is
+				// precisely where it matters most. Values are preserved;
+				// only cancellation is detached.
+				auditCtx := context.WithoutCancel(ctx)
+				defer func() {
+					s.auditToolCalled(auditCtx, p, conn, params.Name, time.Since(start), fields, result)
+				}()
+				result, err = next(ctx, method, req)
+				return result, err
 
 			case "tools/list":
 				res, err := next(ctx, method, req)
@@ -323,52 +356,109 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 // filter_columns[] but never filter values" ground rule, which starts here).
 
 func (s *Service) auditSessionStarted(ctx context.Context, p *rbac.Principal, conn db.Connector) {
-	s.recordAudit(ctx, auditlog.ActionMCPSessionStarted, p, map[string]string{
+	s.recordAudit(ctx, auditlog.ActionMCPSessionStarted, p, map[string]any{
 		"connector_id": conn.ID.String(),
 	})
 }
 
-func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string, extra map[string]string) {
-	metadata := map[string]string{
+// auditToolCalled records mcp.tool.called for a permitted, budgeted call
+// once it has actually finished dispatching (see enforce's tools/call case
+// for why this fires from a defer rather than before next() runs).
+// duration_ms is always recorded now that the timing is available;
+// row_count is added only when result's own StructuredContent carries a
+// top-level "count" field (currently just sheets_query_rows) — extracted
+// via rowCountFromResult, never by re-deriving it from anything the caller
+// passed in, so a future tool without a "count" field simply omits it
+// rather than reporting a misleading 0.
+func (s *Service) auditToolCalled(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string, elapsed time.Duration, extra map[string]any, result gomcp.Result) {
+	metadata := map[string]any{
 		"connector_id": conn.ID.String(),
 		"tool":         tool,
+		"duration_ms":  elapsed.Milliseconds(),
 	}
 	for k, v := range extra {
 		metadata[k] = v
 	}
+	if rowCount, ok := rowCountFromResult(result); ok {
+		metadata["row_count"] = rowCount
+	}
 	s.recordAudit(ctx, auditlog.ActionMCPToolCalled, p, metadata)
+}
+
+// rowCountFromResult peeks a completed tools/call's StructuredContent for a
+// top-level "count" field — sheets_query_rows' output shape (docs/07 step
+// 7's Decision 4: count/offset/has_more/...) is the first and, today, only
+// tool whose output carries one. This never touches result.Content (the
+// human/agent-facing text) and never inspects "rows" or any other field, so
+// there is no path from here to a cell value landing in an audit row — only
+// an integer count the tool itself already decided was safe to name in its
+// own output schema.
+func rowCountFromResult(result gomcp.Result) (int, bool) {
+	ctr, ok := result.(*gomcp.CallToolResult)
+	if !ok || ctr == nil || ctr.IsError {
+		return 0, false
+	}
+	raw, ok := ctr.StructuredContent.(json.RawMessage)
+	if !ok || len(raw) == 0 {
+		return 0, false
+	}
+	var probe struct {
+		Count *int `json:"count"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil || probe.Count == nil {
+		return 0, false
+	}
+	return *probe.Count, true
 }
 
 // auditableToolFields extracts the small, explicit set of tools/call
 // argument keys that are ever copied into mcp.tool.called audit metadata:
-// spreadsheet_id and sheet_name identify *which* resource a call touched —
-// exactly what an audit trail needs — without ever touching the argument's
-// actual business data (a filter value, a cell value). This is deliberately
-// a fixed allowlist of key names, not "log the whole arguments object":
-// docs/06-sheets-adapter.md §7, "log the column name filtered on, but never
-// the value," and CLAUDE.md's "log individual fields, never a whole
-// request/body struct" both apply to tool arguments exactly as they do to
-// HTTP request bodies. Unknown fields (a future tool's own arguments) are
-// silently ignored rather than logged, and a non-object or malformed
-// Arguments payload yields no fields at all rather than an error — this is
-// audit best-effort, not request validation.
-func auditableToolFields(rawArgs json.RawMessage) map[string]string {
+// spreadsheet_id and sheet_name identify *which* resource a call touched,
+// and filter_columns lists the column *names* a sheets_query_rows call
+// filtered on — exactly what an audit trail needs — without ever touching
+// the argument's actual business data (a filter value, a cell value). This
+// is deliberately a fixed allowlist of key names, not "log the whole
+// arguments object": docs/06-sheets-adapter.md §7, "log the column name
+// filtered on, but never the value," and CLAUDE.md's "log individual
+// fields, never a whole request/body struct" both apply to tool arguments
+// exactly as they do to HTTP request bodies. Unknown fields (a future
+// tool's own arguments) are silently ignored rather than logged, and a
+// non-object or malformed Arguments payload yields no fields at all rather
+// than an error — this is audit best-effort, not request validation.
+func auditableToolFields(rawArgs json.RawMessage) map[string]any {
 	if len(rawArgs) == 0 {
 		return nil
 	}
 	var parsed struct {
 		SpreadsheetID string `json:"spreadsheet_id"`
 		SheetName     string `json:"sheet_name"`
+		Filters       []struct {
+			Column string `json:"column"`
+			// Value is deliberately never decoded into this struct — see
+			// the doc comment above and docs/07 step 7's ground rule:
+			// filter_columns[] carries column names only, never values.
+		} `json:"filters"`
 	}
 	if err := json.Unmarshal(rawArgs, &parsed); err != nil {
 		return nil
 	}
-	fields := make(map[string]string, 2)
+	fields := make(map[string]any, 3)
 	if parsed.SpreadsheetID != "" {
 		fields["spreadsheet_id"] = parsed.SpreadsheetID
 	}
 	if parsed.SheetName != "" {
 		fields["sheet_name"] = parsed.SheetName
+	}
+	if len(parsed.Filters) > 0 {
+		columns := make([]string, 0, len(parsed.Filters))
+		for _, f := range parsed.Filters {
+			if f.Column != "" {
+				columns = append(columns, f.Column)
+			}
+		}
+		if len(columns) > 0 {
+			fields["filter_columns"] = columns
+		}
 	}
 	if len(fields) == 0 {
 		return nil
@@ -377,7 +467,7 @@ func auditableToolFields(rawArgs json.RawMessage) map[string]string {
 }
 
 func (s *Service) auditToolDenied(ctx context.Context, p *rbac.Principal, conn db.Connector, tool, action string) {
-	s.recordAudit(ctx, auditlog.ActionMCPToolDenied, p, map[string]string{
+	s.recordAudit(ctx, auditlog.ActionMCPToolDenied, p, map[string]any{
 		"connector_id":       conn.ID.String(),
 		"tool":               tool,
 		"missing_permission": action,
@@ -389,7 +479,7 @@ func (s *Service) auditToolDenied(ctx context.Context, p *rbac.Principal, conn d
 // exhausted — a quota failure, not an authorization one, hence no
 // missing_permission field (contrast auditToolDenied above).
 func (s *Service) auditRateLimitHit(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
-	s.recordAudit(ctx, auditlog.ActionMCPRateLimitHit, p, map[string]string{
+	s.recordAudit(ctx, auditlog.ActionMCPRateLimitHit, p, map[string]any{
 		"connector_id": conn.ID.String(),
 		"tool":         tool,
 	})
@@ -398,8 +488,12 @@ func (s *Service) auditRateLimitHit(ctx context.Context, p *rbac.Principal, conn
 // recordAudit is best-effort, exactly like auditlog.Service.Record itself:
 // a marshal or write failure is logged and swallowed, never propagated —
 // an MCP call must never fail because its own audit trail couldn't be
-// written (CLAUDE.md, "Audit-log writes are best-effort").
-func (s *Service) recordAudit(ctx context.Context, action string, p *rbac.Principal, metadata map[string]string) {
+// written (CLAUDE.md, "Audit-log writes are best-effort"). metadata is
+// map[string]any (widened from map[string]string in step 7) so a value can
+// be an int (duration_ms, row_count) or a []string (filter_columns), not
+// just a string — every value is still either a small scalar or a name
+// list, never a whole struct or a filter's actual value.
+func (s *Service) recordAudit(ctx context.Context, action string, p *rbac.Principal, metadata map[string]any) {
 	if s.audit == nil {
 		return
 	}

@@ -63,6 +63,7 @@ func Catalog() []Entry {
 		},
 		sheetsListSpreadsheetsEntry,
 		sheetsDescribeSpreadsheetEntry,
+		sheetsQueryRowsEntry,
 	}
 }
 
