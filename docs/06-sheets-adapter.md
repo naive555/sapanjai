@@ -1,16 +1,16 @@
 # Sapanjai — Google Sheets/Drive Adapter Spec (v0.1 draft)
 
-> สถานะ: draft สำหรับใช้เป็น input ให้ Claude Code prompt
-> ขอบเขต: **read-only MVP** — write tools อยู่ใน §9 (ยังไม่ build)
+> Status: draft, written to be used as input for a Claude Code prompt.
+> Scope: **read-only MVP** — write tools are in §9 (not built yet).
 
 ---
 
 ## 1. Scope & assumptions
 
-- Connector `type` = `google_sheets` (ปัจจุบัน skeleton มีแค่ `"generic"`)
-- Adapter เดียวครอบทั้ง Sheets + Drive — OAuth scope เดียวกัน, ผูกกันโดยธรรมชาติ (รูปใน Drive, link ใน Sheet)
-- Data scale เป้าหมาย: **~87GB / spreadsheet หลายสิบไฟล์** → pagination + result cap เป็น requirement ไม่ใช่ nice-to-have
-- ผู้ใช้ปลายทางคือ AI agent (Claude Desktop/Code, Cursor) ผ่าน MCP ไม่ใช่มนุษย์เรียกตรง
+- Connector `type` = `google_sheets` (the skeleton currently has only `"generic"`)
+- One adapter covers both Sheets + Drive — same OAuth scope, and they are naturally coupled (images in Drive, links in a Sheet)
+- Target data scale: **~87GB / dozens of spreadsheet files** → pagination + result caps are a requirement, not a nice-to-have
+- The end user is an AI agent (Claude Desktop/Code, Cursor) going through MCP — not a human calling directly
 
 ---
 
@@ -20,29 +20,29 @@
 POST /mcp/:connectorId        Streamable HTTP, stateless JSON
 ```
 
-- **Streamable HTTP** ไม่ใช่ stdio — เพราะเป็น remote multi-tenant gateway (ตรงกับ best practice: stdio ไว้สำหรับ local single-user)
-- Stateless JSON (ไม่ทำ session/SSE) — scale ง่ายกว่า, เข้ากับ k8s deployment ที่มีอยู่
-- `connectorId` อยู่ใน path เพื่อให้ 1 org ที่มีหลาย Google account แยก endpoint กันได้
+- **Streamable HTTP**, not stdio — because this is a remote multi-tenant gateway (which matches best practice: stdio is for local single-user setups)
+- Stateless JSON (no session/SSE) — easier to scale, and it fits the existing k8s deployment
+- `connectorId` sits in the path so that a single org with several Google accounts can keep separate endpoints
 
-### ⚠️ ช่องว่างที่ต้องตัดสินใจก่อน: MCP client จะ auth ยังไง
+### ⚠️ Gap that has to be decided first: how does the MCP client authenticate?
 
-Access token ปัจจุบันอายุ 15 นาที — MCP client (Claude Desktop) ไม่มีทาง refresh ให้เองได้ และไม่มี browser flow
+The current access token lives 15 minutes — an MCP client (Claude Desktop) has no way to refresh it on its own, and there is no browser flow.
 
-ทางเลือก:
+Options:
 
-| ทางเลือก                                                                                                   | ข้อดี                                                   | ข้อเสีย                                                                          |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **A. Personal Access Token (PAT)** — table ใหม่ `api_keys`, hash เก็บ, `Authorization: Bearer sk_live_...` | ง่ายสุด, ตรงกับ mental model ของ MCP config, revoke ได้ | ต้องเพิ่ม module + migration ใหม่                                                |
-| **B. OAuth 2.1 ตาม MCP spec**                                                                              | มาตรฐาน, client รองรับ native                           | งานเยอะกว่ามาก, ต้องทำ authorization server                                      |
-| **C. ยืด refresh token มาใช้ตรงๆ**                                                                         | ไม่ต้องเพิ่มอะไร                                        | ผิด security model ที่วางไว้ (refresh token ควรอายุสั้น + rotate) — **ไม่แนะนำ** |
+| Option                                                                                                          | Pros                                                              | Cons                                                                            |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **A. Personal Access Token (PAT)** — new `api_keys` table, store the hash, `Authorization: Bearer sk_live_...` | Simplest; matches the mental model of an MCP config; revocable     | Requires a new module + migration                                               |
+| **B. OAuth 2.1 per the MCP spec**                                                                               | Standard; natively supported by clients                            | Far more work; requires building an authorization server                        |
+| **C. Stretch the refresh token and use it directly**                                                            | Nothing new to add                                                 | Violates the security model as designed (refresh tokens should be short-lived + rotate) — **not recommended** |
 
-**เสนอ: A สำหรับ MVP** — 1 migration + 1 module เล็ก, PAT ผูกกับ org + set ของ permission (subset ของ role ผู้สร้าง)
+**Proposal: A for the MVP** — 1 migration + 1 small module. The PAT is bound to an org + a set of permissions (a subset of the creator's role).
 
 ---
 
 ## 3. Connector config shape (`google_sheets`)
 
-เก็บใน `encrypted_config` ผ่าน envelope encryption เดิม — **ไม่มี field ไหนโผล่ใน response DTO หรือ log**
+Stored in `encrypted_config` via the existing envelope encryption — **no field ever surfaces in a response DTO or a log**
 
 ```json
 {
@@ -58,32 +58,32 @@ Access token ปัจจุบันอายุ 15 นาที — MCP client
 }
 ```
 
-**`scope` คือ security boundary ที่สำคัญที่สุด** — adapter ต้อง**ปฏิเสธ** spreadsheet/folder ที่ไม่อยู่ใน allowlist เสมอ แม้ OAuth token จะเข้าถึงได้ก็ตาม ไม่งั้น agent ที่หลุด prompt injection มาจะอ่าน Drive ทั้งบัญชีได้
+**`scope` is the single most important security boundary** — the adapter must **reject** any spreadsheet/folder that is not in the allowlist, always, even when the OAuth token could reach it. Otherwise an agent that has been prompt-injected can read the entire Drive account.
 
 ---
 
 ## 4. Tool catalog
 
-Naming: `{service}_{action}_{resource}` snake_case ตาม MCP convention
+Naming: `{service}_{action}_{resource}` in snake_case, per MCP convention
 
-| Tool                          | Permission    | readOnly | สรุป                                             |
+| Tool                          | Permission    | readOnly | Summary                                          |
 | ----------------------------- | ------------- | :------: | ------------------------------------------------ |
-| `sheets_list_spreadsheets`    | `sheets:read` |    ✅    | list spreadsheet ที่อยู่ใน allowlist             |
-| `sheets_describe_spreadsheet` | `sheets:read` |    ✅    | tabs + header row + row count (schema discovery) |
-| `sheets_query_rows`           | `sheets:read` |    ✅    | filter rows ตาม column — **tool หลัก**           |
-| `sheets_read_range`           | `sheets:read` |    ✅    | อ่าน A1 range ตรงๆ (escape hatch)                |
-| `drive_list_folder`           | `drive:read`  |    ✅    | list ไฟล์ใน folder ที่ allowlist                 |
-| `drive_get_file`              | `drive:read`  |    ✅    | metadata + short-lived link                      |
+| `sheets_list_spreadsheets`    | `sheets:read` |    ✅    | List the spreadsheets in the allowlist           |
+| `sheets_describe_spreadsheet` | `sheets:read` |    ✅    | Tabs + header row + row count (schema discovery) |
+| `sheets_query_rows`           | `sheets:read` |    ✅    | Filter rows by column — **the primary tool**     |
+| `sheets_read_range`           | `sheets:read` |    ✅    | Read an A1 range directly (escape hatch)         |
+| `drive_list_folder`           | `drive:read`  |    ✅    | List files in an allowlisted folder              |
+| `drive_get_file`              | `drive:read`  |    ✅    | Metadata + short-lived link                      |
 
-### 4.1 `sheets_describe_spreadsheet` — ตัวที่ขาดไม่ได้
+### 4.1 `sheets_describe_spreadsheet` — the one you cannot go without
 
-Sheets **ไม่มี schema** — agent ไม่มีทางรู้ว่า tab ชื่ออะไร column ไหนคืออะไร ถ้าไม่มี tool นี้ agent จะเดา range แล้วพังทุกครั้ง เรียก tool นี้ก่อนเสมอ
+Sheets has **no schema** — an agent has no way to know what a tab is called or what each column means. Without this tool the agent guesses at ranges and fails every time. Always call this one first.
 
 ```jsonc
 // input
 {
   "spreadsheet_id": "string, required",
-  "include_sample_rows": "int, 0-5, default 0"  // ตัวอย่างข้อมูลช่วยให้ agent เข้าใจ format
+  "include_sample_rows": "int, 0-5, default 0"  // sample data helps the agent understand the format
 }
 
 // output
@@ -104,18 +104,18 @@ Sheets **ไม่มี schema** — agent ไม่มีทางรู้ว
 }
 ```
 
-### 4.2 `sheets_query_rows` — workhorse
+### 4.2 `sheets_query_rows` — the workhorse
 
 ```jsonc
 // input
 {
   "spreadsheet_id": "string, required",
   "sheet_name": "string, required",
-  "filters": [                                  // AND กันทุกตัว
+  "filters": [                                  // all ANDed together
     {"column": "partner_name", "op": "eq", "value": "หจก. ก่อสร้าง"},
     {"column": "status", "op": "in", "value": ["draft", "pending"]}
   ],
-  "columns": ["contract_id", "status"],         // projection — ลด context ที่ส่งกลับ
+  "columns": ["contract_id", "status"],         // projection — cuts down the context sent back
   "limit": "int, 1-200, default 50",
   "offset": "int, default 0",
   "response_format": "markdown | json, default markdown"
@@ -129,40 +129,40 @@ Sheets **ไม่มี schema** — agent ไม่มีทางรู้ว
 }
 ```
 
-**Operators ที่รองรับ:** `eq`, `neq`, `contains`, `gt`, `lt`, `gte`, `lte`, `in`
-**ไม่รองรับ:** free-form expression, formula, raw query string — จงใจ (ดู §6)
+**Supported operators:** `eq`, `neq`, `contains`, `gt`, `lt`, `gte`, `lte`, `in`
+**Not supported:** free-form expressions, formulas, raw query strings — deliberately (see §6)
 
 ### 4.3 `drive_get_file`
 
-คืน **signed short-lived URL (TTL ≤ 15 นาที)** ไม่ใช่ permanent link — ป้องกัน link รั่วจาก conversation log ของ agent
+Returns a **signed, short-lived URL (TTL ≤ 15 minutes)**, not a permanent link — this prevents links leaking out through the agent's conversation log.
 
 ---
 
 ## 5. RBAC mapping
 
-ใช้ semantics เดิม (`*` > `resource:verb` > `resource:*`) ไม่ต้องแก้ matcher
+Uses the existing semantics (`*` > `resource:verb` > `resource:*`); the matcher needs no changes.
 
-| Permission                    | ให้อะไร                                     |
-| ----------------------------- | ------------------------------------------- |
-| `sheets:read`                 | ทุก `sheets_*` read tool                    |
-| `drive:read`                  | ทุก `drive_*` read tool                     |
-| `sheets:write`                | (phase 2)                                   |
-| `connector:read/write/delete` | CRUD ตัว connector เอง — ของเดิม ไม่เปลี่ยน |
+| Permission                    | Grants                                        |
+| ----------------------------- | --------------------------------------------- |
+| `sheets:read`                 | Every `sheets_*` read tool                    |
+| `drive:read`                  | Every `drive_*` read tool                     |
+| `sheets:write`                | (phase 2)                                     |
+| `connector:read/write/delete` | CRUD on the connector itself — existing, unchanged |
 
-### ⚠️ จุดที่ middleware เดิมใช้ไม่ได้ตรงๆ
+### ⚠️ Where the existing middleware does not apply directly
 
-`RequirePermission(action)` เป็น Echo middleware ผูกกับ route — แต่ MCP tool call **ทุกตัวเข้า route เดียวกัน** (`POST /mcp/:connectorId`) permission ต่างกันตาม tool ใน body
+`RequirePermission(action)` is Echo middleware bound to a route — but **every MCP tool call arrives on the same route** (`POST /mcp/:connectorId`), and the required permission differs per tool named in the body.
 
-ต้องแยก permission matcher ออกมาเป็นฟังก์ชันที่เรียกได้จากใน handler:
+The permission matcher has to be pulled out into a function callable from inside the handler:
 
 ```go
-// internal/module/rbac — ดึง logic ที่ middleware ใช้อยู่ออกมา reuse
+// internal/module/rbac — extract the logic the middleware currently uses, for reuse
 func (s *Service) HasPermission(ctx, userID, orgID uuid.UUID, action string) (bool, error)
 ```
 
-แล้ว MCP handler เรียกเองต่อ tool — middleware เดิมยังเรียกฟังก์ชันเดียวกันนี้ ไม่ duplicate logic
+The MCP handler then calls it itself, per tool — and the existing middleware still calls that same function, so the logic is not duplicated.
 
-**และ `tools/list` ต้อง filter ตาม permission ของ caller** — agent ไม่ควรเห็น tool ที่เรียกไม่ได้ (ลด context เปล่า + ไม่ leak ว่ามี capability อะไรอยู่)
+**And `tools/list` must be filtered by the caller's permissions** — an agent should not see a tool it cannot call (it wastes context, and it leaks what capabilities exist).
 
 ---
 
@@ -170,31 +170,31 @@ func (s *Service) HasPermission(ctx, userID, orgID uuid.UUID, action string) (bo
 
 ### Query sanitization
 
-Sheets ไม่มี SQL injection แต่มี 2 surface จริง:
+Sheets has no SQL injection, but there are 2 real surfaces:
 
-1. **Formula injection** — ค่าที่ขึ้นต้นด้วย `=`, `+`, `-`, `@` ที่ agent ส่งมาใน filter ต้อง treat เป็น literal string เสมอ ห้ามส่งเข้า Google Query Language
-2. **Range traversal** — `spreadsheet_id` / `sheet_name` ต้อง validate กับ allowlist ใน config **ทุกครั้ง** ไม่ใช่แค่ตอนสร้าง connector
+1. **Formula injection** — any value the agent sends in a filter that begins with `=`, `+`, `-`, or `@` must always be treated as a literal string, and must never be passed into Google Query Language
+2. **Range traversal** — `spreadsheet_id` / `sheet_name` must be validated against the config's allowlist **every single time**, not just when the connector is created
 
-**ตัดสินใจ: ไม่ expose Google Visualization Query Language ให้ agent เขียนเอง** — filter เป็น structured DSL (§4.2) เท่านั้น แลก flexibility กับ attack surface ที่ควบคุมได้
+**Decision: do not expose Google Visualization Query Language for the agent to write itself** — filters are a structured DSL (§4.2) only. This trades flexibility for an attack surface we can actually control.
 
 ### Rate limiting
 
-Google Sheets API quota: ~300 req/min ต่อ project, ~60 req/min ต่อ user → agent ที่ loop เรียกจะเผา quota ของทั้ง org
+Google Sheets API quota: ~300 req/min per project, ~60 req/min per user → an agent that calls in a loop will burn the whole org's quota.
 
-- Token bucket ใน Redis: `mcp:ratelimit:<connectorId>` — เสนอ 60 req/min ต่อ connector, configurable
-- ทับ key convention เดิมได้เลย ไม่ต้องเพิ่ม infra
+- Token bucket in Redis: `mcp:ratelimit:<connectorId>` — proposed 60 req/min per connector, configurable
+- This reuses the existing key convention directly; no new infra needed
 
 ### Result caps
 
 - `limit` max 200, default 50
-- Response body cap (เสนอ ~256KB) — ถ้าเกิน truncate แล้วบอก agent ให้ใช้ `columns` projection หรือแคบ filter ลง
-- **ห้ามโหลดทั้ง sheet เข้า memory** — 87GB ทำให้ข้อนี้เป็นเรื่องคอขาดบาดตาย
+- Response body cap (proposed ~256KB) — if exceeded, truncate and tell the agent to use a `columns` projection or narrow the filter
+- **Never load an entire sheet into memory** — at 87GB this is life-or-death, not a guideline
 
 ---
 
 ## 7. Audit events
 
-ต่อยอด audit log เดิม (best-effort, ไม่ fail request ตาม ground rule)
+Extends the existing audit log (best-effort; never fails the request, per the ground rule)
 
 | Action                | Metadata                                                                                               |
 | --------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -203,39 +203,39 @@ Google Sheets API quota: ~300 req/min ต่อ project, ~60 req/min ต่อ u
 | `mcp.tool.denied`     | `connector_id`, `tool`, `missing_permission`                                                           |
 | `mcp.ratelimit.hit`   | `connector_id`, `tool`                                                                                 |
 
-**สำคัญ: log ชื่อ column ที่ filter ได้ แต่ห้าม log `value` ที่ filter** — ค่าพวกนั้นคือข้อมูลธุรกิจจริง (ชื่อ partner, เลขสัญญา) ตรงกับ ground rule "log individual fields, never a whole struct"
+**Important: log the names of the columns being filtered, but never log the filter `value`s** — those are real business data (partner names, contract numbers). This matches the ground rule "log individual fields, never a whole struct".
 
 ---
 
 ## 8. Error codes
 
-คืนใน result object (`isError: true`) ไม่ใช่ protocol-level error ตาม MCP spec — และต้อง**บอกทางแก้** ให้ agent
+Returned inside the result object (`isError: true`), not as a protocol-level error, per the MCP spec — and each one must **tell the agent how to fix it**.
 
-| Code                      | ข้อความแนะนำ                                                                        |
-| ------------------------- | ----------------------------------------------------------------------------------- |
-| `SPREADSHEET_NOT_ALLOWED` | ไม่อยู่ใน allowlist — เรียก `sheets_list_spreadsheets` เพื่อดูว่าเข้าถึงอะไรได้บ้าง |
-| `SHEET_NOT_FOUND`         | tab ไม่มีอยู่ — เรียก `sheets_describe_spreadsheet` ก่อน                            |
-| `COLUMN_NOT_FOUND`        | column ไม่มี — ดู header จาก `sheets_describe_spreadsheet`                          |
-| `RESULT_TOO_LARGE`        | แนะนำให้ใส่ `columns` projection หรือลด `limit`                                     |
-| `RATE_LIMITED`            | บอก retry-after เป็นวินาที                                                          |
-| `UPSTREAM_AUTH_FAILED`    | OAuth refresh token หมดอายุ — ต้องให้ owner re-auth ที่ dashboard                   |
+| Code                      | Suggested message                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `SPREADSHEET_NOT_ALLOWED` | Not in the allowlist — call `sheets_list_spreadsheets` to see what is reachable          |
+| `SHEET_NOT_FOUND`         | That tab does not exist — call `sheets_describe_spreadsheet` first                       |
+| `COLUMN_NOT_FOUND`        | No such column — check the headers via `sheets_describe_spreadsheet`                     |
+| `RESULT_TOO_LARGE`        | Suggest adding a `columns` projection or lowering `limit`                                |
+| `RATE_LIMITED`            | State the retry-after in seconds                                                         |
+| `UPSTREAM_AUTH_FAILED`    | The OAuth refresh token has expired — the owner must re-authorize from the dashboard     |
 
 ---
 
-## 9. Phase 2 (ยังไม่ build — จดไว้กันลืม)
+## 9. Phase 2 (not built yet — noted so it isn't forgotten)
 
-Write tools ต้องคิดเรื่อง safety เพิ่มก่อน (confirmation flow, dry-run, rollback):
+Write tools need more safety thinking first (confirmation flow, dry-run, rollback):
 
 - `sheets_append_row` — `destructiveHint: false`, `idempotentHint: false`
 - `sheets_update_cells` — `destructiveHint: true` ⚠️
 - `drive_upload_file`
-- LINE adapter (ส่งข้อความไป partner) — **action-type tool, risk สูงกว่า read มาก** ควรทำหลัง read stable
+- LINE adapter (sending messages to partners) — **an action-type tool, much higher risk than a read**; should come after reads are stable
 
 ---
 
-## 10. คำถามที่ยังต้องตัดสินใจ
+## 10. Questions still to be decided
 
-1. **MCP client auth** — เอา PAT (option A) ไหม? กระทบ migration + module ใหม่
-2. **OAuth onboarding flow** — ลูกค้าจะ authorize Google ยังไง? ต้องมีหน้า OAuth consent ใน Next.js dashboard (งานที่ยังไม่อยู่ใน roadmap เดิม)
-3. **Header row detection** — สมมติแถวแรกเป็น header เสมอ หรือให้ config ระบุ? ระบบจริงของลูกค้าอาจมี title row ข้างบน
-4. **Multi-tab join** — agent จะถามข้าม tab (สัญญา ↔ partner) แน่นอน จะให้ agent เรียกหลาย tool แล้ว join เอง หรือทำ workflow tool ให้? (MCP best practice บอกว่าเริ่มจาก coverage ก่อน workflow — **เสนอให้ agent join เอง** ใน MVP)
+1. **MCP client auth** — go with the PAT (option A)? This implies a new migration + module.
+2. **OAuth onboarding flow** — how will customers authorize Google? This needs an OAuth consent page in the Next.js dashboard (work that is not in the current roadmap).
+3. **Header row detection** — always assume the first row is the header, or let the config specify it? Real customer spreadsheets may have a title row above it.
+4. **Multi-tab join** — the agent will definitely ask questions spanning tabs (contracts ↔ partners). Do we let the agent call several tools and join the results itself, or build a workflow tool for it? (MCP best practice says start with coverage before workflow — **proposal: let the agent join it itself** in the MVP.)
