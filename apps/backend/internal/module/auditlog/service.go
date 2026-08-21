@@ -50,6 +50,16 @@ const (
 	// ActionMCPToolDenied, minus missing_permission (this is a quota
 	// failure, not an authorization one).
 	ActionMCPRateLimitHit = "mcp.ratelimit.hit"
+
+	// ActionMCPFileDownloaded is written by GET /mcp/files/:connectorId/
+	// :fileId (internal/module/mcp/handler.go's downloadFile) once a
+	// download has actually streamed — docs/07-sheets-adapter-plan.md step
+	// 9. This route has no bearer-token principal (the signed link itself
+	// is the credential), so the actor recorded is the uid the link was
+	// minted for, not a re-resolved live grant. Metadata carries
+	// connector_id, file_id, and mime_type — never the file's own bytes,
+	// the signature, or the connector's decrypted config.
+	ActionMCPFileDownloaded = "mcp.file.downloaded"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

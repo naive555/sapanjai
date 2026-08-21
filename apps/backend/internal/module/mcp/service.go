@@ -88,19 +88,33 @@ type Service struct {
 	// stable for every existing call site; only Google Sheets tool
 	// handlers (tools_sheets.go) ever read from it.
 	sheetsTokens *googlesheets.TokenSourceCache
+
+	// fileLinkKey is the HKDF-derived signing key drive_get_file
+	// (tools_drive.go) mints download links with and Handler.downloadFile
+	// verifies them against — derived once here, never masterKey itself
+	// (see filelink.go's deriveFileLinkKey doc comment). nil when masterKey
+	// was empty, which both call sites treat as "link minting/verification
+	// disabled" rather than ever signing or checking against an empty key.
+	fileLinkKey []byte
 }
 
 // NewService builds an mcp Service. limiter may be nil — every call site
 // that constructs a Service without one (every unit test in this package
 // today) gets no rate limiting rather than a nil-pointer panic; server.go's
-// production wiring always supplies a real *appredis.RateLimiter.
-func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, log *slog.Logger) *Service {
+// production wiring always supplies a real *appredis.RateLimiter. masterKey
+// is cfg.ConnectorMasterKey; NewService derives the file-link signing key
+// from it once here (rather than re-deriving per call) — an empty masterKey
+// disables link minting (docs/07-sheets-adapter-plan.md step 9) rather than
+// panicking, since every unit test in this package that has no need for
+// drive_get_file's link-minting path passes nil.
+func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, log *slog.Logger, masterKey []byte) *Service {
 	return &Service{
 		connectors:   connectors,
 		limiter:      limiter,
 		audit:        audit,
 		log:          log,
 		sheetsTokens: googlesheets.NewTokenSourceCache(),
+		fileLinkKey:  deriveFileLinkKey(masterKey),
 	}
 }
 
@@ -162,7 +176,11 @@ func (s *Service) ResolveConnector(ctx context.Context, organizationID, connecto
 //     client calls it anyway.
 //  2. Request-time enforcement, Service.enforce, an mcp.Middleware on
 //     tools/call and tools/list.
-func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector) *gomcp.Server {
+//
+// req is forwarded to every Entry this registers, permitted or not — see
+// RequestInfo's doc comment for why (drive_get_file, step 9, is the one
+// tool that reads it today).
+func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector, req RequestInfo) *gomcp.Server {
 	srv := gomcp.NewServer(&gomcp.Implementation{
 		Name:    ServerName,
 		Version: ServerVersion,
@@ -178,7 +196,7 @@ func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector) *gomcp.Serve
 			continue
 		}
 		if p.Allows(e.Permission) {
-			e.Register(srv, s, conn)
+			e.Register(srv, s, conn, req)
 			granted = append(granted, e.Name)
 			continue
 		}
@@ -425,18 +443,20 @@ func rowCountFromResult(result gomcp.Result) (int, bool) {
 
 // auditableToolFields extracts the small, explicit set of tools/call
 // argument keys that are ever copied into mcp.tool.called audit metadata:
-// spreadsheet_id and sheet_name identify *which* resource a call touched,
-// and filter_columns lists the column *names* a sheets_query_rows call
+// spreadsheet_id and sheet_name identify *which* sheets resource a call
+// touched, file_id and folder_id do the same for the drive_* tools (step
+// 9), and filter_columns lists the column *names* a sheets_query_rows call
 // filtered on — exactly what an audit trail needs — without ever touching
-// the argument's actual business data (a filter value, a cell value). This
-// is deliberately a fixed allowlist of key names, not "log the whole
-// arguments object": docs/06-sheets-adapter.md §7, "log the column name
-// filtered on, but never the value," and CLAUDE.md's "log individual
-// fields, never a whole request/body struct" both apply to tool arguments
-// exactly as they do to HTTP request bodies. Unknown fields (a future
-// tool's own arguments) are silently ignored rather than logged, and a
-// non-object or malformed Arguments payload yields no fields at all rather
-// than an error — this is audit best-effort, not request validation.
+// the argument's actual business data (a filter value, a cell value, or —
+// for the drive tools — a file's contents). This is deliberately a fixed
+// allowlist of key names, not "log the whole arguments object":
+// docs/06-sheets-adapter.md §7, "log the column name filtered on, but never
+// the value," and CLAUDE.md's "log individual fields, never a whole
+// request/body struct" both apply to tool arguments exactly as they do to
+// HTTP request bodies. Unknown fields (a future tool's own arguments) are
+// silently ignored rather than logged, and a non-object or malformed
+// Arguments payload yields no fields at all rather than an error — this is
+// audit best-effort, not request validation.
 func auditableToolFields(rawArgs json.RawMessage) map[string]any {
 	if len(rawArgs) == 0 {
 		return nil
@@ -444,6 +464,8 @@ func auditableToolFields(rawArgs json.RawMessage) map[string]any {
 	var parsed struct {
 		SpreadsheetID string `json:"spreadsheet_id"`
 		SheetName     string `json:"sheet_name"`
+		FileID        string `json:"file_id"`
+		FolderID      string `json:"folder_id"`
 		Filters       []struct {
 			Column string `json:"column"`
 			// Value is deliberately never decoded into this struct — see
@@ -454,12 +476,18 @@ func auditableToolFields(rawArgs json.RawMessage) map[string]any {
 	if err := json.Unmarshal(rawArgs, &parsed); err != nil {
 		return nil
 	}
-	fields := make(map[string]any, 3)
+	fields := make(map[string]any, 5)
 	if parsed.SpreadsheetID != "" {
 		fields["spreadsheet_id"] = parsed.SpreadsheetID
 	}
 	if parsed.SheetName != "" {
 		fields["sheet_name"] = parsed.SheetName
+	}
+	if parsed.FileID != "" {
+		fields["file_id"] = parsed.FileID
+	}
+	if parsed.FolderID != "" {
+		fields["folder_id"] = parsed.FolderID
 	}
 	if len(parsed.Filters) > 0 {
 		columns := make([]string, 0, len(parsed.Filters))

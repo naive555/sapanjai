@@ -37,7 +37,37 @@ type Entry struct {
 	// decrypt conn's config fresh on every invocation and to reach the
 	// shared OAuth token-source cache); conn is closed over rather than
 	// read from any model-supplied argument, see registerDescribeConnector.
-	Register func(s *gomcp.Server, svc *Service, conn db.Connector)
+	// req carries the per-request HTTP origin (step 9's drive_get_file needs
+	// it to mint an absolute download link; every other registrar ignores
+	// it with a `_ RequestInfo` parameter) — see RequestInfo's doc comment
+	// for why this is threaded explicitly rather than read off ctx.
+	Register func(s *gomcp.Server, svc *Service, conn db.Connector, req RequestInfo)
+}
+
+// RequestInfo is the subset of the inbound HTTP request a tool's Register
+// closure may need but that isn't otherwise reachable from svc/conn — today,
+// exactly the origin drive_get_file (tools_drive.go) must build an absolute
+// download URL against. This is deliberately passed as an explicit
+// parameter rather than smuggled through the tool handler's ctx: the Go MCP
+// SDK's context propagation from the inbound *http.Request through to an
+// individual tools/call dispatch works today (verified: the SDK's own
+// streamable.go comments "Pass req.Context() here, to allow middleware to
+// add context values"), but it is not a documented contract this gateway
+// should bet a security-relevant URL's correctness on across an SDK
+// upgrade. Handler.getServer builds one instance of this per HTTP request
+// (via baseURLFromRequest) and BuildServer forwards it to every Entry it
+// registers, permitted or not — cheap to compute, so there is no reason to
+// build it lazily only for the one tool that uses it.
+type RequestInfo struct {
+	// BaseURL is the scheme+host the gateway itself was reached on for this
+	// request (e.g. "https://api.example.com"), with no trailing slash. See
+	// baseURLFromRequest (handler.go) for how it's derived from
+	// X-Forwarded-Proto/X-Forwarded-Host/r.Host. Empty in every unit test
+	// that builds a *gomcp.Server directly (never through a real HTTP
+	// request) — SignFileLink then produces a root-relative
+	// "/mcp/files/..." URL, which is never served to a real client outside
+	// tests.
+	BaseURL string
 }
 
 // appliesTo reports whether e should even be considered for conn, before
@@ -65,6 +95,8 @@ func Catalog() []Entry {
 		sheetsDescribeSpreadsheetEntry,
 		sheetsQueryRowsEntry,
 		sheetsReadRangeEntry,
+		driveListFolderEntry,
+		driveGetFileEntry,
 	}
 }
 
@@ -94,7 +126,7 @@ type describeConnectorOutput struct {
 	Status string `json:"status" jsonschema:"the connector's last known health status: active, inactive, or error"`
 }
 
-func registerDescribeConnector(s *gomcp.Server, _ *Service, conn db.Connector) {
+func registerDescribeConnector(s *gomcp.Server, _ *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sapanjai_describe_connector",
 		Description: "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials.",

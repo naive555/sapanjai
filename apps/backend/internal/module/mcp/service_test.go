@@ -70,7 +70,7 @@ func testConnector() db.Connector {
 // ---- BuildServer: construction-time filtering (enforcement layer 1) ----
 
 func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil)
 	conn := testConnector()
 
 	cases := []struct {
@@ -87,7 +87,7 @@ func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := connect(t, svc.BuildServer(tc.p, conn))
+			cs := connect(t, svc.BuildServer(tc.p, conn, mcp.RequestInfo{}))
 			got := toolNames(t, cs)
 			if len(got) != tc.wantN {
 				t.Errorf("tools/list = %v, want %d tool(s)", got, tc.wantN)
@@ -97,9 +97,9 @@ func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
 }
 
 func TestBuildServer_DescribeConnectorReturnsNoConfig(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil)
 	conn := testConnector()
-	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
 	if err != nil {
@@ -135,12 +135,12 @@ func TestBuildServer_DescribeConnectorReturnsNoConfig(t *testing.T) {
 // ---- enforce: request-time enforcement (layer 2) + audit ----
 
 func TestEnforce_DeniedToolIsNotCallable(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil)
 	conn := testConnector()
 	// No grant at all: sapanjai_describe_connector is not registered, so
 	// this exercises the SDK's own "unknown tool" refusal — the tool being
 	// invisible is itself the assertion.
-	cs := connect(t, svc.BuildServer(&rbac.Principal{}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{}, conn, mcp.RequestInfo{}))
 
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
 	if err != nil {
@@ -161,9 +161,9 @@ func TestEnforce_MiddlewareDeniesEvenWhenRegistered(t *testing.T) {
 	// mirrors spikes/mcp-gateway's TestMiddlewareDeniesEvenWhenRegistered,
 	// the mid-session-revocation shape.
 	granted := &rbac.Principal{Actions: []string{"connector:read"}}
-	svc := mcp.NewService(nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil)
 	conn := testConnector()
-	cs := connect(t, svc.BuildServer(granted, conn))
+	cs := connect(t, svc.BuildServer(granted, conn, mcp.RequestInfo{}))
 
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
 	if err != nil {
@@ -217,7 +217,7 @@ func TestResolveConnector_DelegatesToConnectorService(t *testing.T) {
 			return want, nil
 		},
 	}
-	svc := mcp.NewService(getter, nil, nil, nil)
+	svc := mcp.NewService(getter, nil, nil, nil, nil)
 
 	got, err := svc.ResolveConnector(context.Background(), orgID, connID)
 	if err != nil {
@@ -237,7 +237,7 @@ func TestResolveConnector_PropagatesNotFound(t *testing.T) {
 			return db.Connector{}, wantErr
 		},
 	}
-	svc := mcp.NewService(getter, nil, nil, nil)
+	svc := mcp.NewService(getter, nil, nil, nil, nil)
 
 	_, err := svc.ResolveConnector(context.Background(), uuid.New(), uuid.New())
 	if !errors.Is(err, wantErr) {

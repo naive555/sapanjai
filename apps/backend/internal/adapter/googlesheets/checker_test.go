@@ -3,6 +3,7 @@ package googlesheets
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/sapanjai/backend/internal/module/connector"
@@ -16,6 +17,7 @@ type mockSheetsAPI struct {
 	values          func(ctx context.Context, spreadsheetID, a1Range string) ([][]any, error)
 	listFiles       func(ctx context.Context, folderID string, pageToken string) (*FilePage, error)
 	file            func(ctx context.Context, fileID string) (*File, error)
+	downloadFile    func(ctx context.Context, fileID string) (io.ReadCloser, string, error)
 	t               *testing.T
 }
 
@@ -47,6 +49,13 @@ func (m *mockSheetsAPI) File(ctx context.Context, fileID string) (*File, error) 
 		m.t.Fatal("unexpected call to File")
 	}
 	return m.file(ctx, fileID)
+}
+
+func (m *mockSheetsAPI) DownloadFile(ctx context.Context, fileID string) (io.ReadCloser, string, error) {
+	if m.downloadFile == nil {
+		m.t.Fatal("unexpected call to DownloadFile")
+	}
+	return m.downloadFile(ctx, fileID)
 }
 
 func TestChecker_Type(t *testing.T) {

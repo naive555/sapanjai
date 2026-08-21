@@ -221,6 +221,82 @@ func ResultTooLarge() *gomcp.CallToolResult {
 	}
 }
 
+// FolderNotAllowed builds the CallToolResult docs/06-sheets-adapter.md §8's
+// convention prescribes for a Drive folder id absent from this connector's
+// allowlist (config.scope.drive_folder_ids) — checked fresh on every call
+// (googlesheets.Config.IsFolderAllowed), the same discipline
+// SpreadsheetNotAllowed follows for spreadsheets. folderID is an allowlist
+// entry, not a credential, so it is safe to echo back.
+func FolderNotAllowed(folderID string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"FOLDER_NOT_ALLOWED: %q is not on this connector's allowlist. "+
+					"Ask the connector's owner to add it to the connector's drive_folder_ids, or use a folder id that is already allowlisted.",
+				folderID),
+		}},
+	}
+}
+
+// FileNotAllowed builds the CallToolResult drive_get_file returns when a
+// file exists but none of its *direct* parent folders is on this
+// connector's allowlist — googlesheets.ErrFileNotAllowed's doc comment
+// explains why only direct parents count. fileID is safe to echo back for
+// the same reason a spreadsheet or folder id is.
+func FileNotAllowed(fileID string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"FILE_NOT_ALLOWED: %q is not inside any of this connector's allowlisted Drive folders "+
+					"(only a file's *direct* parent folder counts — a nested subfolder must be allowlisted itself). "+
+					"Call drive_list_folder on an allowlisted folder to see which files this connector can read.",
+				fileID),
+		}},
+	}
+}
+
+// FileNotFound builds the CallToolResult drive_get_file/drive_list_folder
+// return for googlesheets.ErrFileNotFound — a file id that doesn't resolve
+// at all (deleted, never existed, or any other upstream failure fetching
+// its metadata; this package never surfaces upstream error detail past its
+// own boundary, see ErrFileNotFound's doc comment).
+func FileNotFound(fileID string) *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: fmt.Sprintf(
+				"FILE_NOT_FOUND: %q does not exist, or is no longer reachable with this connector's credentials.",
+				fileID),
+		}},
+	}
+}
+
+// missingFolderID builds the CallToolResult drive_list_folder returns when
+// the model omitted a required folder_id — checked before config
+// decryption or the network, same discipline as missingSpreadsheetID.
+func missingFolderID() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "folder_id is required. It must be one of this connector's allowlisted Drive folders.",
+		}},
+	}
+}
+
+// missingFileID builds the CallToolResult drive_get_file returns when the
+// model omitted a required file_id — checked before config decryption or
+// the network, same discipline as missingSpreadsheetID.
+func missingFileID() *gomcp.CallToolResult {
+	return &gomcp.CallToolResult{
+		IsError: true,
+		Content: []gomcp.Content{&gomcp.TextContent{
+			Text: "file_id is required. Call drive_list_folder to see which ids this connector can access.",
+		}},
+	}
+}
+
 // ErrorResult converts a service-level error into a CallToolResult with
 // IsError set: apperror.Resolve's message for a known *apperror.Error
 // (matching the text the REST API would return for the same failure), or a

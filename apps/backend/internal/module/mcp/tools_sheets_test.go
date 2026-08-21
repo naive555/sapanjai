@@ -62,10 +62,10 @@ func (f *fakeConfigGetter) OpenConfig(ctx context.Context, organizationID uuid.U
 // ---- connector-type gating (BuildServer's Entry.appliesTo) ----
 
 func TestBuildServer_SheetsToolsHiddenForNonGoogleSheetsConnector(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil, nil)
 	conn := testConnector() // Type: "generic"
 
-	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 	got := toolNames(t, cs)
 	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
 		t.Fatalf("tools/list = %v, want only sapanjai_describe_connector for a generic connector even with owner bypass", got)
@@ -73,10 +73,10 @@ func TestBuildServer_SheetsToolsHiddenForNonGoogleSheetsConnector(t *testing.T) 
 }
 
 func TestBuildServer_SheetsToolsVisibleForGoogleSheetsConnectorWithPermission(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 
-	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionSheetsRead}}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionSheetsRead}}, conn, mcp.RequestInfo{}))
 	got := toolNames(t, cs)
 	want := map[string]bool{
 		"sheets_list_spreadsheets":    true,
@@ -100,7 +100,7 @@ func TestBuildServer_SheetsToolsVisibleForGoogleSheetsConnectorWithPermission(t 
 // sheets_query_rows / sheets_read_range, even against a google_sheets
 // connector.
 func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 
 	cases := []struct {
@@ -118,7 +118,7 @@ func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cs := connect(t, svc.BuildServer(tc.p, conn))
+			cs := connect(t, svc.BuildServer(tc.p, conn, mcp.RequestInfo{}))
 			got := toolNames(t, cs)
 			if len(got) != tc.wantOtherTools {
 				t.Errorf("tools/list = %v, want %d tool(s) unrelated to sheets:read", got, tc.wantOtherTools)
@@ -151,9 +151,9 @@ func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
 // validGoogleSheetsConfig would fail immediately if this test's code path
 // ever reached the network.
 func TestDescribeSpreadsheet_RejectsNonAllowlistedID(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
-	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
 	args, _ := json.Marshal(map[string]any{"spreadsheet_id": "1XyZNotOnTheAllowlist"})
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
@@ -183,9 +183,9 @@ func TestDescribeSpreadsheet_RejectsNonAllowlistedID(t *testing.T) {
 // it uses a spreadsheet_id that *is* allowlisted (proving the rejection is
 // about the bound, not the allowlist) yet still never reaches the network.
 func TestDescribeSpreadsheet_IncludeSampleRowsBounded(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfig()}, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
-	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn))
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
 	for _, n := range []int{-1, 6, 100} {
 		args, _ := json.Marshal(map[string]any{

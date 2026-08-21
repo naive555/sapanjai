@@ -3,6 +3,7 @@ package googlesheets
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -12,23 +13,53 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-// requestTimeout bounds every upstream Google API call. Passed via
-// option.WithHTTPClient rather than left to the SDK's default (no timeout),
-// per docs/07-sheets-adapter-plan.md step 5.
+// requestTimeout bounds every upstream Google API call *except* a file
+// download's body read — see downloadTimeout's doc comment for why the two
+// need different budgets. Passed via option.WithHTTPClient rather than left
+// to the SDK's default (no timeout), per docs/07-sheets-adapter-plan.md
+// step 5.
 const requestTimeout = 15 * time.Second
+
+// downloadTimeout is the outer backstop for DownloadFile's body read only —
+// a *backstop* against a connection that never makes progress at all, not
+// the real bound on a legitimate slow download (that bound is the caller's
+// context: internal/module/mcp/handler.go's downloadFile passes the HTTP
+// request's own context, which Echo cancels the moment the real client
+// hangs up).
+//
+// Go's http.Client.Timeout covers the *entire* round trip including the
+// response body read, not just time-to-first-byte — fine for every other
+// call this package makes (SpreadsheetMeta, Values, ListFiles, File all
+// return small, fast responses), but wrong for a file download, whose body
+// read is paced by whoever is reading the other end of downloadFile's
+// io.Copy. Confirmed experimentally, not just by reading the docs: a
+// client with a short Timeout reading a slow body returns
+// "context deadline exceeded (Client.Timeout or context cancellation while
+// reading body)" partway through — and by the time that happens,
+// downloadFile has already written a 200 status and headers, so the caller
+// silently receives a truncated file with no error surfaced at all. A large
+// file over a slow connection legitimately takes longer than requestTimeout
+// to fully download, so DownloadFile must not share requestTimeout's
+// client — see newClient's downloadHTTPClient.
+const downloadTimeout = 10 * time.Minute
 
 // client is the thin implementation of sheetsAPI over the official
 // google.golang.org/api/{sheets,drive} SDKs — no hand-rolled HTTP.
+// downloadDrive is a *second* Drive service, authorized by the same
+// TokenSource but built from a client carrying downloadTimeout instead of
+// requestTimeout — see downloadTimeout's doc comment. DownloadFile is the
+// only method that uses it; every other method uses drive/sheets as before.
 type client struct {
-	sheets *sheets.Service
-	drive  *drive.Service
+	sheets        *sheets.Service
+	drive         *drive.Service
+	downloadDrive *drive.Service
 }
 
 var _ sheetsAPI = (*client)(nil)
 
 // newClient builds a client authorized by ts. endpoint overrides the SDKs'
 // default base path when non-empty — used only by client_test.go's contract
-// test, which points both services at an httptest server.
+// test, which points every service at an httptest server.
 func newClient(ctx context.Context, ts oauth2.TokenSource, endpoint string) (*client, error) {
 	// oauth2.NewClient wires ts into the client's transport. This must be
 	// the *same* client that carries the timeout: google.golang.org/api's
@@ -56,7 +87,28 @@ func newClient(ctx context.Context, ts oauth2.TokenSource, endpoint string) (*cl
 		return nil, fmt.Errorf("googlesheets: build drive client: %w", err)
 	}
 
-	return &client{sheets: sheetsSvc, drive: driveSvc}, nil
+	// A second *http.Client (same ts, same oauth2 transport, so downloads
+	// are still authenticated) carrying downloadTimeout instead of
+	// requestTimeout — one *drive.Service can only ever have one Timeout
+	// (option.WithHTTPClient's client is applied to the whole Service
+	// verbatim), so DownloadFile's different budget needs its own Service
+	// rather than a per-call override. ts.Token() is cached
+	// (oauth2.ReuseTokenSource, see oauth.go), so building a second client
+	// from the same ts does not mean a second token exchange.
+	downloadHTTPClient := oauth2.NewClient(ctx, ts)
+	downloadHTTPClient.Timeout = downloadTimeout
+	downloadOpts := []option.ClientOption{
+		option.WithHTTPClient(downloadHTTPClient),
+	}
+	if endpoint != "" {
+		downloadOpts = append(downloadOpts, option.WithEndpoint(endpoint))
+	}
+	downloadDriveSvc, err := drive.NewService(ctx, downloadOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("googlesheets: build download drive client: %w", err)
+	}
+
+	return &client{sheets: sheetsSvc, drive: driveSvc, downloadDrive: downloadDriveSvc}, nil
 }
 
 // SpreadsheetMeta implements sheetsAPI.
@@ -98,11 +150,14 @@ func (c *client) Values(ctx context.Context, spreadsheetID, a1Range string) ([][
 
 // ListFiles implements sheetsAPI. The query escapes folderID's single
 // quotes — it comes from stored connector config, not agent input, but this
-// is the one place it is interpolated into a Drive query string.
+// is the one place it is interpolated into a Drive query string. The
+// requested field mask includes size/modifiedTime (step 9) so
+// drive.FileSummary's own fields never come back zero-valued for a listed
+// file the way they would if this mask only asked for id/name/mimeType.
 func (c *client) ListFiles(ctx context.Context, folderID string, pageToken string) (*FilePage, error) {
 	call := c.drive.Files.List().
 		Q(fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQueryValue(folderID))).
-		Fields("nextPageToken, files(id, name, mimeType)").
+		Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime)").
 		Context(ctx)
 	if pageToken != "" {
 		call = call.PageToken(pageToken)
@@ -115,18 +170,47 @@ func (c *client) ListFiles(ctx context.Context, folderID string, pageToken strin
 
 	page := &FilePage{NextPageToken: resp.NextPageToken}
 	for _, f := range resp.Files {
-		page.Files = append(page.Files, File{ID: f.Id, Name: f.Name, MimeType: f.MimeType})
+		page.Files = append(page.Files, File{
+			ID: f.Id, Name: f.Name, MimeType: f.MimeType,
+			SizeBytes: f.Size, ModifiedTime: f.ModifiedTime,
+		})
 	}
 	return page, nil
 }
 
-// File implements sheetsAPI.
+// File implements sheetsAPI. The field mask includes parents (step 9's
+// GetFile allowlist re-check needs a file's direct parent folder ids), size
+// (the download route's maxDownloadBytes pre-check), and modifiedTime.
 func (c *client) File(ctx context.Context, fileID string) (*File, error) {
-	f, err := c.drive.Files.Get(fileID).Fields("id, name, mimeType").Context(ctx).Do()
+	f, err := c.drive.Files.Get(fileID).Fields("id, name, mimeType, size, modifiedTime, parents").Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("googlesheets: get file: %w", err)
 	}
-	return &File{ID: f.Id, Name: f.Name, MimeType: f.MimeType}, nil
+	return &File{
+		ID: f.Id, Name: f.Name, MimeType: f.MimeType,
+		Parents: f.Parents, SizeBytes: f.Size, ModifiedTime: f.ModifiedTime,
+	}, nil
+}
+
+// DownloadFile implements sheetsAPI. Files.Get(fileID).Download() issues the
+// same GET as a metadata fetch but with alt=media, returning the raw
+// response so the caller (internal/module/mcp/handler.go's downloadFile)
+// can stream resp.Body through a bounded reader without ever buffering the
+// whole file — the same "never load a whole file into memory" discipline
+// query.go's scan loop applies to sheet rows. The caller owns resp.Body and
+// must close it.
+//
+// Deliberately uses c.downloadDrive, not c.drive: this call's body read can
+// legitimately take far longer than requestTimeout (a large file over a
+// slow connection), and requestTimeout is scoped to the client every other
+// method here shares — see downloadTimeout's doc comment for what goes
+// wrong if this call used that client instead.
+func (c *client) DownloadFile(ctx context.Context, fileID string) (io.ReadCloser, string, error) {
+	resp, err := c.downloadDrive.Files.Get(fileID).Context(ctx).Download()
+	if err != nil {
+		return nil, "", fmt.Errorf("googlesheets: download file: %w", err)
+	}
+	return resp.Body, resp.Header.Get("Content-Type"), nil
 }
 
 func escapeDriveQueryValue(v string) string {

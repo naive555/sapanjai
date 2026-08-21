@@ -2,9 +2,12 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -39,16 +42,25 @@ func createTestConnector(t *testing.T, client *http.Client, baseURL string, org 
 	return id
 }
 
+// testDriveFolderID is the Drive folder id createGoogleSheetsTestConnector
+// allowlists on every connector it creates (docs/07-sheets-adapter-plan.md
+// step 9) — a fixed constant, not a parameter, specifically so adding it
+// never requires touching any of this helper's existing call sites. A
+// plausibly-real-shaped id, never actually reachable, exactly like the
+// spreadsheet id sibling tests use.
+const testDriveFolderID = "0B1aFakeAllowlistedFolderId"
+
 // createGoogleSheetsTestConnector creates a "google_sheets" connector in org
 // via POST /connectors, using org's owner as the caller, with a config that
-// allowlists exactly one spreadsheet id — a fake but plausibly-shaped
-// refresh token/client id/secret, mirroring
-// connector_integration_test.go's TestIntegration_ConnectorsGoogleSheetsTypeAccepted.
-// Every test that uses this connector must stop short of any code path that
-// would actually exchange the refresh token (SPREADSHEET_NOT_ALLOWED and
-// input-bound rejections both do, by design — see tools_sheets.go's check
-// ordering) since this suite has no real Google credentials and must not
-// attempt real network calls.
+// allowlists exactly one spreadsheet id and one Drive folder id
+// (testDriveFolderID) — a fake but plausibly-shaped refresh token/client
+// id/secret, mirroring connector_integration_test.go's
+// TestIntegration_ConnectorsGoogleSheetsTypeAccepted. Every test that uses
+// this connector must stop short of any code path that would actually
+// exchange the refresh token (SPREADSHEET_NOT_ALLOWED, FOLDER_NOT_ALLOWED,
+// and input-bound rejections all do, by design — see tools_sheets.go's and
+// tools_drive.go's check ordering) since this suite has no real Google
+// credentials and must not attempt real network calls.
 func createGoogleSheetsTestConnector(t *testing.T, client *http.Client, baseURL string, org createdOrg, name, allowlistedSpreadsheetID string) string {
 	t.Helper()
 
@@ -59,7 +71,8 @@ func createGoogleSheetsTestConnector(t *testing.T, client *http.Client, baseURL 
 			"client_secret": "fake-client-secret",
 		},
 		"scope": map[string]any{
-			"spreadsheet_ids": []any{allowlistedSpreadsheetID},
+			"spreadsheet_ids":  []any{allowlistedSpreadsheetID},
+			"drive_folder_ids": []any{testDriveFolderID},
 		},
 	}
 
@@ -1033,5 +1046,211 @@ func TestIntegration_MCP_ReadRange_OverCapRejected(t *testing.T) {
 	}
 	if !strings.Contains(text.Text, "narrow the range") {
 		t.Errorf("text = %q, want it to name the fix (narrow the range)", text.Text)
+	}
+}
+
+// ---- Drive tools (docs/07-sheets-adapter-plan.md step 9) ----
+
+// TestIntegration_MCPDrive_ToolsInvisibleWithoutDriveRead mirrors
+// TestIntegration_MCP_SheetsToolsInvisibleWithoutSheetsRead: a principal
+// granted sheets:read (but not drive:read) must see neither
+// drive_list_folder nor drive_get_file in tools/list, and a direct call to
+// either is refused — the plan's explicit requirement that the two
+// permissions stay independent, proven end to end against a real
+// google_sheets connector.
+func TestIntegration_MCPDrive_ToolsInvisibleWithoutDriveRead(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-drive-perm-denied")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "drive-conn-perm-denied", "1AbCFakeSpreadsheetId")
+
+	member := registerUser(t, client, ts.URL, "mcp-drive-perm-denied-member")
+	inviteMember(t, client, ts.URL, org, member.Email, "member")
+	// sheets:read only — deliberately no drive:read.
+	roleID := createConnectorRole(t, client, ts.URL, org, []string{"mcpkey:write", "sheets:read"})
+	assignConnectorRole(t, client, ts.URL, org, member.UserID, roleID)
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, member.AccessToken, "no-drive-read")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	for _, name := range toolNames(t, cs) {
+		if name == "drive_list_folder" || name == "drive_get_file" {
+			t.Errorf("tools/list unexpectedly includes %q for a principal without drive:read", name)
+		}
+	}
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name:      "drive_list_folder",
+		Arguments: map[string]any{"folder_id": testDriveFolderID},
+	})
+	if err != nil {
+		return // unregistered-tool protocol error is a refusal too
+	}
+	if !res.IsError {
+		t.Fatal("drive_list_folder succeeded for a principal without drive:read")
+	}
+}
+
+// TestIntegration_MCPDrive_ToolsVisibleWithDriveRead is the positive
+// counterpart: a member granted exactly drive:read (nothing else, notably
+// not sheets:read) sees both drive tools and neither sheets tool.
+func TestIntegration_MCPDrive_ToolsVisibleWithDriveRead(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-drive-perm-granted")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "drive-conn-perm-granted", "1AbCFakeSpreadsheetId")
+
+	member := registerUser(t, client, ts.URL, "mcp-drive-perm-granted-member")
+	inviteMember(t, client, ts.URL, org, member.Email, "member")
+	roleID := createConnectorRole(t, client, ts.URL, org, []string{"mcpkey:write", "drive:read"})
+	assignConnectorRole(t, client, ts.URL, org, member.UserID, roleID)
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, member.AccessToken, "with-drive-read")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	got := toolNames(t, cs)
+	want := map[string]bool{"drive_list_folder": true, "drive_get_file": true}
+	if len(got) != 2 {
+		t.Fatalf("tools/list = %v, want exactly the 2 drive tools", got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected tool %q in tools/list", name)
+		}
+	}
+}
+
+// TestIntegration_MCPDrive_ListFolder_FolderNotAllowed proves
+// drive_list_folder's allowlist check runs before any network call — this
+// suite has no real Google credentials, so this is only reachable at all
+// because the allowlist check precedes it (mirrors
+// TestIntegration_MCP_DescribeSpreadsheet_SpreadsheetNotAllowed).
+func TestIntegration_MCPDrive_ListFolder_FolderNotAllowed(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-drive-not-allowed")
+	connID := createGoogleSheetsTestConnector(t, client, ts.URL, org, "drive-conn-not-allowed", "1AbCFakeSpreadsheetId")
+	_, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "drive-not-allowed-key")
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	const notAllowedFolderID = "0XyZDifferentRealLookingFolderId"
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{
+		Name:      "drive_list_folder",
+		Arguments: map[string]any{"folder_id": notAllowedFolderID},
+	})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError for a folder id absent from the allowlist")
+	}
+	text, ok := res.Content[0].(*gomcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want *TextContent", res.Content[0])
+	}
+	if !strings.Contains(text.Text, "FOLDER_NOT_ALLOWED") {
+		t.Errorf("text = %q, want it to mention FOLDER_NOT_ALLOWED", text.Text)
+	}
+
+	t.Run("audit row records folder_id", func(t *testing.T) {
+		_, rows := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.tool.called", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		var found bool
+		for _, r := range rows {
+			meta, ok := r["metadata"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if meta["tool"] == "drive_list_folder" {
+				found = true
+				if meta["folder_id"] != notAllowedFolderID {
+					t.Errorf("audit metadata folder_id = %v, want %q", meta["folder_id"], notAllowedFolderID)
+				}
+			}
+		}
+		if !found {
+			t.Error("no mcp.tool.called audit row found for drive_list_folder")
+		}
+	})
+}
+
+// ---- Signed download link route (docs/07-sheets-adapter-plan.md step 9) ----
+
+// downloadFileURL builds a GET /mcp/files/:connectorId/:fileId URL with the
+// given query params, for tests that craft an invalid link by hand — none
+// of these ever need a real signing key, since every case here is rejected
+// by Handler.downloadFile before it would ever be used.
+func downloadFileURL(baseURL, connectorID, fileID string, query url.Values) string {
+	return fmt.Sprintf("%s/mcp/files/%s/%s?%s", baseURL, connectorID, fileID, query.Encode())
+}
+
+// TestIntegration_MCPDrive_DownloadFile_BadSignatureIs404 proves a
+// syntactically well-formed link with a wrong signature is rejected with
+// the same uniform 404 the whole MCP gateway uses for tenant-isolation
+// failures — never a distinguishable error that would let a probing client
+// learn its signature was merely wrong rather than, say, expired.
+func TestIntegration_MCPDrive_DownloadFile_BadSignatureIs404(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	q := url.Values{}
+	q.Set("org", uuid.NewString())
+	q.Set("uid", uuid.NewString())
+	q.Set("exp", strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10))
+	q.Set("sig", "obviously-not-a-real-signature")
+	link := downloadFileURL(ts.URL, uuid.NewString(), "some-file-id", q)
+
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet, strings.TrimPrefix(link, ts.URL), nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %v", resp.StatusCode, body)
+	}
+	if body["message"] != "Resource not found" {
+		t.Fatalf("message = %v, want %q", body["message"], "Resource not found")
+	}
+}
+
+// TestIntegration_MCPDrive_DownloadFile_ExpiredIs404 proves an exp in the
+// past is rejected the same uniform way, regardless of what sig carries —
+// VerifyFileLink checks expiry before ever comparing a signature.
+func TestIntegration_MCPDrive_DownloadFile_ExpiredIs404(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	q := url.Values{}
+	q.Set("org", uuid.NewString())
+	q.Set("uid", uuid.NewString())
+	q.Set("exp", strconv.FormatInt(time.Now().Add(-1*time.Minute).Unix(), 10))
+	q.Set("sig", "irrelevant-once-expired")
+	link := downloadFileURL(ts.URL, uuid.NewString(), "some-file-id", q)
+
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet, strings.TrimPrefix(link, ts.URL), nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %v", resp.StatusCode, body)
+	}
+	if body["message"] != "Resource not found" {
+		t.Fatalf("message = %v, want %q", body["message"], "Resource not found")
+	}
+}
+
+// TestIntegration_MCPDrive_DownloadFile_NoQueryIs404 proves the route
+// rejects cleanly with no query string at all — every one of org/uid/exp/sig
+// fails to parse, and the very first one checked (org) already 404s.
+func TestIntegration_MCPDrive_DownloadFile_NoQueryIs404(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet,
+		fmt.Sprintf("/mcp/files/%s/some-file-id", uuid.NewString()), nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %v", resp.StatusCode, body)
+	}
+	if body["message"] != "Resource not found" {
+		t.Fatalf("message = %v, want %q", body["message"], "Resource not found")
 	}
 }

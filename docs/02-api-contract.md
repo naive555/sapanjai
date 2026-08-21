@@ -267,6 +267,8 @@ vice versa) regardless of what the caller is permitted to do.
 | `sheets_describe_spreadsheet` | `google_sheets` | `sheets:read` | Schema discovery (docs/06-sheets-adapter.md §4.1): one spreadsheet's title, every tab's name and row/column count, and each tab's column headers, optionally with a few sample data rows. Sheets has no schema, so this is meant to be called before `sheets_query_rows`/`sheets_read_range`. Input: `{ spreadsheet_id: string (required), include_sample_rows: int 0-5, default 0 }`. | `{ spreadsheet_id, title, sheets: [{ name, row_count, column_count, columns: [{ index, letter, header }], sample_rows: [[string]] }] }` |
 | `sheets_query_rows` | `google_sheets` | `sheets:read` | The workhorse (step 7): filters one sheet's data rows by a structured column DSL (`eq`/`neq`/`contains`/`gt`/`lt`/`gte`/`lte`/`in`, AND-ed together), with column projection and offset/limit pagination. No Google Visualization Query Language is ever exposed — a filter value is always compared as literal text or a plain number, never evaluated as a formula, regardless of a leading `=`/`+`/`-`/`@`. Input: `{ spreadsheet_id, sheet_name, filters?: [{ column, op, value }], columns?: [string], limit?: int 1-200 default 50, offset?: int default 0, response_format?: "markdown" \| "json" default "markdown" }`. | See "Bounded scan" below for the response shape. |
 | `sheets_read_range` | `google_sheets` | `sheets:read` | The escape hatch (step 8): reads an explicit A1 range directly, for whatever `sheets_query_rows`' filter DSL cannot express — no filtering, no projection. The range is parsed and re-validated in our own code, never handed to Google opaquely; it must carry explicit numeric row bounds on both ends (a bare sheet name, or a column-only range like `A:D`, is rejected as unbounded — a row-only range like `1:100` is not, since its rows are still explicitly bounded). An omitted sheet name resolves to the spreadsheet's first tab. Input: `{ spreadsheet_id: string (required), range: string (required) }`. | `{ spreadsheet_id, range, sheet_name, columns: [string], rows: [[string]], row_count, column_count }` — `range` is always the fully resolved range actually read (sheet name and column bounds filled in); `rows` is padded to a rectangle `column_count` wide, never ragged. |
+| `drive_list_folder` | `google_sheets` | `drive:read` | The Drive half of the adapter (step 9): lists the files directly inside one of this connector's allowlisted Drive folders (`config.scope.drive_folder_ids`) — `folder_id` must be one of those, checked before any network call. Only *direct* children are listed; a subfolder's own contents are not traversed. `drive:read` is a distinct permission from `sheets:read` — neither grants the other. Input: `{ folder_id: string (required), page_token?: string }`. | `{ folder_id, files: [{ file_id, name, mime_type, size_bytes, modified_time }], next_page_token, has_more }` — results are capped per call; `has_more`/`next_page_token` page forward. |
+| `drive_get_file` | `google_sheets` | `drive:read` | One Drive file's metadata by id, plus — for non-Google-native files — a short-lived, replayable download link (no consumption tracking — anyone holding it can use it until it expires) (see "Signed download link" below). Unlike every other tool here, the allowlist can't be checked until the file's metadata is fetched (a bare `file_id` carries no folder context), so this tool always reaches the network before it can reject an out-of-scope file. Input: `{ file_id: string (required) }`. | `{ file_id, name, mime_type, size_bytes, modified_time, download_url?, download_url_expires_at? }` — `download_url` is omitted for a Google-native file (a Doc/Sheet/Slide — no raw bytes to download) or when link minting is disabled (empty `CONNECTOR_MASTER_KEY`). |
 
 **`sheets_query_rows`'s bounded scan (step 7).** The Sheets API has no
 server-side filter and no count endpoint, so an exact `total` over the whole
@@ -355,9 +357,10 @@ connector.
 | Action | Written when | Metadata |
 | ------ | ------------ | -------- |
 | `mcp.session.started` | The handshake's first request — `initialize` for pre-2026-07-28 (SEP-2575) clients, `server/discover` for clients that negotiate the newer protocol by default (SDK v1.7.0 does, in Stateless mode) | `connector_id` |
-| `mcp.tool.called` | A `tools/call` the caller was permitted to make and whose rate-limit check passed, recorded once the call has actually finished (step 7: `duration_ms`/`row_count` don't exist until then) | `connector_id`, `tool`, `duration_ms`; plus `spreadsheet_id`/`sheet_name` when the tool's own arguments name them, `filter_columns` (column **names** `sheets_query_rows` filtered on — never the filter values) when present, and `row_count` when the tool's own output names a count — `sheets_query_rows`' `count` field or `sheets_read_range`'s `row_count` field, never the range's own cell contents |
+| `mcp.tool.called` | A `tools/call` the caller was permitted to make and whose rate-limit check passed, recorded once the call has actually finished (step 7: `duration_ms`/`row_count` don't exist until then) | `connector_id`, `tool`, `duration_ms`; plus `spreadsheet_id`/`sheet_name`/`file_id`/`folder_id` when the tool's own arguments name them (the last two from `drive_list_folder`/`drive_get_file`, step 9), `filter_columns` (column **names** `sheets_query_rows` filtered on — never the filter values) when present, and `row_count` when the tool's own output names a count — `sheets_query_rows`' `count` field or `sheets_read_range`'s `row_count` field, never the range's own cell contents |
 | `mcp.tool.denied` | A `tools/call` the caller was **not** permitted to make | `connector_id`, `tool`, `missing_permission` |
 | `mcp.ratelimit.hit` | A permitted `tools/call` refused because its connector's rate-limit bucket is exhausted (step 4) | `connector_id`, `tool` |
+| `mcp.file.downloaded` | A `GET /mcp/files/:connectorId/:fileId` download that actually streamed (step 9) — this route has no bearer-token principal, so the actor recorded is the `uid` the link itself was minted for, not a re-resolved live grant | `connector_id`, `file_id`, `mime_type` |
 
 Metadata never carries the bearer token, decrypted connector config, a whole
 request/tool-argument struct, or a filter's actual value — only the small,
@@ -392,6 +395,49 @@ CallToolResult{ IsError: true, Content: [{ text:
 off a concrete amount rather than guessing. Each denial writes a best-effort
 `mcp.ratelimit.hit` audit row (`connector_id`, `tool`) — see the audit table
 above.
+
+**Signed download link (`GET /mcp/files/:connectorId/:fileId`, step 9).**
+The **one** gateway route authenticated by URL signature rather than a
+bearer header — there is no PAT, no `Authorization` header, nothing else
+standing between an internet-reachable URL and a customer's file. Google
+Drive has no signed-URL feature of its own, so this gateway mints and
+verifies the link itself: `drive_get_file` above signs it, and this route
+verifies the signature before doing anything else. Not mounted behind
+`RequireMCPKey` — deliberately, since the whole point is that the link can
+be handed to something with no PAT at all (a browser, `curl`, a different
+process).
+
+Query params, all required: `org` (the org the link is scoped to), `uid`
+(the principal whose agent minted the link — carried purely so the download
+can be audited to a real actor, not itself part of authorization), `exp`
+(Unix seconds the link stops working at), `sig`
+(`base64url(HMAC-SHA256(key, "v1\norg\nconnectorId\nfileId\nuid\nexp"))`,
+where `key` is derived from `CONNECTOR_MASTER_KEY` via HKDF-SHA256 — never
+the master key itself). TTL is **15 minutes**, matching
+`docs/06-sheets-adapter.md` §4.3's hard ceiling; `exp` is never honored
+past that regardless of what a (still correctly signed) link claims.
+
+Every failure — a missing or malformed query param, a bad signature, an
+expired `exp`, an unresolvable connector, a connector of the wrong type, a
+file whose parent folder was removed from the allowlist since the link was
+minted, or a Google-native file with no bytes to stream — is the exact same
+uniform `404 { "message": "Resource not found" }` a client cannot
+distinguish, mirroring the JSON-RPC route's own `POST /mcp/:connectorId`
+tenant-isolation behavior. Two cases get a different status because they
+are not authorization failures: a file whose size exceeds 25MiB is
+`413 { "message": "File too large" }`, and an exhausted per-connector
+rate-limit bucket (charged 1 unit for the download itself, separate from
+the unit `drive_get_file`'s own metadata fetch already charged) is
+`429` with a stated retry-after, same wording as the JSON-RPC route's
+`RATE_LIMITED` result.
+
+A successful response streams the file's raw bytes with
+`Content-Type` (from Drive), `Content-Disposition: attachment;
+filename*=UTF-8''<percent-encoded name>`, `Cache-Control: private,
+no-store`, and `X-Content-Type-Options: nosniff`, and writes a best-effort
+`mcp.file.downloaded` audit row (`connector_id`, `file_id`, `mime_type`;
+actor `uid`, org `org` — both from the verified link, since this route has
+no re-resolved RBAC principal of its own).
 
 ### API docs
 

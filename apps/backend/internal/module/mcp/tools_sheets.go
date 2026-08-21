@@ -89,7 +89,7 @@ type spreadsheetSummaryOutput struct {
 	Accessible    bool   `json:"accessible" jsonschema:"false if this id is allowlisted but can no longer be read (a revoked share or a deleted file) — treat it as unusable rather than retrying"`
 }
 
-func registerListSpreadsheets(s *gomcp.Server, svc *Service, conn db.Connector) {
+func registerListSpreadsheets(s *gomcp.Server, svc *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sheets_list_spreadsheets",
 		Description: sheetsListSpreadsheetsDescription,
@@ -153,7 +153,7 @@ type columnDescriptionOutput struct {
 	Header string `json:"header"`
 }
 
-func registerDescribeSpreadsheet(s *gomcp.Server, svc *Service, conn db.Connector) {
+func registerDescribeSpreadsheet(s *gomcp.Server, svc *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sheets_describe_spreadsheet",
 		Description: sheetsDescribeSpreadsheetDescription,
@@ -267,7 +267,7 @@ type queryRowsOutput struct {
 	Rows         []map[string]string `json:"rows"`
 }
 
-func registerQueryRows(s *gomcp.Server, svc *Service, conn db.Connector) {
+func registerQueryRows(s *gomcp.Server, svc *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sheets_query_rows",
 		Description: sheetsQueryRowsDescription,
@@ -494,7 +494,7 @@ type readRangeOutput struct {
 	ColumnCount   int        `json:"column_count"`
 }
 
-func registerReadRange(s *gomcp.Server, svc *Service, conn db.Connector) {
+func registerReadRange(s *gomcp.Server, svc *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sheets_read_range",
 		Description: sheetsReadRangeDescription,
