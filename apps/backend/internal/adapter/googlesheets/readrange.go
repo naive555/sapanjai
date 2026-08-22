@@ -13,62 +13,40 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// This file is docs/07-sheets-adapter-plan.md step 8: sheets_read_range,
-// "the A1-range escape hatch" for whatever sheets_query_rows' structured
-// filter DSL cannot express. The step's entire point, per the plan, is
-// that "the A1 range must be parsed and re-validated against the allowlist
-// — a range string is agent-supplied input, not a trusted identifier."
-// Nothing in this file ever hands an agent-supplied range string to Google
-// unexamined: ParseA1Range below decomposes it into a sheet name and
-// numeric column/row bounds in our own code first, the same discipline
-// filter.go applies to filter values (never interpolated, always compared
-// as literal data) applied here to a range instead.
+// sheets_read_range: the A1-range escape hatch for what sheets_query_rows'
+// filter DSL cannot express.
+//
+// A range string is agent-supplied input, not a trusted identifier, so
+// nothing here hands one to Google unexamined. ParseA1Range decomposes it
+// into a sheet name and numeric bounds first — the same discipline filter.go
+// applies to filter values, applied to a range instead.
 
 const (
-	// MaxReadRangeRows and MaxReadRangeCells are sheets_read_range's
-	// pre-fetch bounds (docs/07 step 8: "reject a range spanning more than
-	// 1,000 rows or more than 20,000 cells"). Checked against the parsed
-	// range's own dimensions before any Values.Get call — the first line
-	// of defence behind maxResultBytes' post-fetch 256KB body cap
-	// (checkEncodedSize, shared with sheets_query_rows below), which
-	// catches an oversized *request* rather than only an oversized
-	// response. A fully col+row-bounded range is checked at
-	// ValidateReadRangeInput time, before any network call at all; a
-	// row-only range ("1:100", column-unbounded until the sheet's real
-	// width is known) gets that same check re-run once readRange has
-	// resolved its column span against SpreadsheetMeta — still before the
-	// data-bearing Values.Get.
+	// Pre-fetch bounds on a parsed range's own dimensions, checked before any
+	// Values.Get. These catch an oversized *request*; maxResultBytes'
+	// post-fetch cap catches an oversized response. A fully bounded range is
+	// checked before any network call; a row-only range is re-checked once
+	// readRange resolves its column span, still before the data fetch.
 	MaxReadRangeRows  = 1000
 	MaxReadRangeCells = 20000
 )
 
-// ErrUnboundedRange is returned when a range has no explicit numeric row
-// bound on both ends — a bare sheet name, a column-only range ("A:D"), or
-// anything else that would mean reading the sheet's entire row extent.
-// Docs/07 step 8 calls this out by name: at the spec's 87GB target scale,
-// an unbounded row range is exactly the load-the-whole-sheet failure mode
-// docs/06 §6 rules out, so it is rejected by the parser rather than ever
-// reaching Values.Get. A row-only range ("1:100") is *not* unbounded in
-// this sense — its rows are explicitly bounded even though its columns
-// resolve against the sheet's actual width — so it does not hit this path.
+// ErrUnboundedRange is returned for a range with no explicit numeric row
+// bound on both ends — a bare sheet name, a column-only range ("A:D").  At
+// the spec's 87GB target scale that is the load-the-whole-sheet failure mode
+// docs/06 §6 rules out, so the parser rejects it before Values.Get. A
+// row-only range ("1:100") is bounded in this sense and does not hit here.
 var ErrUnboundedRange = errors.New("googlesheets: range has no explicit row bounds")
 
-// ErrRangeTooLarge is returned when a parsed (and, for a row-only range,
-// column-resolved) range spans more rows or cells than MaxReadRangeRows /
-// MaxReadRangeCells allow — the pre-fetch guardrail docs/07 step 8 asks
-// for, distinct from ErrResultTooLarge's post-fetch byte cap: this catches
-// an oversized *request* before a single upstream byte is spent.
+// ErrRangeTooLarge is returned when a parsed range exceeds MaxReadRangeRows
+// or MaxReadRangeCells — the pre-fetch guardrail, distinct from
+// ErrResultTooLarge's post-fetch byte cap.
 var ErrRangeTooLarge = errors.New("googlesheets: range exceeds the pre-fetch size cap")
 
-// RateLimitedError is returned when sheets_read_range's single Values.Get
-// charge (see ReadRange's doc comment) finds the connector's rate-limit
-// bucket empty. Unlike sheets_query_rows' scan — which has a well-defined
-// "partial answer" for a mid-scan bucket exhaustion (ScanComplete: false)
-// — a read_range call has no partial result to fall back to: either the
-// range was read or it wasn't. So this is a distinct error type, mapped by
-// tools_sheets.go via errors.As to the same RateLimited(retryAfter) tool
-// result sheets_query_rows' dispatch-time floor already uses, rather than
-// silently returning nothing.
+// RateLimitedError is returned when read_range's Values.Get charge finds the
+// bucket empty. Unlike query_rows' scan, which degrades to ScanComplete:
+// false, a read_range call has no partial result — the range was read or it
+// wasn't — so this is a distinct type tools_sheets.go maps via errors.As.
 type RateLimitedError struct {
 	RetryAfter time.Duration
 }
@@ -77,20 +55,15 @@ func (e *RateLimitedError) Error() string {
 	return fmt.Sprintf("googlesheets: rate limit exceeded, retry after %s", e.RetryAfter)
 }
 
-// ParsedA1Range is an agent-supplied A1 range string decomposed into our
-// own structured representation — the parser docs/07 step 8 requires,
-// never an opaque string handed to Google. StartCol/EndCol are 0-based
-// column indexes; -1 on both means the input was a row-only reference
-// ("1:100", every column across those rows) whose actual column span is
-// only known once the sheet's real dimensions are fetched — readRange
-// resolves it there, not here, since ParseA1Range must stay networkless to
-// run before config decryption (the same ordering discipline
-// ValidateQueryRowsInput/registerQueryRows already follow).
+// ParsedA1Range is an agent-supplied range decomposed into a structured
+// form, never an opaque string handed to Google. StartCol/EndCol are 0-based;
+// -1 on both means a row-only reference ("1:100") whose column span is known
+// only once the sheet's dimensions are fetched. readRange resolves that,
+// keeping ParseA1Range networkless so it can run before config decryption.
 type ParsedA1Range struct {
-	// SheetName is "" when the input omitted a sheet prefix (HasSheetName
-	// false); readRange resolves it to the spreadsheet's first tab once
-	// SpreadsheetMeta is available, and echoes the resolved name back in
-	// ReadRangeOutput so the caller always knows exactly what was read.
+	// SheetName is "" when the input omitted a sheet prefix; readRange
+	// resolves it to the first tab and echoes the resolved name back, so the
+	// caller always knows what was read.
 	SheetName    string
 	HasSheetName bool
 	StartCol     int
@@ -140,11 +113,9 @@ var (
 	// rowOnlyRefRe matches a bare row number — "1", "100" — one half of a
 	// row-only range like "1:100".
 	rowOnlyRefRe = regexp.MustCompile(`^[0-9]+$`)
-	// colOnlyRefRe matches bare column letters — "A", "aa" — one half of a
-	// column-only range like "A:D", which ErrUnboundedRange rejects. Also,
-	// not coincidentally, what a bare sheet name with no "!" parses as
-	// (e.g. the range "Contracts" alone): both cases are "no explicit row
-	// bound," so both are rejected by the same path for the same reason.
+	// colOnlyRefRe matches bare column letters — "A", "aa" — half of a
+	// column-only range like "A:D". Also what a bare sheet name parses as;
+	// both mean "no explicit row bound", so both are rejected together.
 	colOnlyRefRe = regexp.MustCompile(`^[A-Za-z]+$`)
 )
 
@@ -162,14 +133,11 @@ const (
 	a1RefColOnly
 )
 
-// classifyA1Ref parses one colon-separated half of a range ("A1", "100",
-// or "D") into its kind and numeric value(s). Every other string —
-// including anything that could smuggle a formula ("=IMPORTRANGE(...)") or
-// a second range reference (a comma, a second "!") — fails every regex
-// here and falls through to the default case, so ParseA1Range's caller
-// never needs a separate formula/injection check: a range that isn't
-// exactly "[letters][digits]", "[digits]", or "[letters]" on both sides of
-// its (at most one) colon simply never parses at all.
+// classifyA1Ref parses one colon-separated half of a range into its kind and
+// numeric values. Anything else — a smuggled formula, a comma, a second
+// "!" — matches no regex here and falls to the default, which is why callers
+// need no separate injection check: a half that isn't exactly
+// "[letters][digits]", "[digits]", or "[letters]" simply never parses.
 func classifyA1Ref(s string) (kind a1RefKind, col, row int, err error) {
 	switch {
 	case fullCellRefRe.MatchString(s):
@@ -190,37 +158,27 @@ func classifyA1Ref(s string) (kind a1RefKind, col, row int, err error) {
 		}
 		return a1RefRowOnly, 0, row, nil
 	case colOnlyRefRe.MatchString(s):
-		// The column index is deliberately not computed here: ParseA1Range
-		// rejects a column-only reference outright (ErrUnboundedRange), so
-		// the value would be discarded — and running it through
-		// columnIndex would let a bare sheet name like "Contracts" (which
-		// is, syntactically, just column letters) fail with "past the last
-		// column" instead of the accurate "specify explicit row bounds".
+		// Index deliberately not computed: ParseA1Range rejects column-only
+		// refs anyway, and running a bare sheet name like "Contracts"
+		// (syntactically just column letters) through columnIndex would
+		// report "past the last column" instead of "needs row bounds".
 		return a1RefColOnly, 0, 0, nil
 	default:
 		return a1RefInvalid, 0, 0, fmt.Errorf("googlesheets: %q is not a valid A1 cell, row, or column reference", s)
 	}
 }
 
-// maxColumnIndex is the 0-based index of "ZZZ", Google Sheets' own
-// hard ceiling of 18,278 columns per sheet. columnIndex rejects anything
-// past it rather than letting a long letter run through: a range like
-// "AAAAAAAAAAAAA1:AAAAAAAAAAAAB2" spans only two columns, so neither the
-// row cap nor the cell cap would stop it, and it would spend a rate-limit
-// token on a Values.Get that Google can only answer with an opaque 400.
-// Bounding it here turns that into an immediate, self-explanatory
-// rejection, and — since a column index can no longer exceed 18,277 —
-// also removes the only way ParsedA1Range.CellCount's RowSpan*ColSpan
-// could overflow into a negative number and slip past checkRangeSize.
+// maxColumnIndex is the 0-based index of "ZZZ", Sheets' ceiling of 18,278
+// columns. Bounding here matters twice: a range like "AAAAAAAAAAAAA1:...B2"
+// spans only two columns, so neither the row nor the cell cap would stop it
+// spending a token on a Values.Get Google answers with an opaque 400; and it
+// removes the only way CellCount's RowSpan*ColSpan could overflow negative
+// and slip past checkRangeSize.
 const maxColumnIndex = 18277
 
-// columnIndex converts A1-notation column letters into a 0-based index —
-// the inverse of describe.go's columnLetter ("A" -> 0, "Z" -> 25,
-// "AA" -> 26, ...). Case-insensitive, per docs/07 step 8's required test
-// coverage for lowercase column letters. Bounded by maxColumnIndex: a
-// range string is agent-supplied input (docs/07 step 8), so its column
-// reference is checked against what a sheet can actually have rather than
-// being trusted to be sane.
+// columnIndex converts A1 column letters to a 0-based index — the inverse of
+// describe.go's columnLetter. Case-insensitive, and bounded by
+// maxColumnIndex rather than trusting agent-supplied letters to be sane.
 func columnIndex(letters string) (int, error) {
 	letters = strings.ToUpper(letters)
 	idx := 0
@@ -239,18 +197,15 @@ func columnIndex(letters string) (int, error) {
 	return idx - 1, nil
 }
 
-// splitSheetAndRange peels an optional leading "SheetName!" or
-// "'Quoted Sheet Name'!" off s, returning the sheet name (unquoted,
-// doubled internal quotes collapsed to one), whether one was present, and
-// whatever remains as the range part. A quoted sheet name follows Google's
-// own escaping convention (mirrors quoteSheetName's writing side): a
-// literal "'" inside the name is written "”". No sheet name may itself
-// ever hide a second "!" or range reference this way — for the quoted
-// case, only an unescaped closing "'" ends the name, and the unquoted case
-// stops at the first "!" — so a smuggled second range (e.g.
-// "Contracts!A1:B2,Other!A1:B2") still leaves everything past the first
-// "!" as one opaque range part, which then fails to parse as a single
-// range below rather than silently addressing a second sheet.
+// splitSheetAndRange peels an optional leading "SheetName!" or "'Quoted
+// Name'!" off s, following Google's escaping convention (a literal "'"
+// inside a quoted name is doubled — mirrors quoteSheetName).
+//
+// A sheet name cannot hide a second range this way: the quoted form ends
+// only at an unescaped "'", the unquoted form at the first "!", so
+// "Contracts!A1:B2,Other!A1:B2" leaves everything past the first "!" as one
+// opaque range part that then fails to parse, rather than quietly addressing
+// a second sheet.
 func splitSheetAndRange(s string) (sheetName string, hasSheet bool, rangePart string, err error) {
 	if strings.HasPrefix(s, "'") {
 		var sb strings.Builder
@@ -299,25 +254,16 @@ func splitRangeParts(rangePart string) (left, right string) {
 	return rangePart, rangePart
 }
 
-// ParseA1Range decomposes an agent-supplied A1 range string into a
-// ParsedA1Range, or rejects it outright — docs/07 step 8's central
-// requirement, "the A1 range must be parsed and re-validated ... a range
-// string is agent-supplied input, not a trusted identifier." This function
-// makes no network call and touches no config, so ValidateReadRangeInput
-// can run it before config decryption, matching ValidateQueryRowsInput's
-// ordering discipline. Three outcomes:
+// ParseA1Range decomposes an agent-supplied A1 range, or rejects it. Makes
+// no network call and touches no config, so it can run before config
+// decryption. Three outcomes:
 //
-//   - Malformed syntax (including a formula like "=IMPORTRANGE(...)" or a
-//     second range reference smuggled in after a comma) fails to match
-//     classifyA1Ref on one or both halves and returns a plain error.
-//   - A range with no explicit row bound on both ends (a bare sheet name,
-//     a column-only range like "A:D") returns ErrUnboundedRange.
-//   - Otherwise, the range is well-formed: either fully bounded (explicit
-//     columns and rows) or row-only (explicit rows, columns resolved later
-//     against the sheet's real width). Reversed bounds ("D10:A1") are
-//     normalized into ascending order rather than rejected — the agent's
-//     intent is unambiguous either way, and normalizing is friendlier than
-//     making it retry for a cosmetic mistake.
+//   - Malformed syntax (a formula, a smuggled second range) returns a plain
+//     error from classifyA1Ref.
+//   - No explicit row bound on both ends returns ErrUnboundedRange.
+//   - Otherwise well-formed, either fully bounded or row-only. Reversed
+//     bounds ("D10:A1") are normalized ascending rather than rejected — the
+//     intent is unambiguous, so there is nothing to make the agent retry for.
 func ParseA1Range(s string) (ParsedA1Range, error) {
 	trimmed := strings.TrimSpace(s)
 	if trimmed == "" {
@@ -377,14 +323,10 @@ func ParseA1Range(s string) (ParsedA1Range, error) {
 	}
 }
 
-// checkRangeSize enforces MaxReadRangeRows/MaxReadRangeCells against a
-// parsed range's dimensions, naming the fix per docs/06 §8's "must state a
-// fix" convention. cellCount < 0 (a row-only range whose column span isn't
-// resolved yet) skips the cell check — ValidateReadRangeInput calls this
-// once with the row bound alone locally computable, and readRange calls it
-// again once a row-only range's columns are resolved against the sheet's
-// real width, so the cell check still always runs before Values.Get either
-// way.
+// checkRangeSize enforces the pre-fetch caps, naming the fix in the message.
+// cellCount < 0 (a row-only range, columns not yet resolved) skips the cell
+// half; readRange re-runs this once columns resolve, so the cell check still
+// always happens before Values.Get.
 func checkRangeSize(rowSpan, cellCount int) error {
 	if rowSpan > MaxReadRangeRows {
 		return fmt.Errorf("%w: spans %d rows, max %d — narrow the range", ErrRangeTooLarge, rowSpan, MaxReadRangeRows)
@@ -395,23 +337,16 @@ func checkRangeSize(rowSpan, cellCount int) error {
 	return nil
 }
 
-// ReadRangeInput is sheets_read_range's raw input: exactly the model's own
-// strings, unparsed. RangeStr is parsed by ValidateReadRangeInput before
-// any config decryption or network call — the same ordering discipline
-// registerQueryRows/ValidateQueryRowsInput and
-// registerDescribeSpreadsheet's include_sample_rows check both follow.
+// ReadRangeInput is the model's own strings, unparsed.
 type ReadRangeInput struct {
 	SpreadsheetID string
 	RangeStr      string
 }
 
-// ValidateReadRangeInput checks in's shape and parses in.RangeStr, without
-// touching the network or config — tools_sheets.go calls this before
-// svc.openGoogleSheetsConfig, so a malformed, unbounded, or oversized
-// range never spends a byte of the connector's OAuth credential or
-// rate-limit budget (docs/07 step 8's "Ordering" requirement). The
-// returned ParsedA1Range is threaded through to ReadRange so the range is
-// only ever parsed once.
+// ValidateReadRangeInput checks shape and parses the range without touching
+// the network or config, so a malformed, unbounded, or oversized range never
+// spends the connector's credential or rate-limit budget. The parsed range
+// is threaded through to ReadRange so it is only ever parsed once.
 func ValidateReadRangeInput(in ReadRangeInput) (ParsedA1Range, error) {
 	if in.SpreadsheetID == "" {
 		return ParsedA1Range{}, errors.New("googlesheets: spreadsheet_id is required")
@@ -427,13 +362,9 @@ func ValidateReadRangeInput(in ReadRangeInput) (ParsedA1Range, error) {
 }
 
 // ReadRangeOutput is sheets_read_range's result. Range is always the fully
-// resolved range actually read — sheet name filled in when the input
-// omitted one, column bounds resolved when the input was row-only — so the
-// agent can see exactly what was read even when its own request left
-// something implicit. Columns holds the A1 column letter for each column
-// in Rows' order (Rows[i][j] came from column Columns[j]); Rows is padded
-// to a rectangle len(Columns) wide per row — see readRange's doc comment
-// for why padding, not ragged, was chosen.
+// resolved range actually read, so the agent sees what happened even when
+// its request left the sheet name or columns implicit. Rows[i][j] came from
+// column Columns[j], padded to a rectangle len(Columns) wide.
 type ReadRangeOutput struct {
 	SpreadsheetID string
 	Range         string
@@ -444,13 +375,10 @@ type ReadRangeOutput struct {
 	ColumnCount   int
 }
 
-// ReadRange checks cfg's allowlist, builds a client, and reads parsed (an
-// already-validated ParsedA1Range from ValidateReadRangeInput) against
-// connectorID's live rate-limit bucket via charger. Mirrors QueryRows'
-// shape exactly: the allowlist check runs first and unconditionally,
-// against the cfg the caller just decrypted, never a cached value — the
-// same "checked fresh on every call" invariant DescribeSpreadsheet's doc
-// comment describes.
+// ReadRange checks cfg's allowlist, builds a client, and reads an
+// already-validated range. The allowlist check runs first and
+// unconditionally, against the cfg the caller just decrypted — never a
+// cached value.
 func ReadRange(ctx context.Context, ts oauth2.TokenSource, cfg *Config, connectorID uuid.UUID, charger RateCharger, in ReadRangeInput, parsed ParsedA1Range) (*ReadRangeOutput, error) {
 	if !cfg.IsSpreadsheetAllowed(in.SpreadsheetID) {
 		return nil, fmt.Errorf("%w: %s", ErrSpreadsheetNotAllowed, in.SpreadsheetID)
@@ -462,32 +390,14 @@ func ReadRange(ctx context.Context, ts oauth2.TokenSource, cfg *Config, connecto
 	return readRange(ctx, api, connectorID, charger, in, parsed)
 }
 
-// readRange is ReadRange minus client construction and the allowlist check
-// (already done by the caller), so readrange_test.go can drive it against
-// a mocked sheetsAPI. Order of operations, and why:
+// readRange is ReadRange minus client construction and the allowlist check,
+// so tests can drive it against a mocked sheetsAPI.
 //
-//  1. SpreadsheetMeta — needed both to resolve an omitted sheet name to
-//     the spreadsheet's first tab and to validate an explicit one against
-//     the spreadsheet's real tabs (ErrSheetNotFound), exactly like
-//     queryRows. For a row-only range, the same call also supplies the
-//     sheet's actual column count, which is what "every column" resolves
-//     to.
-//  2. checkRangeSize is re-run here (having already run once, for the row
-//     bound alone, in ValidateReadRangeInput) now that a row-only range's
-//     column span is known — still strictly before Values.Get, so an
-//     oversized resolved range is rejected before any data-bearing
-//     upstream call, not after.
-//  3. One RateCharger charge for the Values.Get call — never for the
-//     SpreadsheetMeta call above, which rides the dispatch-time floor
-//     enforce() already charges every tools/call, exactly as queryRows'
-//     header-row fetch does (docs/07 step 8: "charge one unit via
-//     RateCharger for the Values fetch"). An empty bucket here has no
-//     partial answer to fall back to (unlike queryRows' scan), so it
-//     returns RateLimitedError rather than a degraded result.
-//  4. Values.Get, then checkEncodedSize against the returned (padded)
-//     rows — the same 256KB cap sheets_query_rows enforces, generalized
-//     out of query.go's checkResultSize so the constant and the check live
-//     in exactly one place.
+// Two ordering rules carry weight. checkRangeSize is re-run here, after a
+// row-only range's columns resolve, but still before Values.Get — an
+// oversized range is rejected before any data-bearing call, not after. And
+// only the Values.Get is charged: SpreadsheetMeta rides the dispatch-time
+// floor enforce() already charges, as queryRows' header fetch does.
 func readRange(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charger RateCharger, in ReadRangeInput, parsed ParsedA1Range) (*ReadRangeOutput, error) {
 	meta, err := api.SpreadsheetMeta(ctx, in.SpreadsheetID)
 	if err != nil {
@@ -515,13 +425,12 @@ func readRange(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charge
 
 	startCol, endCol := parsed.StartCol, parsed.EndCol
 	if startCol < 0 {
-		// Row-only range ("1:100"): unbounded at parse time, resolved now
-		// against the sheet's own reported width — the only source of
-		// truth for what "every column" means for this specific sheet.
+		// Row-only range ("1:100"): resolved against the sheet's own reported
+		// width, the only source of truth for what "every column" means here.
 		startCol = 0
 		endCol = sheetMeta.ColumnCount - 1
 		if endCol < startCol {
-			endCol = startCol // a sheet reporting 0 columns still reads as 1 column wide, never negative
+			endCol = startCol
 		}
 	}
 	colSpan := endCol - startCol + 1
@@ -532,14 +441,8 @@ func readRange(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charge
 
 	resolvedRange := formatA1Range(sheetName, startCol, endCol, parsed.StartRow, parsed.EndRow)
 
-	if charger != nil {
-		allowed, retryAfter, chargeErr := charger.ChargeRateLimit(ctx, connectorID, 1)
-		if chargeErr != nil {
-			return nil, fmt.Errorf("googlesheets: read range: charge rate limit: %w", chargeErr)
-		}
-		if !allowed {
-			return nil, &RateLimitedError{RetryAfter: retryAfter}
-		}
+	if err := chargeOne(ctx, charger, connectorID, "read range"); err != nil {
+		return nil, err
 	}
 
 	values, err := api.Values(ctx, in.SpreadsheetID, resolvedRange)
@@ -552,15 +455,11 @@ func readRange(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charge
 		columns[i] = columnLetter(startCol + i)
 	}
 
-	// Rows are padded to colSpan-wide rectangles, not left ragged: Google
-	// drops a row's trailing empty cells entirely rather than returning
-	// them as "" (describe.go's sheetsAPI doc comment notes the same for
-	// Values generally), so a ragged Rows would make "how many columns did
-	// row i actually have" ambiguous — was column D really absent, or just
-	// empty? — and would desynchronize row i from Columns' fixed width.
-	// Padding trades that ambiguity for a predictable rectangle the caller
-	// can always index Rows[i][j] against Columns[j] without a bounds
-	// check.
+	// Padded to colSpan-wide rectangles, not left ragged: Google drops a
+	// row's trailing empty cells rather than returning "", so a ragged Rows
+	// could not say whether column D was absent or merely empty, and would
+	// desynchronize rows from Columns' fixed width. Padding buys a caller
+	// Rows[i][j] against Columns[j] with no bounds check.
 	rows := make([][]string, len(values))
 	for i, row := range values {
 		strRow := make([]string, colSpan)
@@ -587,13 +486,9 @@ func readRange(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charge
 	return out, nil
 }
 
-// formatA1Range builds the concrete, fully-resolved A1-notation range
-// string readRange sends to Values.Get and echoes back in
-// ReadRangeOutput.Range — sheet name always quoted (valid even when
-// unnecessary, matching a1RowRange's convention) and column/row bounds
-// always explicit numbers, never "every column" left implicit, so a caller
-// that omitted the sheet name or asked for a row-only range still gets
-// back the exact range that was actually read.
+// formatA1Range builds the fully-resolved range readRange sends upstream and
+// echoes back. Sheet name always quoted, bounds always explicit numbers, so
+// a caller who omitted either still learns exactly what was read.
 func formatA1Range(sheetName string, startCol, endCol, startRow, endRow int) string {
 	return fmt.Sprintf("%s!%s%d:%s%d", quoteSheetName(sheetName), columnLetter(startCol), startRow, columnLetter(endCol), endRow)
 }

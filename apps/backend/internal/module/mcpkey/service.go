@@ -1,9 +1,8 @@
-// Package mcpkey implements the /mcp-keys module: mint/list/revoke
-// long-lived, org-scoped, revocable Personal Access Tokens (PATs) that MCP
-// clients present as a bearer credential (docs/07-sheets-adapter-plan.md
-// Decision 1). This package is the credential only — no MCP protocol code
-// lives here; a later step resolves a presented token back to a caller and
-// intersects its (nullable) scopes with that caller's live RBAC grant.
+// Package mcpkey implements /mcp-keys: mint, list, and revoke org-scoped
+// Personal Access Tokens that MCP clients present as a bearer credential.
+// The credential only — no MCP protocol code lives here. Resolving a
+// presented token to a caller, and intersecting its scopes with that
+// caller's live RBAC grant, happens in internal/middleware.
 package mcpkey
 
 import (
@@ -33,8 +32,7 @@ var _ mcpKeyStore = (*database.Store)(nil)
 // is identifiable at a glance (e.g. in a secret-scanning tool).
 const tokenPrefix = "sk_live_"
 
-// tokenRandomBytes is the amount of CSPRNG output backing each token —
-// 256 bits, per Decision 1.
+// tokenRandomBytes is the CSPRNG output backing each token: 256 bits.
 const tokenRandomBytes = 32
 
 // mcpKeyStore is the subset of *database.Store this service depends on,

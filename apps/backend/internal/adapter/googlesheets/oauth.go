@@ -19,15 +19,11 @@ var scopes = []string{
 	"https://www.googleapis.com/auth/drive.readonly",
 }
 
-// NewTokenSource builds an oauth2.TokenSource over one connector's stored
-// refresh token, wrapped in oauth2.ReuseTokenSource. That wrapper *is* the
-// token cache (docs/07-sheets-adapter-plan.md step 5) — it holds the
-// derived access token in memory and only calls out to Google to refresh it
-// once it is expired, so a caller issuing several requests in a row reuses
-// one access token instead of exchanging the refresh token on every call.
-// No Redis, no bespoke TTL logic: a refresh-derived access token is a live
-// customer credential, and in-process memory (never persisted, never
-// serialized) is the right custody boundary for it.
+// NewTokenSource builds a TokenSource over one connector's stored refresh
+// token. oauth2.ReuseTokenSource *is* the token cache: it holds the derived
+// access token in memory and refreshes only on expiry. No Redis, no bespoke
+// TTL logic — a refresh-derived access token is a live customer credential,
+// and in-process memory is the right custody boundary for it.
 func NewTokenSource(ctx context.Context, oauthCfg OAuthConfig) oauth2.TokenSource {
 	conf := &oauth2.Config{
 		ClientID:     oauthCfg.ClientID,
@@ -39,18 +35,13 @@ func NewTokenSource(ctx context.Context, oauthCfg OAuthConfig) oauth2.TokenSourc
 	return oauth2.ReuseTokenSource(nil, base)
 }
 
-// TokenSourceCache holds one TokenSource per connector id so a session that
-// calls several tools against the same connector (steps 6+) reuses the
-// cached access token across calls instead of exchanging the refresh token
-// every time. Safe for concurrent use.
+// TokenSourceCache holds one TokenSource per connector id, so a session
+// calling several tools against the same connector reuses one access token
+// instead of exchanging the refresh token each time. Safe for concurrent use.
 //
-// Note on this step's own use of the cache: internal/module/connector.
-// Checker.Check receives only a connector's decrypted config, never its id
-// (see checker.go's doc comment), so the health-check path builds a
-// TokenSource directly via NewTokenSource rather than through this cache.
-// The cache exists here, in step 5, as the seam step 6+'s MCP tool
-// handlers — which do have a connector id in scope for the whole session —
-// are expected to call.
+// The health-check path does not use it: connector.Checker.Check receives a
+// decrypted config but never a connector id, so it builds a TokenSource
+// directly. Only the MCP tool handlers, which have an id in scope, come here.
 type TokenSourceCache struct {
 	mu      sync.Mutex
 	sources map[uuid.UUID]cacheEntry
@@ -72,15 +63,12 @@ func NewTokenSourceCache() *TokenSourceCache {
 // Get returns the cached TokenSource for connectorID, building and storing
 // one from oauthCfg on first use.
 //
-// The entry is keyed by connector id *and* a fingerprint of oauthCfg, so a
-// credential rotated through PATCH /connectors/:id takes effect on the very
-// next call: the fingerprint no longer matches, the stale source is
-// discarded, and a fresh one is built from the new credential. Relying on
-// callers to Delete an entry by hand would be a footgun — the caller that
-// rotates a connector's config (the REST handler) and the caller that reads
-// it (an MCP tool handler in another module, on another request) are not
-// the same code path, so a missed Delete would silently keep minting access
-// tokens from a refresh token the customer believes they have retired.
+// Keyed by connector id *and* a fingerprint of oauthCfg, so a rotated
+// credential takes effect on the very next call with nothing to invalidate
+// by hand. That matters because the code that rotates a config (the REST
+// handler) and the code that reads it (a tool handler, another module,
+// another request) are different paths — a missed invalidation would keep
+// minting tokens from a refresh token the customer believes is retired.
 func (c *TokenSourceCache) Get(ctx context.Context, connectorID uuid.UUID, oauthCfg OAuthConfig) oauth2.TokenSource {
 	c.mu.Lock()
 	defer c.mu.Unlock()

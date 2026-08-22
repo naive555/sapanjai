@@ -14,18 +14,15 @@ package googlesheets
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
-// ErrSpreadsheetNotAllowed is returned by every adapter operation that reads
-// a spreadsheet whose id is absent from the connector's own allowlist
-// (config.scope.spreadsheet_ids) — "the spec's single most important
-// security boundary" (docs/06-sheets-adapter.md §3), enforced on every call
-// against the freshly decrypted config, never a value cached from
-// connector-creation time. Wrapped with the offending id via fmt.Errorf's
-// %w, so a caller can both errors.Is against this sentinel and read the id
-// out of Error() — the id is an allowlist entry, not a credential, so it is
-// safe to surface to the model (docs/06-sheets-adapter.md §8
-// SPREADSHEET_NOT_ALLOWED).
+// ErrSpreadsheetNotAllowed is returned by every operation reading a
+// spreadsheet absent from the connector's allowlist — the spec's single most
+// important security boundary (docs/06 §3), enforced on every call against
+// the freshly decrypted config, never a cached copy. Wrapped with the
+// offending id, which is an allowlist entry rather than a credential and so
+// is safe to surface to the model.
 var ErrSpreadsheetNotAllowed = errors.New("googlesheets: spreadsheet not on connector allowlist")
 
 // Config is the parsed, validated shape of a "google_sheets" connector's
@@ -53,11 +50,10 @@ type OAuthConfig struct {
 	ClientSecret string
 }
 
-// ScopeConfig is the allowlist — "the spec's single most important security
-// boundary" (docs/06-sheets-adapter.md §3): the adapter must reject any
-// spreadsheet or folder not named here, even though the OAuth token itself
-// may be able to reach it (a Google account's own sharing typically extends
-// far past what one connector should expose to an MCP agent).
+// ScopeConfig is the allowlist: the adapter rejects any spreadsheet or
+// folder not named here, even one the OAuth token could reach. A Google
+// account's own sharing typically extends far past what a single connector
+// should expose to an agent.
 type ScopeConfig struct {
 	SpreadsheetIDs []string
 	DriveFolderIDs []string
@@ -73,13 +69,13 @@ type ScopeConfig struct {
 // never against a value cached from connector-creation time — so a
 // narrowed allowlist takes effect on the very next call.
 func (c *Config) IsSpreadsheetAllowed(spreadsheetID string) bool {
-	return contains(c.Scope.SpreadsheetIDs, spreadsheetID)
+	return slices.Contains(c.Scope.SpreadsheetIDs, spreadsheetID)
 }
 
 // IsFolderAllowed reports whether folderID is on the allowlist. Same
 // per-request re-check requirement as IsSpreadsheetAllowed.
 func (c *Config) IsFolderAllowed(folderID string) bool {
-	return contains(c.Scope.DriveFolderIDs, folderID)
+	return slices.Contains(c.Scope.DriveFolderIDs, folderID)
 }
 
 // HeaderRow returns the 1-indexed header row for spreadsheetID: the
@@ -89,15 +85,6 @@ func (c *Config) HeaderRow(spreadsheetID string) int {
 		return row
 	}
 	return 1
-}
-
-func contains(list []string, id string) bool {
-	for _, v := range list {
-		if v == id {
-			return true
-		}
-	}
-	return false
 }
 
 // ParseConfig validates and converts a connector's decrypted config map

@@ -24,20 +24,15 @@ import (
 	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
-// maxDownloadBytes caps how many bytes Handler.downloadFile will ever
-// stream for one request — 25MiB, docs/07-sheets-adapter-plan.md step 9.
-// Checked twice: once against the file's own reported SizeBytes before a
-// single byte is streamed (a cheap, immediate 413), and again as a hard
-// io.CopyN ceiling on the actual stream (in case Drive's reported size is
-// stale or missing — the field is documented as present only for blobs) —
-// the second check is what actually bounds memory/bandwidth; the first just
-// fails fast and cheaply for the common case.
+// maxDownloadBytes caps one download at 25MiB. Checked twice: against the
+// file's reported SizeBytes for a cheap early 413, then as a hard io.CopyN
+// ceiling — the second is what actually bounds memory, since Drive reports
+// size only for blobs and may report it stale.
 const maxDownloadBytes = 25 << 20
 
-// connectorCtxKey is the *request context* key Handler.resolveConnector
-// stores the resolved connector row under, read back by Handler.getServer.
-// Same reasoning as appmw's principal key: the SDK's per-request server
-// callback only ever sees r.Context(), never an echo.Context.
+// connectorCtxKey keys the resolved connector on the *request* context, not
+// the echo.Context: the SDK's per-request server callback only sees
+// r.Context().
 type connectorCtxKey struct{}
 
 // Handler mounts POST /mcp/:connectorId: one Streamable HTTP MCP endpoint,
@@ -48,20 +43,15 @@ type Handler struct {
 }
 
 // NewHandler builds an mcp Handler, constructing the SDK's
-// StreamableHTTPHandler once at server-boot time. Building it once (rather
-// than per request) is required for Stateless mode — the handler itself is
-// stateless and cheap to reuse; only the *mcp.Server built inside getServer
-// is per-request.
+// StreamableHTTPHandler once at boot. The handler is stateless and reusable;
+// only the *mcp.Server built inside getServer is per-request.
 func NewHandler(service *Service, log *slog.Logger) *Handler {
 	h := &Handler{service: service}
 	h.mcpHTTP = gomcp.NewStreamableHTTPHandler(h.getServer, &gomcp.StreamableHTTPOptions{
-		// Stateless: no Mcp-Session-Id, no server-side session table, every
-		// POST self-contained — auth, build the authorized surface, serve,
-		// discard. This is what lets a permission or scope change take
-		// effect on the next call instead of the next reconnect, and what
-		// keeps the deployment horizontally scalable with no sticky
-		// routing. See docs/05-mcp-gateway.md and
-		// spikes/mcp-gateway/docs/FINDINGS.md §3.2.
+		// Stateless: no session id, no server-side session table, every POST
+		// self-contained. This is what makes a permission change take effect
+		// on the next call rather than the next reconnect, and what keeps
+		// the deployment scalable with no sticky routing.
 		Stateless: true,
 		// Plain application/json responses instead of SSE framing —
 		// simpler to curl and to put behind an ordinary load balancer.
@@ -71,14 +61,10 @@ func NewHandler(service *Service, log *slog.Logger) *Handler {
 	return h
 }
 
-// getServer is the SDK's per-request server-construction callback
-// (func(*http.Request) *mcp.Server). It runs once per HTTP POST in
-// Stateless mode, after Register's middleware chain (RequireMCPKey then
-// resolveConnector) has already put a principal and a connector on the
-// request's context. Both are guaranteed present by the time this runs; a
-// missing one is a wiring bug (a route calling this without that chain
-// ahead of it), and returning a server with no tools is the safe failure
-// rather than a panic that would take the whole process down.
+// getServer is the SDK's per-request server-construction callback, run once
+// per POST after Register's middleware chain has put a principal and a
+// connector on the request context. A missing one is a wiring bug; returning
+// a server with no tools fails safe rather than panicking the process.
 func (h *Handler) getServer(r *http.Request) *gomcp.Server {
 	req := RequestInfo{BaseURL: baseURLFromRequest(r)}
 	p, ok := principalFromContext(r.Context())
@@ -92,16 +78,11 @@ func (h *Handler) getServer(r *http.Request) *gomcp.Server {
 	return h.service.BuildServer(p, conn, req)
 }
 
-// baseURLFromRequest derives the scheme+host the gateway was reached on for
-// r, for RequestInfo.BaseURL. Scheme prefers X-Forwarded-Proto (set by a
-// reverse proxy/load balancer terminating TLS in front of this service,
-// per the k8s deployment this runs behind) over r.TLS != nil, which would
-// otherwise always read "http" behind a TLS-terminating proxy; host
-// similarly prefers X-Forwarded-Host over r.Host. An empty r.Host (only
-// happens in a hand-built *http.Request, i.e. a unit test that never went
-// through a real net/http server) yields an empty BaseURL, which
-// SignFileLink turns into a harmless root-relative "/mcp/files/..." URL —
-// never served to a real client outside tests.
+// baseURLFromRequest derives the scheme+host the gateway was reached on.
+// X-Forwarded-* wins over r.TLS/r.Host, which would otherwise always read
+// "http" behind the TLS-terminating proxy this runs behind. An empty r.Host
+// (only in a hand-built request, i.e. a unit test) yields an empty BaseURL
+// and a harmless root-relative link.
 func baseURLFromRequest(r *http.Request) string {
 	host := r.Header.Get("X-Forwarded-Host")
 	if host == "" {
@@ -121,44 +102,24 @@ func baseURLFromRequest(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-// Register mounts POST /mcp/:connectorId behind mcpKeyGuard (RequireMCPKey)
-// and connector resolution, per docs/07-sheets-adapter-plan.md step 3:
-// "Mount into Echo with echo.WrapHandler(mcpHandler)." Echo applies
-// middleware in the order listed here — mcpKeyGuard runs first (resolves
-// and authenticates the PAT), then resolveConnector (reads the principal it
-// set, resolves :connectorId scoped to the principal's org), then finally
-// the wrapped SDK handler.
+// Register mounts the gateway routes. Echo applies middleware in the order
+// listed: mcpKeyGuard authenticates the PAT, then resolveConnector resolves
+// :connectorId scoped to that principal's org, then the SDK handler runs.
 func (h *Handler) Register(g *echo.Group, mcpKeyGuard echo.MiddlewareFunc) {
 	g.POST("/:connectorId", echo.WrapHandler(h.mcpHTTP), mcpKeyGuard, h.resolveConnector)
 
-	// GET /mcp/files/:connectorId/:fileId — the one gateway route
-	// authenticated by URL signature rather than a bearer header
-	// (docs/07-sheets-adapter-plan.md step 9). Deliberately *not* behind
-	// mcpKeyGuard: the whole point of a signed, short-lived link
-	// (drive_get_file, tools_drive.go) is that the agent's MCP client can
-	// hand it to something else entirely (a browser, curl, a different
-	// process) that has no PAT and no Authorization header at all — the
-	// signature itself carries the authorization, verified in
-	// Handler.downloadFile.
-	//
-	// This is unambiguous against POST /:connectorId despite both living
-	// under the same "/mcp" group: Echo's router is a radix tree that tries
-	// a literal path segment before falling back to a ":param" segment at
-	// the same level, so a request for "/mcp/files/..." matches the
-	// static "files" segment first and is never captured by ":connectorId"
-	// — the same reason a REST API can mix "/users/me" and "/users/:id"
-	// safely. Method also disambiguates: this route only ever answers GET,
-	// the JSON-RPC route only POST.
+	// Deliberately not behind mcpKeyGuard: the point of a signed short-lived
+	// link is that the client can hand it to a browser or curl that has no
+	// PAT at all. The signature carries the authorization, checked in
+	// downloadFile. Unambiguous against POST /:connectorId — Echo matches the
+	// static "files" segment before the :param one, and the methods differ.
 	g.GET("/files/:connectorId/:fileId", h.downloadFile)
 }
 
-// resolveConnector is ordinary Echo middleware, not the SDK handler itself.
-// It parses :connectorId and resolves it scoped to the authenticated
-// principal's organization — never a client-supplied org — before a single
-// byte of MCP protocol is processed. A connector belonging to another
-// organization is apperror.NotFound, the same code a nonexistent id
-// produces, so the id cannot be used to probe for another tenant's
-// connectors.
+// resolveConnector parses :connectorId and resolves it scoped to the
+// authenticated principal's org — never a client-supplied one — before any
+// MCP protocol is processed. Another org's connector yields the same
+// NotFound a nonexistent id does, so ids cannot probe for other tenants.
 func (h *Handler) resolveConnector(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		connectorID, err := connectorIDParam(c)
@@ -189,12 +150,9 @@ func connectorFromContext(ctx context.Context) (db.Connector, bool) {
 	return conn, ok
 }
 
-// principalFromContext recovers the concrete *rbac.Principal that
-// appmw.RequireMCPKey put on the request context. appmw.MCPPrincipalFromContext
-// hands back `any` deliberately — the middleware package cannot import
-// internal/module/rbac without an import cycle (see
-// appmw.MCPPrincipalResolver's doc comment) — so this package, which safely
-// imports rbac, is where the type assertion happens.
+// principalFromContext recovers the concrete *rbac.Principal RequireMCPKey
+// put on the request context. That middleware hands back `any` because it
+// cannot import rbac without a cycle, so the assertion happens here.
 func principalFromContext(ctx context.Context) (*rbac.Principal, bool) {
 	v, ok := appmw.MCPPrincipalFromContext(ctx)
 	if !ok {
@@ -215,45 +173,19 @@ func connectorIDParam(c echo.Context) (uuid.UUID, error) {
 	return id, nil
 }
 
-// downloadFile serves GET /mcp/files/:connectorId/:fileId — the signed
-// download link drive_get_file (tools_drive.go) mints. Every failure short
-// of the two explicitly-different-status cases below (413/429) is the exact
-// same 404 apperror.NotFound: a bad signature, an expired link, an
-// unresolvable connector, a wrong connector type, a file whose allowlisted
-// folder was narrowed since the link was minted, a Google-native file with
-// no bytes to stream, and a download that otherwise failed all collapse to
-// one response a probing client cannot tell apart — mirroring the MCP
-// gateway's own POST route, where a nonexistent connector and one belonging
-// to another org are equally indistinguishable (Handler.resolveConnector).
+// downloadFile serves the signed link drive_get_file mints.
 //
-// Order of operations (docs/07-sheets-adapter-plan.md step 9):
-//  1. Parse every field the link carries and verify its signature/expiry.
-//     This is the *only* authorization check on this route — there is no
-//     bearer token, no session, nothing else standing between an
-//     internet-reachable URL and a customer's file.
-//  2. Resolve the connector, scoped to the org the link itself names (never
-//     a value from anywhere else) — the signature is what makes that org
-//     binding trustworthy, so no cross-tenant read is reachable this way.
-//  3. Re-fetch the file's live metadata and allowlist status via the
-//     adapter's GetFile — never the stale assumption "this file was
-//     allowed when the link was minted." Narrowing scope.drive_folder_ids
-//     kills every outstanding link for that file on its very next fetch,
-//     the same "checked fresh on every call" discipline every sheets_* and
-//     drive_* tool already follows.
-//  4. A Google-native file (a Doc/Sheet/Slide) has no raw bytes at all.
-//  5. Reject an oversized file before ever opening a stream.
-//  6. Charge the connector's own rate-limit bucket for the download itself
-//     — a second, separate upstream call from GetFile's own metadata fetch
-//     above, so it earns its own charge (mirrors readRange's "one charge
-//     per upstream call" discipline).
-//  7. Stream via io.CopyN, capped at maxDownloadBytes and probing one byte
-//     past it to detect (and log) a truncation — never buffer the whole
-//     file in memory, the same discipline query.go's scan loop applies to
-//     87GB of sheet rows.
-//  8. Audit best-effort, after the stream finishes; never fail the response
-//     on an audit error.
-//  9. Nothing here ever logs the connector's config, the OAuth token, or
-//     the link's own signature — only ids and a MIME type.
+// Every failure except 413 and 429 collapses to the same 404 — bad
+// signature, expired link, unknown connector, wrong type, a folder
+// de-allowlisted since minting, a Google-native file with no bytes — so a
+// probing client can tell none of them apart, mirroring the POST route.
+//
+// Two things carry the security weight. The signature check is the *only*
+// authorization on this route: there is no bearer token behind it. And the
+// file's metadata and allowlist status are re-fetched live rather than
+// trusted from mint time, so narrowing drive_folder_ids kills outstanding
+// links on their next use. Nothing here logs config, the OAuth token, or the
+// signature — only ids and a MIME type.
 func (h *Handler) downloadFile(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -325,7 +257,7 @@ func (h *Handler) downloadFile(c echo.Context) error {
 		if h.service.log != nil {
 			h.service.log.Error("mcp file download rate limiter check failed", "error", err, "connector_id", conn.ID)
 		}
-		return echo.NewHTTPError(http.StatusTooManyRequests, "Rate limit exceeded, try again later")
+		return apperror.New(apperror.RateLimited)
 	}
 	if !allowed {
 		return echo.NewHTTPError(http.StatusTooManyRequests, rateLimitedMessage(retryAfter))
@@ -333,13 +265,10 @@ func (h *Handler) downloadFile(c echo.Context) error {
 
 	body, contentType, err := googlesheets.DownloadFile(ctx, ts, fileID)
 	if err != nil {
-		// Log this one, unlike the ChargeRateLimit/GetFile branches above
-		// which return apperror.NotFound bare: this is exactly the kind of
-		// failure that would have made the 15s-Client.Timeout bug (fixed in
-		// client.go) invisible in production — a silent 404 with no trace
-		// of *why* the download never started. connector_id and the error
-		// only; never the token, the decrypted config, or the link's own
-		// signature.
+		// Logged, unlike the bare 404s above: a silent 404 here is what made
+		// the Client.Timeout bug (fixed in client.go) invisible in
+		// production. connector_id and the error only — never the token, the
+		// config, or the signature.
 		if h.service.log != nil {
 			h.service.log.Error("mcp file download failed to start", "error", err, "connector_id", conn.ID)
 		}
@@ -354,19 +283,11 @@ func (h *Handler) downloadFile(c echo.Context) error {
 	resp.Header().Set("X-Content-Type-Options", "nosniff")
 	resp.WriteHeader(http.StatusOK)
 
-	// info.SizeBytes already rejected an oversized file above, but Drive
-	// omits `size` for some entries (the field is documented as present
-	// only for blobs and Workspace-editor exports), so that pre-check
-	// cannot be trusted alone to bound what actually streams here. Reading
-	// one byte past maxDownloadBytes — rather than exactly maxDownloadBytes
-	// — is what lets this distinguish "the file was exactly the cap" from
-	// "the file was larger and got cut off here": io.CopyN writes at most
-	// maxDownloadBytes to resp either way (so the client-visible byte count
-	// is never exceeded), and a copyErr of nil with a non-empty follow-up
-	// read is the only way to tell the two cases apart. Headers/status are
-	// already committed by this point, so a log line is the only honest
-	// signal a truncation like this has — the response itself looks like a
-	// clean 200 with a shorter file.
+	// Drive omits `size` for some entries, so the SizeBytes pre-check above
+	// cannot alone bound what streams here. Probing one byte past the cap is
+	// what separates "file was exactly the cap" from "file was truncated" —
+	// io.CopyN never writes more than the cap either way. Headers are already
+	// committed, so a log line is the only honest signal a truncation has.
 	written, copyErr := io.CopyN(resp, body, maxDownloadBytes)
 	switch {
 	case copyErr == nil:
@@ -386,13 +307,10 @@ func (h *Handler) downloadFile(c echo.Context) error {
 		}
 	}
 
-	// Best-effort, after the stream finishes, on a context detached from
-	// the request's own cancellation — mirrors Service.enforce's
-	// tools/call audit fix (service.go): a client that hangs up right as
-	// the stream ends must not silently lose this row. Actor is the uid
-	// the link was minted for (there is no bearer-token principal on this
-	// route at all); org is the link's own org, already proven authentic
-	// by VerifyFileLink above.
+	// Detached from request cancellation so a client hanging up as the stream
+	// ends doesn't lose the row. The actor is the uid the link was minted
+	// for — there is no bearer principal on this route — and the org is the
+	// link's own, already proven authentic by VerifyFileLink.
 	h.service.recordAudit(context.WithoutCancel(ctx), auditlog.ActionMCPFileDownloaded,
 		&rbac.Principal{UserID: uid, OrganizationID: orgID},
 		map[string]any{
@@ -404,10 +322,9 @@ func (h *Handler) downloadFile(c echo.Context) error {
 	return nil
 }
 
-// rateLimitedMessage matches RateLimited's (errors.go) wording for the
-// REST-side 429s this route also produces, so a grep for "Retry after"
-// finds every rate-limit denial in this module regardless of which
-// transport it came back on.
+// rateLimitedMessage matches RateLimited's wording (errors.go) so a grep for
+// "Retry after" finds every denial in this module, whichever transport it
+// came back on.
 func rateLimitedMessage(retryAfter time.Duration) string {
-	return fmt.Sprintf("Rate limit exceeded. Retry after %d seconds.", int64(retryAfter.Round(time.Second).Seconds()))
+	return fmt.Sprintf("Rate limit exceeded. Retry after %d seconds.", retrySeconds(retryAfter))
 }

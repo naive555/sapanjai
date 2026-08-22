@@ -5,10 +5,9 @@ import (
 	"io"
 )
 
-// Meta is the metadata sheetsAPI.SpreadsheetMeta returns: enough for step
-// 5's health check (the spreadsheet resolves, its title and tabs are
-// readable) and the schema-discovery shape step 6's sheets_describe_
-// spreadsheet builds on.
+// Meta is what sheetsAPI.SpreadsheetMeta returns: enough for the health
+// check to prove a spreadsheet resolves, and the shape
+// sheets_describe_spreadsheet builds its schema discovery on.
 type Meta struct {
 	SpreadsheetID string
 	Title         string
@@ -22,16 +21,10 @@ type SheetMeta struct {
 	ColumnCount int
 }
 
-// File is a Drive file's metadata. Parents/SizeBytes/ModifiedTime were
-// added in step 9 (docs/07-sheets-adapter-plan.md): Parents is what
-// GetFile's allowlist re-check needs (a file's direct parent folders,
-// compared against config.scope.drive_folder_ids — see getFile's doc
-// comment for why only *direct* parents count), SizeBytes is what the
-// download route's maxDownloadBytes cap checks before ever opening a
-// stream, and ModifiedTime (RFC3339, as Drive returns it) is surfaced to
-// the model as-is. Still no content and no link — a signed, short-lived
-// link is minted separately, in internal/module/mcp/filelink.go, never
-// stored on this struct.
+// File is a Drive file's metadata. Parents feeds GetFile's allowlist
+// re-check, SizeBytes the download route's size cap, ModifiedTime (RFC3339,
+// as Drive reports it) the model. Deliberately no content and no link — a
+// signed link is minted separately in the mcp module, never stored here.
 type File struct {
 	ID           string
 	Name         string
@@ -47,13 +40,11 @@ type FilePage struct {
 	NextPageToken string
 }
 
-// sheetsAPI is the narrow seam over the Google Sheets/Drive SDKs that every
-// adapter operation depends on — the house style of connector.connectorStore
-// / connector.sealer (internal/module/connector/service.go): a small
-// interface naming exactly the upstream operations this package needs, so
-// unit tests can mock it directly and never touch the network. client.go is
-// the only production implementation; client_test.go's one contract test is
-// the sole place a real Google response shape is asserted.
+// sheetsAPI is the narrow seam over the Google SDKs every adapter operation
+// depends on, naming exactly the upstream calls this package makes so unit
+// tests can mock it and never touch the network. client.go is the only
+// production implementation; client_test.go's contract test is the sole
+// place a real Google response shape is asserted.
 type sheetsAPI interface {
 	// SpreadsheetMeta returns a spreadsheet's title, tabs, and each tab's
 	// dimensions.
@@ -73,14 +64,10 @@ type sheetsAPI interface {
 	// File returns one Drive file's metadata by id.
 	File(ctx context.Context, fileID string) (*File, error)
 
-	// DownloadFile streams one Drive file's raw bytes by id (step 9's
-	// download route, internal/module/mcp/handler.go's downloadFile) — the
-	// only sheetsAPI method that returns a live, caller-owned io.ReadCloser
-	// rather than a fully-buffered value; the caller must Close it. The
-	// second return is the upstream Content-Type, forwarded as-is so the
-	// downloaded bytes are served with whatever type Drive itself reports.
-	// Google-native files (Docs/Sheets/Slides — see
-	// IsGoogleNativeMimeType) have no raw bytes to download at all; callers
-	// must check that before ever calling this.
+	// DownloadFile streams one Drive file's raw bytes — the only method here
+	// returning a live, caller-owned io.ReadCloser rather than a buffered
+	// value, so the caller must Close it. The second return is the upstream
+	// Content-Type, forwarded as-is. Google-native files have no raw bytes;
+	// callers must check IsGoogleNativeMimeType before calling this.
 	DownloadFile(ctx context.Context, fileID string) (io.ReadCloser, string, error)
 }

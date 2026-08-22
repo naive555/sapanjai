@@ -8,9 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// rateLimitKeyPrefix backs docs/07-sheets-adapter-plan.md step 4's bucket
-// key "mcp:ratelimit:<connectorId>" — see CLAUDE.md's Redis key
-// conventions.
+// rateLimitKeyPrefix backs the bucket key "mcp:ratelimit:<connectorId>" —
+// see CLAUDE.md's Redis key conventions.
 const rateLimitKeyPrefix = "mcp:ratelimit:"
 
 // bucketIdleTTL bounds how long an unused bucket's Redis hash survives.

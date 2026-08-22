@@ -1,12 +1,8 @@
-// This file is docs/07-sheets-adapter-plan.md step 6: the first two tools
-// that actually touch a customer's data, sheets_list_spreadsheets and
-// sheets_describe_spreadsheet. Both are gated by connector.TypeGoogleSheets
-// (Entry.ConnectorType) and PermissionSheetsRead, and both re-decrypt and
-// re-parse their connector's config on every single invocation via
-// Service.openGoogleSheetsConfig — never a value cached at connector-
-// creation or session-start time — so a narrowed allowlist takes effect on
-// the very next call (docs/07 step 5's design point, first exercised by a
-// real tool here).
+// The sheets_* tools, gated by connector.TypeGoogleSheets and
+// PermissionSheetsRead. Every one re-decrypts and re-parses its connector's
+// config on each invocation via Service.openGoogleSheetsConfig — never a
+// value cached at connector-creation or session-start — so a narrowed
+// allowlist takes effect on the very next call.
 package mcp
 
 import (
@@ -23,14 +19,9 @@ import (
 	"github.com/sapanjai/backend/internal/module/connector"
 )
 
-// PermissionSheetsRead is the RBAC action gating every sheets_* read tool
-// (docs/06-sheets-adapter.md §5): "*" > "sheets:read" exact >
-// "sheets:*" wildcard, the same ActionMatches semantics every other
-// permission in this codebase uses. It has no dedicated permissions
-// package to live in — connector's own PermissionRead/Write/Delete
-// constants live in package connector because connector owns those REST
-// routes, whereas sheets:read gates MCP tools, not a route, so it is
-// declared here next to the tools it gates.
+// PermissionSheetsRead gates every sheets_* read tool, under the same
+// ActionMatches semantics as every other permission here. It lives in this
+// package rather than in connector because it gates MCP tools, not routes.
 const PermissionSheetsRead = "sheets:read"
 
 // maxSampleRows is sheets_describe_spreadsheet's include_sample_rows upper
@@ -356,21 +347,16 @@ func registerQueryRows(s *gomcp.Server, svc *Service, conn db.Connector, _ Reque
 }
 
 // columnNameFromError recovers the offending column name from an error
-// wrapping googlesheets.ErrColumnNotFound, built as
-// fmt.Errorf("%w: %s", ErrColumnNotFound, columnName) — trimming the
-// sentinel's own message plus the ": " separator that format string always
-// produces leaves exactly the column name.
+// wrapping ErrColumnNotFound: those are built as "%w: %s", so trimming the
+// sentinel's message and separator leaves exactly the name.
 func columnNameFromError(err error) string {
 	return strings.TrimPrefix(err.Error(), googlesheets.ErrColumnNotFound.Error()+": ")
 }
 
-// buildQueryRowsResult renders result as the CallToolResult text the model
-// reads: a markdown table (default) or the JSON-encoded out DTO, per
-// responseFormat. Either way, when the scan did not reach the sheet's real
-// end (ScanComplete false), a second text block spells out that the count
-// is a lower bound and names the fix (docs/07 step 7's Decision 4) — kept
-// as a *second* content block rather than woven into the JSON text so a
-// json-format caller can still parse that first block as pure JSON.
+// buildQueryRowsResult renders result as a markdown table or JSON, per
+// responseFormat. An incomplete scan adds a *second* content block saying
+// the count is a lower bound — second, not woven into the first, so a
+// json-format caller can still parse block one as pure JSON.
 func buildQueryRowsResult(result *googlesheets.QueryRowsOutput, out queryRowsOutput, responseFormat string) *gomcp.CallToolResult {
 	var content []gomcp.Content
 	switch responseFormat {
@@ -394,13 +380,10 @@ func buildQueryRowsResult(result *googlesheets.QueryRowsOutput, out queryRowsOut
 	return &gomcp.CallToolResult{Content: content}
 }
 
-// renderQueryRowsMarkdown builds a markdown table from result's projected
-// columns and rows, followed by a one-line summary of the pagination/scan
-// signal fields. Every cell is escaped so a value containing "|" or a
-// newline can't corrupt the table structure — the same "never let
-// agent-controlled data control formatting" discipline as the formula-
-// injection guardrail, just applied to markdown instead of a query
-// language.
+// renderQueryRowsMarkdown builds a markdown table plus a one-line
+// pagination summary. Every cell is escaped so a value containing "|" or a
+// newline cannot corrupt the table — the same "data never controls
+// formatting" rule as the formula-injection guardrail, applied to markdown.
 func renderQueryRowsMarkdown(result *googlesheets.QueryRowsOutput) string {
 	var b strings.Builder
 	if len(result.Columns) == 0 || len(result.Rows) == 0 {
@@ -450,14 +433,10 @@ func queryRowsPartialScanWarning(result *googlesheets.QueryRowsOutput) string {
 // sheets_read_range
 // ---------------------------------------------------------------------------
 
-// sheetsReadRangeDescription is deliberate prompt surface, written with the
-// same care as sheetsQueryRowsDescription (docs/07-sheets-adapter-plan.md
-// step 8): it steers the model toward sheets_query_rows for anything the
-// filter DSL can express, spells out the one hard constraint on range
-// (explicit row bounds on both ends — anything else risks reading a whole
-// sheet, docs/06 §6's "life-or-death at 87GB"), and tells it how an
-// omitted sheet name resolves so a partial range still produces a
-// predictable read.
+// sheetsReadRangeDescription is deliberate prompt surface: it steers the
+// model to sheets_query_rows for anything the filter DSL covers, states the
+// one hard constraint (explicit row bounds — anything else risks reading a
+// whole sheet), and says how an omitted sheet name resolves.
 const sheetsReadRangeDescription = "The escape hatch for what sheets_query_rows' filter DSL can't express: reads " +
 	"an explicit A1 range directly, with no filtering and no column projection. Prefer sheets_query_rows for " +
 	"anything expressible as a column filter — it pages, filters, and caps its output for you; use this tool only " +
@@ -475,15 +454,11 @@ type readRangeInput struct {
 	Range         string `json:"range" jsonschema:"an A1-notation range with explicit numeric row bounds on both ends, e.g. \"Contracts!A1:D100\" or \"Contracts!1:50\"; a bare sheet name, a column-only range (\"A:D\"), or anything without row bounds is rejected. Omit the sheet name to read from the spreadsheet's first tab."`
 }
 
-// readRangeOutput is sheets_read_range's result shape (docs/07 step 8).
-// Range is always the fully resolved range actually read (sheet name
-// filled in, column bounds resolved for a row-only request), never the
-// caller's raw string, so the model always knows exactly what it got back
-// even when its own request left something implicit. RowCount is tagged
-// "row_count", not "count" — service.go's rowCountFromResult probes both
-// field names for exactly this reason, so this tool's audit row still
-// carries a row_count without widening that extractor to anything beyond
-// another integer count.
+// readRangeOutput is sheets_read_range's result shape. Range is the fully
+// resolved range actually read, never the caller's raw string, so the model
+// knows what it got back even when its request left something implicit.
+// RowCount is tagged "row_count" rather than "count", which is why
+// service.go's rowCountFromResult probes both names.
 type readRangeOutput struct {
 	SpreadsheetID string     `json:"spreadsheet_id"`
 	Range         string     `json:"range" jsonschema:"the fully resolved range actually read — sheet name and column bounds filled in even if range omitted them"`
@@ -510,13 +485,8 @@ func registerReadRange(s *gomcp.Server, svc *Service, conn db.Connector, _ Reque
 			return missingRange(), readRangeOutput{}, nil
 		}
 
-		// ValidateReadRangeInput parses range (docs/07 step 8: "the A1
-		// range must be parsed and re-validated ... not a trusted
-		// identifier") and checks it for malformed syntax, unbounded row
-		// extent, and the pre-fetch row/cell cap — entirely networkless,
-		// so a bad range never spends a byte of the connector's OAuth
-		// credential or rate-limit budget, exactly like
-		// ValidateQueryRowsInput above.
+		// Networkless: parses the range and checks syntax, row bounds, and
+		// the pre-fetch cap before any credential or budget is spent.
 		adapterInput := googlesheets.ReadRangeInput{SpreadsheetID: in.SpreadsheetID, RangeStr: in.Range}
 		parsed, err := googlesheets.ValidateReadRangeInput(adapterInput)
 		if err != nil {
@@ -568,13 +538,10 @@ func registerReadRange(s *gomcp.Server, svc *Service, conn db.Connector, _ Reque
 	})
 }
 
-// sheetNameFromReadRangeError recovers the offending sheet name from an
-// error wrapping googlesheets.ErrSheetNotFound, built as
-// fmt.Errorf("%w: %s", ErrSheetNotFound, sheetName) — the same trick as
-// columnNameFromError above. sheets_read_range needs this (unlike
-// sheets_query_rows, which already has sheet_name as a separate input
-// field to fall back on) because its only sheet-name signal is whatever
-// ParseA1Range extracted from range itself.
+// sheetNameFromReadRangeError recovers the sheet name from an error
+// wrapping ErrSheetNotFound, same trick as columnNameFromError. read_range
+// needs it because its only sheet-name signal is what ParseA1Range pulled
+// out of range; query_rows has sheet_name as its own input field.
 func sheetNameFromReadRangeError(err error) string {
 	return strings.TrimPrefix(err.Error(), googlesheets.ErrSheetNotFound.Error()+": ")
 }
@@ -607,4 +574,66 @@ func renderReadRangeMarkdown(result *googlesheets.ReadRangeOutput) string {
 	}
 	fmt.Fprintf(&b, "\nrange=%s sheet=%q row_count=%d column_count=%d\n", result.Range, result.SheetName, result.RowCount, result.ColumnCount)
 	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// sheets_* error results
+// ---------------------------------------------------------------------------
+//
+// Every message names a fix, per docs/06 §8. All of them echo back only
+// caller-supplied structure — a spreadsheet id, a tab name, a header name,
+// a numeric bound — never a cell value or a filter's value.
+
+func missingSpreadsheetID() *gomcp.CallToolResult {
+	return errResult("spreadsheet_id is required. Call sheets_list_spreadsheets to see which ids this connector can access.")
+}
+
+func missingSheetName() *gomcp.CallToolResult {
+	return errResult("sheet_name is required. Call sheets_describe_spreadsheet to see this spreadsheet's tab names.")
+}
+
+func missingRange() *gomcp.CallToolResult {
+	return errResult("range is required, e.g. %q. Call sheets_describe_spreadsheet to see this spreadsheet's tab names.", "Contracts!A1:D100")
+}
+
+func invalidSampleRowCount(n int) *gomcp.CallToolResult {
+	return errResult("include_sample_rows must be between 0 and %d (got %d).", maxSampleRows, n)
+}
+
+func invalidResponseFormat(got string) *gomcp.CallToolResult {
+	return errResult("response_format must be %q or %q (got %q).", "markdown", "json", got)
+}
+
+// invalidQueryRowsInput and invalidReadRangeInput echo the adapter's own
+// validation error verbatim. Safe: those messages name only column names,
+// operators, range strings, and numeric bounds — never a filter's value.
+
+func invalidQueryRowsInput(err error) *gomcp.CallToolResult {
+	return errResult("%s", err.Error())
+}
+
+func invalidReadRangeInput(err error) *gomcp.CallToolResult {
+	return errResult("%s", err.Error())
+}
+
+// SpreadsheetNotAllowed reports a spreadsheet absent from this connector's
+// allowlist, checked fresh on every call against the live config.
+func SpreadsheetNotAllowed(spreadsheetID string) *gomcp.CallToolResult {
+	return errResult("SPREADSHEET_NOT_ALLOWED: %q is not on this connector's allowlist. "+
+		"Call sheets_list_spreadsheets to see which spreadsheets this connector can access.", spreadsheetID)
+}
+
+func SheetNotFound(sheetName string) *gomcp.CallToolResult {
+	return errResult("SHEET_NOT_FOUND: %q is not a tab in this spreadsheet. "+
+		"Call sheets_describe_spreadsheet to see its actual tab names.", sheetName)
+}
+
+func ColumnNotFound(column string) *gomcp.CallToolResult {
+	return errResult("COLUMN_NOT_FOUND: %q is not a column in this sheet. "+
+		"Call sheets_describe_spreadsheet to see the sheet's actual header row.", column)
+}
+
+func ResultTooLarge() *gomcp.CallToolResult {
+	return errResult("RESULT_TOO_LARGE: this query's result is too large to return. " +
+		"Use the columns argument to project fewer fields, or narrow your filter / lower limit to return fewer rows.")
 }

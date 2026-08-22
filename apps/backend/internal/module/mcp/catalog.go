@@ -10,63 +10,39 @@ import (
 )
 
 // Entry binds one MCP tool to one controlplane RBAC action — the single
-// declaration site consumed by both enforcement layers (Service.BuildServer's
-// construction-time filtering and Service.enforce's call-time middleware)
-// plus, later, the docs table. Mirrors spikes/mcp-gateway/internal/tools's
-// Entry shape, verified against SDK v1.7.0.
+// declaration site consumed by both enforcement layers: BuildServer's
+// construction-time filtering and Service.enforce's call-time middleware.
 type Entry struct {
 	// Name is the MCP tool name as the model sees it.
 	Name string
-	// Permission is the controlplane RBAC action required to see and call
-	// this tool, in the same "<resource>:<verb>" shape RequirePermission uses.
+	// Permission is the RBAC action required to see and call this tool, in
+	// the same "<resource>:<verb>" shape RequirePermission uses.
 	Permission string
 	// Description is mirrored into the mcp.Tool for the model.
 	Description string
-	// ConnectorType restricts this entry to connectors of exactly this
-	// type — checked by Service.BuildServer alongside Permission before an
-	// entry is ever registered. The zero value ("") means "every connector
-	// type": sapanjai_describe_connector, step 3's connector-agnostic tool,
-	// leaves this unset. Google Sheets tools (tools_sheets.go, step 6) set
-	// it to connector.TypeGoogleSheets so they never appear against a
-	// "generic" or any other non-Sheets connector — there would be nothing
-	// for their handler to decrypt into a valid Config, and advertising a
-	// tool that can only ever fail is worse than not advertising it.
+	// ConnectorType restricts this entry to one connector type; "" means
+	// every type. A tool whose handler could only ever fail against the
+	// wrong type is better left unadvertised than advertised and broken.
 	ConnectorType connector.Type
-	// Register adds the tool to s. svc is the owning *Service — closed over
-	// by tools that need it (Google Sheets tools call back into svc to
-	// decrypt conn's config fresh on every invocation and to reach the
-	// shared OAuth token-source cache); conn is closed over rather than
-	// read from any model-supplied argument, see registerDescribeConnector.
-	// req carries the per-request HTTP origin (step 9's drive_get_file needs
-	// it to mint an absolute download link; every other registrar ignores
-	// it with a `_ RequestInfo` parameter) — see RequestInfo's doc comment
-	// for why this is threaded explicitly rather than read off ctx.
+	// Register adds the tool to s. conn is closed over rather than read from
+	// any model-supplied argument, so no tool input can redirect a call to
+	// another connector.
 	Register func(s *gomcp.Server, svc *Service, conn db.Connector, req RequestInfo)
 }
 
-// RequestInfo is the subset of the inbound HTTP request a tool's Register
-// closure may need but that isn't otherwise reachable from svc/conn — today,
-// exactly the origin drive_get_file (tools_drive.go) must build an absolute
-// download URL against. This is deliberately passed as an explicit
-// parameter rather than smuggled through the tool handler's ctx: the Go MCP
-// SDK's context propagation from the inbound *http.Request through to an
-// individual tools/call dispatch works today (verified: the SDK's own
-// streamable.go comments "Pass req.Context() here, to allow middleware to
-// add context values"), but it is not a documented contract this gateway
-// should bet a security-relevant URL's correctness on across an SDK
-// upgrade. Handler.getServer builds one instance of this per HTTP request
-// (via baseURLFromRequest) and BuildServer forwards it to every Entry it
-// registers, permitted or not — cheap to compute, so there is no reason to
-// build it lazily only for the one tool that uses it.
+// RequestInfo carries the parts of the inbound HTTP request a Register
+// closure needs but cannot reach through svc/conn — today just the origin
+// drive_get_file builds absolute download URLs against.
+//
+// Passed explicitly rather than read off the handler's ctx: SDK context
+// propagation from the inbound request through to a tools/call dispatch
+// works today, but it is not a documented contract worth betting a
+// security-relevant URL on across an SDK upgrade.
 type RequestInfo struct {
-	// BaseURL is the scheme+host the gateway itself was reached on for this
-	// request (e.g. "https://api.example.com"), with no trailing slash. See
-	// baseURLFromRequest (handler.go) for how it's derived from
-	// X-Forwarded-Proto/X-Forwarded-Host/r.Host. Empty in every unit test
-	// that builds a *gomcp.Server directly (never through a real HTTP
-	// request) — SignFileLink then produces a root-relative
-	// "/mcp/files/..." URL, which is never served to a real client outside
-	// tests.
+	// BaseURL is the scheme+host the gateway was reached on, no trailing
+	// slash — see baseURLFromRequest (handler.go). Empty in unit tests that
+	// build a server directly, which makes SignFileLink emit a root-relative
+	// URL never served to a real client.
 	BaseURL string
 }
 
@@ -77,49 +53,58 @@ func (e Entry) appliesTo(conn db.Connector) bool {
 	return e.ConnectorType == "" || string(e.ConnectorType) == conn.Type
 }
 
-// Catalog returns every tool the gateway knows how to expose, permitted or
-// not for any given principal. Order is stable so tools/list output is
-// deterministic. Step 3 ships exactly one trivial tool, chosen because it
-// exercises connector resolution and tenant isolation while being
-// structurally incapable of leaking config (see registerDescribeConnector);
-// real adapters land in steps 5+.
-func Catalog() []Entry {
-	return []Entry{
-		{
-			Name:        "sapanjai_describe_connector",
-			Permission:  connector.PermissionRead,
-			Description: "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials.",
-			Register:    registerDescribeConnector,
-		},
-		sheetsListSpreadsheetsEntry,
-		sheetsDescribeSpreadsheetEntry,
-		sheetsQueryRowsEntry,
-		sheetsReadRangeEntry,
-		driveListFolderEntry,
-		driveGetFileEntry,
+// catalog is the tool set, built once: it is static for the process
+// lifetime, and both BuildServer and PermissionFor sit on the per-request
+// path. Order is stable so tools/list is deterministic.
+var catalog = []Entry{
+	{
+		Name:        "sapanjai_describe_connector",
+		Permission:  connector.PermissionRead,
+		Description: describeConnectorDescription,
+		Register:    registerDescribeConnector,
+	},
+	sheetsListSpreadsheetsEntry,
+	sheetsDescribeSpreadsheetEntry,
+	sheetsQueryRowsEntry,
+	sheetsReadRangeEntry,
+	driveListFolderEntry,
+	driveGetFileEntry,
+}
+
+// permissionByTool indexes catalog by tool name, so PermissionFor is a map
+// lookup rather than a linear scan per tool of every tools/list response.
+var permissionByTool = func() map[string]string {
+	m := make(map[string]string, len(catalog))
+	for _, e := range catalog {
+		m[e.Name] = e.Permission
 	}
+	return m
+}()
+
+// Catalog returns every tool the gateway knows how to expose, permitted or
+// not for any given principal.
+func Catalog() []Entry {
+	return catalog
 }
 
 // PermissionFor returns the RBAC action gating tool name, and whether name
 // is in the catalog at all.
 func PermissionFor(name string) (string, bool) {
-	for _, e := range Catalog() {
-		if e.Name == name {
-			return e.Permission, true
-		}
-	}
-	return "", false
+	action, ok := permissionByTool[name]
+	return action, ok
 }
 
 // ---------------------------------------------------------------------------
 // sapanjai_describe_connector
 // ---------------------------------------------------------------------------
 
-// describeConnectorOutput is intentionally the *entire* shape a caller can
-// ever see through this tool: no config field exists on it, so there is no
-// code path — typo, future edit, or otherwise — through which the connector's
-// decrypted config could reach the model. Mirrors connector.ConnectorResponse's
-// own "must never grow a config field" invariant.
+// describeConnectorDescription is shared by the catalog Entry and the
+// registered tool, which must advertise the same text.
+const describeConnectorDescription = "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials."
+
+// describeConnectorOutput is the entire shape this tool can ever return: it
+// has no config field, so no edit short of adding one can leak decrypted
+// config to the model. Same invariant as connector.ConnectorResponse.
 type describeConnectorOutput struct {
 	Name   string `json:"name" jsonschema:"the connector's display name"`
 	Type   string `json:"type" jsonschema:"the connector's type identifier, e.g. \"generic\""`
@@ -129,13 +114,11 @@ type describeConnectorOutput struct {
 func registerDescribeConnector(s *gomcp.Server, _ *Service, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sapanjai_describe_connector",
-		Description: "Describe the connector this MCP session is bound to: its name, type, and current health status. Never returns connection credentials.",
+		Description: describeConnectorDescription,
 		Annotations: &gomcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(_ context.Context, _ *gomcp.CallToolRequest, _ struct{}) (*gomcp.CallToolResult, describeConnectorOutput, error) {
-		// conn is closed over from Register's argument, not read from any
-		// model-supplied input — the tool takes no arguments at all, so
-		// there is no field a model could set to widen or redirect this
-		// beyond the connector the session is bound to.
+		// conn comes from Register, not from input — the tool takes no
+		// arguments, so nothing a model sends can redirect it.
 		return nil, describeConnectorOutput{Name: conn.Name, Type: conn.Type, Status: conn.Status}, nil
 	})
 }

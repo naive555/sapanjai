@@ -1,13 +1,8 @@
-// This file is docs/07-sheets-adapter-plan.md step 9: the Drive half of the
-// adapter, drive_list_folder and drive_get_file. Both are gated by
-// connector.TypeGoogleSheets (Entry.ConnectorType) and PermissionDriveRead —
-// deliberately its own action, not granted by sheets:read (matcher
-// semantics: "*" > exact > "resource:*" wildcard means "sheets:read" only
-// ever matches "sheets:read"/"sheets:*", never "drive:read") — and both
-// re-decrypt and re-parse their connector's config on every single
-// invocation via Service.openGoogleSheetsConfig, the same "never a value
-// cached from connector-creation or session-start time" discipline
-// tools_sheets.go's tools already follow.
+// The Drive half of the adapter: drive_list_folder and drive_get_file.
+// Gated by connector.TypeGoogleSheets and PermissionDriveRead, which
+// sheets:read never grants — the matcher's "*" > exact > "resource:*"
+// semantics mean sheets:read matches only sheets:read and sheets:*. Config
+// is re-decrypted on every invocation, as in tools_sheets.go.
 package mcp
 
 import (
@@ -24,13 +19,9 @@ import (
 	"github.com/sapanjai/backend/internal/module/connector"
 )
 
-// PermissionDriveRead is the RBAC action gating every drive_* read tool
-// (docs/06-sheets-adapter.md §5), declared next to PermissionSheetsRead for
-// the same reason that constant lives here rather than in a dedicated
-// permissions package: it gates MCP tools, not a REST route. Explicitly its
-// own action, not implied by sheets:read or vice versa — an org that wants
-// an agent to read spreadsheets but never browse the connector's Drive
-// folders (or the reverse) can grant exactly one.
+// PermissionDriveRead gates every drive_* read tool. Explicitly its own
+// action, neither implying nor implied by sheets:read, so an org can let an
+// agent read spreadsheets without browsing Drive folders, or the reverse.
 const PermissionDriveRead = "drive:read"
 
 var driveListFolderEntry = Entry{
@@ -134,11 +125,8 @@ func registerDriveListFolder(s *gomcp.Server, svc *Service, conn db.Connector, _
 	})
 }
 
-// buildDriveListFolderResult renders out as the CallToolResult text the
-// model reads: a markdown table using the same per-cell escaping
-// (escapeMarkdownCell, tools_sheets.go) every other markdown-rendering tool
-// in this package uses, so a file name containing "|" or a newline can't
-// corrupt the table.
+// buildDriveListFolderResult renders out as a markdown table, escaped per
+// cell so a file name containing "|" or a newline cannot corrupt it.
 func buildDriveListFolderResult(out driveListFolderOutput) *gomcp.CallToolResult {
 	var b strings.Builder
 	if len(out.Files) == 0 {
@@ -165,16 +153,10 @@ func buildDriveListFolderResult(out driveListFolderOutput) *gomcp.CallToolResult
 // drive_get_file
 // ---------------------------------------------------------------------------
 
-// driveGetFileDescription is deliberate prompt surface, written with the
-// same care sheetsReadRangeDescription (tools_sheets.go) shows: it states
-// plainly that download_url is short-lived *and replayable* — there is no
-// nonce and no consumption tracking, so anyone holding the URL can use it
-// as many times as they like until it expires, which is exactly why the
-// model should treat it as something not to repeat back into a wider
-// audience than intended, not as something merely "used up" after one
-// fetch. Calling it "single-use" here would be false and would mislead the
-// model about the actual risk (a leaked link stays live for the rest of
-// its TTL, not until first use).
+// driveGetFileDescription is deliberate prompt surface. It says download_url
+// is short-lived *and replayable*: there is no nonce and no consumption
+// tracking, so a leaked link stays live for the rest of its TTL. Calling it
+// "single-use" would understate that risk to the model.
 const driveGetFileDescription = "Get one Drive file's metadata by id, plus — for files with actual bytes to " +
 	"download — a short-lived download link good for 15 minutes. file_id typically comes from drive_list_folder; " +
 	"this tool re-checks that the file's own parent folder is still on this connector's allowlist every time it's " +
@@ -215,11 +197,9 @@ func registerDriveGetFile(s *gomcp.Server, svc *Service, conn db.Connector, req 
 			return ErrorResult(err), driveGetFileOutput{}, nil
 		}
 
-		// Unlike drive_list_folder (and every sheets_* tool), there is no
-		// allowlist pre-check here: drive_get_file takes a bare file id
-		// with no folder context, so there is nothing to check against the
-		// allowlist until GetFile has fetched the file's own parent
-		// folders. See googlesheets.GetFile's doc comment.
+		// No allowlist pre-check here, unlike every other tool: a bare file
+		// id carries no folder context, so there is nothing to check until
+		// GetFile has fetched the file's own parents.
 		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
 		result, err := googlesheets.GetFile(ctx, ts, cfg, conn.ID, svc, in.FileID)
 		if err != nil {
@@ -248,25 +228,19 @@ func registerDriveGetFile(s *gomcp.Server, svc *Service, conn db.Connector, req 
 		}
 
 		if len(svc.fileLinkKey) == 0 {
-			// docs/07 step 9: "a nil/empty key must disable link minting —
-			// drive_get_file still returns metadata, with the result text
-			// explaining links are unavailable." Never reachable in
-			// production (server.go always supplies cfg.ConnectorMasterKey,
-			// which config.Load already requires to be non-empty), but
-			// every unit test that builds a Service without one must not
-			// crash trying to sign with a nil key.
+			// An empty key disables minting: still return metadata, and say
+			// links are unavailable. Unreachable in production, since
+			// config.Load requires a non-empty master key, but unit tests
+			// build a Service without one and must not sign with nil.
 			return buildDriveGetFileResult(out, "A download link is unavailable for this connector right now."), out, nil
 		}
 
 		p, ok := principalFromContext(ctx)
 		if !ok {
-			// Same class of defensive fallback as Handler.getServer's own
-			// "missing principal is a wiring bug, not a client error": this
-			// tool is only ever registered on a server built from a real
-			// authenticated principal (BuildServer), so reaching here with
-			// none on ctx means the SDK's context propagation broke, not
-			// that the caller did anything wrong. Fail safe — return
-			// metadata with no link rather than mint one bound to no one.
+			// A wiring bug, not a client error: this tool is only registered
+			// on a server built from a real principal, so no principal here
+			// means SDK context propagation broke. Fail safe — metadata with
+			// no link, rather than a link bound to no one.
 			return buildDriveGetFileResult(out, "A download link could not be minted for this request."), out, nil
 		}
 
@@ -281,13 +255,44 @@ func registerDriveGetFile(s *gomcp.Server, svc *Service, conn db.Connector, req 
 	})
 }
 
-// buildDriveGetFileResult renders out as the CallToolResult text the model
-// reads: the file's metadata, plus note explaining the download_url
-// situation (present-and-expiring, Google-native-so-absent, or
-// unavailable-right-now) — always present so the model never has to infer
-// *why* download_url is missing from its absence alone.
+// buildDriveGetFileResult renders the file's metadata plus a note on the
+// download_url situation — expiring, Google-native, or unavailable. The note
+// is always present so the model never infers *why* a URL is missing.
 func buildDriveGetFileResult(out driveGetFileOutput, note string) *gomcp.CallToolResult {
 	text := fmt.Sprintf("file_id=%s name=%q mime_type=%s size_bytes=%d modified_time=%s\n%s",
 		out.FileID, out.Name, out.MimeType, out.SizeBytes, out.ModifiedTime, note)
 	return &gomcp.CallToolResult{Content: []gomcp.Content{&gomcp.TextContent{Text: text}}}
+}
+
+// ---------------------------------------------------------------------------
+// drive_* error results
+// ---------------------------------------------------------------------------
+//
+// Folder and file ids are allowlist entries, not credentials, so each is
+// safe to echo back alongside the fix.
+
+func missingFolderID() *gomcp.CallToolResult {
+	return errResult("folder_id is required. It must be one of this connector's allowlisted Drive folders.")
+}
+
+func missingFileID() *gomcp.CallToolResult {
+	return errResult("file_id is required. Call drive_list_folder to see which ids this connector can access.")
+}
+
+func FolderNotAllowed(folderID string) *gomcp.CallToolResult {
+	return errResult("FOLDER_NOT_ALLOWED: %q is not on this connector's allowlist. "+
+		"Ask the connector's owner to add it to the connector's drive_folder_ids, or use a folder id that is already allowlisted.", folderID)
+}
+
+// FileNotAllowed reports a file none of whose *direct* parents is
+// allowlisted — see googlesheets.ErrFileNotAllowed on why nesting doesn't
+// count.
+func FileNotAllowed(fileID string) *gomcp.CallToolResult {
+	return errResult("FILE_NOT_ALLOWED: %q is not inside any of this connector's allowlisted Drive folders "+
+		"(only a file's *direct* parent folder counts — a nested subfolder must be allowlisted itself). "+
+		"Call drive_list_folder on an allowlisted folder to see which files this connector can read.", fileID)
+}
+
+func FileNotFound(fileID string) *gomcp.CallToolResult {
+	return errResult("FILE_NOT_FOUND: %q does not exist, or is no longer reachable with this connector's credentials.", fileID)
 }

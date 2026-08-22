@@ -16,16 +16,12 @@ import (
 	"github.com/sapanjai/backend/internal/infra/database/db"
 )
 
-// mcpPrincipalCtxKey is the *request context* key RequireMCPKey stores the
-// resolved principal under.
+// mcpPrincipalCtxKey keys the resolved principal on the *request* context.
 //
-// This is NOT c.Set(): the MCP SDK's mcp.NewStreamableHTTPHandler takes a
-// plain func(r *http.Request) *mcp.Server, which only ever sees
-// r.Context() — it has no echo.Context and cannot see anything stashed
-// there. RequireMCPKey must therefore end with
-// c.SetRequest(c.Request().WithContext(...)) so the value survives into
-// that callback. Getting this backwards is the single most likely way to
-// lose an hour on this step (docs/07-sheets-adapter-plan.md, step 3).
+// Deliberately not c.Set(): the SDK's server callback takes a plain
+// func(*http.Request) and never sees an echo.Context, so RequireMCPKey must
+// end with c.SetRequest(c.Request().WithContext(...)) for the value to
+// survive into it.
 type mcpPrincipalCtxKey struct{}
 
 // mcpKeyLookup is the subset of *database.Store RequireMCPKey depends on,
@@ -36,49 +32,26 @@ type mcpKeyLookup interface {
 	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
-// MCPPrincipalResolver resolves an authenticated PAT's (userID,
-// organizationID, scopes) into the value that governs the rest of the
-// request: the caller's live RBAC grant intersected with the key's own
-// scopes (docs/07-sheets-adapter-plan.md Decision 1). The returned value's
-// concrete type is always *rbac.Principal.
+// MCPPrincipalResolver resolves an authenticated PAT into the caller's live
+// RBAC grant intersected with the key's own scopes. The concrete type of the
+// returned value is always *rbac.Principal.
 //
-// Declared as a plain function type returning `any` — not a method-set
-// interface naming *rbac.Principal or *rbac.Service — so this package need
-// not import internal/module/rbac. That import would cycle: every module's
-// handler.go (including rbac's own) imports this package for the Guards
-// convention (Register(g *echo.Group, guards *appmw.Guards)), so rbac
-// already imports middleware, and Go resolves import cycles at
-// whole-package granularity, not per file. server.go — which already
-// imports both packages — supplies the real implementation by composing
-// rbac.Service.Authorize and its Principal.Narrow:
-//
-//	func(ctx context.Context, userID, organizationID uuid.UUID, scopes []string) (any, error) {
-//		p, err := rbacSvc.Authorize(ctx, userID, organizationID)
-//		if err != nil {
-//			return nil, err
-//		}
-//		return p.Narrow(scopes), nil
-//	}
-//
-// internal/module/mcp — which safely imports rbac, since rbac does not
-// import mcp — recovers the concrete type with a type assertion via
-// MCPPrincipalFromContext.
+// It returns `any` rather than naming that type because this package cannot
+// import internal/module/rbac: every module's handler.go, rbac's included,
+// imports middleware for the Guards convention, and Go resolves cycles at
+// whole-package granularity. server.go imports both and supplies the real
+// implementation; internal/module/mcp asserts the concrete type back.
 type MCPPrincipalResolver func(ctx context.Context, userID, organizationID uuid.UUID, scopes []string) (any, error)
 
-// RequireMCPKey authenticates an MCP client's bearer PAT (a mcp_api_keys
-// row, distinct from the JWT access tokens RequireAuth/RequireOrg/
-// RequirePermission handle) and resolves it to a principal via resolve,
-// narrowed by the key's own (nullable) scopes.
+// RequireMCPKey authenticates an MCP client's bearer PAT — an mcp_api_keys
+// row, not one of the JWTs RequireAuth handles — and resolves it to a
+// principal narrowed by the key's own scopes.
 //
-// Rejections are 401 "Unauthorized" for every case a client should treat as
-// "this credential doesn't work" — absent/malformed header, unknown hash,
-// revoked, expired — deliberately not distinguished from each other in the
-// response body (only in the server log) so a probing client learns nothing
-// about which reason applied. WWW-Authenticate is set on every 401: this is
-// what makes MCP clients (Claude Code, Inspector, ...) offer to
-// re-authenticate instead of just dying — see
-// spikes/mcp-gateway/cmd/httpsrv/main.go's withAuth, verified against the
-// same SDK version this ports.
+// Every "this credential doesn't work" case (absent, malformed, unknown,
+// revoked, expired) returns an identical 401 so a probing client learns
+// nothing about which applied; the reason goes to the log only.
+// WWW-Authenticate is set on all of them, which is what makes MCP clients
+// offer to re-authenticate rather than simply dying.
 func RequireMCPKey(store mcpKeyLookup, resolve MCPPrincipalResolver, log *slog.Logger) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -133,11 +106,9 @@ func hashMCPToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// mcpUnauthorized writes the 401 + WWW-Authenticate response RequireMCPKey
-// uses for every rejection reason. errParam, when non-empty, is appended as
-// the WWW-Authenticate "error" parameter (e.g. "invalid_token") — present
-// for a token that was read but rejected, absent when no token was
-// presented at all, mirroring the spike's withAuth.
+// mcpUnauthorized writes the 401 + WWW-Authenticate every rejection uses.
+// errParam is set for a token that was read but rejected, empty when none
+// was presented at all.
 func mcpUnauthorized(c echo.Context, errParam string) error {
 	challenge := `Bearer realm="sapanjai"`
 	if errParam != "" {
@@ -148,11 +119,8 @@ func mcpUnauthorized(c echo.Context, errParam string) error {
 }
 
 // MCPPrincipalFromContext returns the principal RequireMCPKey resolved onto
-// ctx (dynamic type *rbac.Principal, opaque as `any` at this layer — see
-// MCPPrincipalResolver), and whether one was present. Read by
-// internal/module/mcp's per-request mcp.Server-construction callback, which
-// receives only a *http.Request (never an echo.Context) — see
-// mcpPrincipalCtxKey.
+// ctx — dynamic type *rbac.Principal, opaque as `any` here — and whether one
+// was present.
 func MCPPrincipalFromContext(ctx context.Context) (any, bool) {
 	p := ctx.Value(mcpPrincipalCtxKey{})
 	return p, p != nil

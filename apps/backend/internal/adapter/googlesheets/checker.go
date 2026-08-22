@@ -7,18 +7,12 @@ import (
 	"github.com/sapanjai/backend/internal/module/connector"
 )
 
-// Checker implements connector.Checker for type "google_sheets"
-// (internal/module/connector/health.go). It turns the 501
-// HEALTH_CHECK_UNSUPPORTED stub into a real probe: refresh the OAuth token
-// and perform one cheap metadata read against the connector's own
-// allowlist, proving both the credential and the scope actually resolve to
-// something reachable.
+// Checker implements connector.Checker for type "google_sheets": refresh
+// the OAuth token and do one cheap metadata read against the connector's
+// allowlist, proving both credential and scope resolve to something real.
 //
-// Checker carries no shared state: connector.Checker.Check receives only
-// the connector's decrypted config, never a connector id, so there is no id
-// to key a cache by here — see oauth.go's TokenSourceCache doc comment,
-// which is the cache step 6+'s per-session tool calls (which do have a
-// connector id) are expected to use instead.
+// Stateless by necessity — Check receives a decrypted config but never a
+// connector id, so there is no key to cache a TokenSource under here.
 type Checker struct{}
 
 var _ connector.Checker = (*Checker)(nil)
@@ -33,17 +27,13 @@ func (c *Checker) Type() connector.Type {
 	return connector.TypeGoogleSheets
 }
 
-// Check implements connector.Checker. It parses config, builds a
-// single-use OAuth token source and Google API client, and probes the
-// cheapest available upstream resource: metadata for the first allowlisted
-// spreadsheet, or — if no spreadsheet is allowlisted — a listing of the
-// first allowlisted Drive folder. ParseConfig guarantees the allowlist
-// names at least one of the two, so exactly one branch runs.
+// Check probes the cheapest allowlisted resource: metadata for the first
+// allowlisted spreadsheet, or a listing of the first allowlisted Drive
+// folder. ParseConfig guarantees at least one exists, so one branch runs.
 //
-// Per the Checker contract: config is the caller's only copy of a customer
-// credential and is never retained past this call, and any error returned
-// is safe to log (Google API client errors carry no request URL with the
-// token in it — the token travels in a header, not the URL).
+// Per the Checker contract, config is the caller's only copy of a customer
+// credential and is never retained past this call. Errors are safe to log:
+// the token travels in a header, so no client error carries it in a URL.
 func (c *Checker) Check(ctx context.Context, config map[string]any) error {
 	cfg, err := ParseConfig(config)
 	if err != nil {

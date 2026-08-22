@@ -28,10 +28,8 @@ const (
 )
 
 // ErrColumnNotFound is returned when a filter or projection names a column
-// absent from the sheet's header row — docs/06-sheets-adapter.md §8
-// COLUMN_NOT_FOUND, "ดู header จาก sheets_describe_spreadsheet". Wrapped
-// with the offending column name via %w: a header name is not a
-// credential, so it is safe to echo back to the model.
+// absent from the sheet's header row, wrapped with the offending name. A
+// header name is not a credential, so it is safe to echo back.
 var ErrColumnNotFound = errors.New("googlesheets: column not found in sheet header")
 
 // Filter is one AND-ed condition of sheets_query_rows' filter DSL. Column

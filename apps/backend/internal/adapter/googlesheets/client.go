@@ -20,27 +20,17 @@ import (
 // step 5.
 const requestTimeout = 15 * time.Second
 
-// downloadTimeout is the outer backstop for DownloadFile's body read only —
-// a *backstop* against a connection that never makes progress at all, not
-// the real bound on a legitimate slow download (that bound is the caller's
-// context: internal/module/mcp/handler.go's downloadFile passes the HTTP
-// request's own context, which Echo cancels the moment the real client
-// hangs up).
+// downloadTimeout backstops DownloadFile's body read against a connection
+// that never progresses. The real bound on a legitimately slow download is
+// the caller's context, which Echo cancels when the client hangs up.
 //
-// Go's http.Client.Timeout covers the *entire* round trip including the
-// response body read, not just time-to-first-byte — fine for every other
-// call this package makes (SpreadsheetMeta, Values, ListFiles, File all
-// return small, fast responses), but wrong for a file download, whose body
-// read is paced by whoever is reading the other end of downloadFile's
-// io.Copy. Confirmed experimentally, not just by reading the docs: a
-// client with a short Timeout reading a slow body returns
-// "context deadline exceeded (Client.Timeout or context cancellation while
-// reading body)" partway through — and by the time that happens,
-// downloadFile has already written a 200 status and headers, so the caller
-// silently receives a truncated file with no error surfaced at all. A large
-// file over a slow connection legitimately takes longer than requestTimeout
-// to fully download, so DownloadFile must not share requestTimeout's
-// client — see newClient's downloadHTTPClient.
+// It needs its own client because http.Client.Timeout covers the entire
+// round trip *including* the body read — fine for this package's other
+// calls, which return small responses, but wrong for a download paced by
+// whoever reads the other end. Confirmed experimentally: a short Timeout
+// against a slow body fails partway through, by which point a 200 and
+// headers are already written, so the caller silently gets a truncated file
+// with no error surfaced at all.
 const downloadTimeout = 10 * time.Minute
 
 // client is the thin implementation of sheetsAPI over the official

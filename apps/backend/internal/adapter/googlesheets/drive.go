@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,51 +18,33 @@ import (
 // newClient, RateCharger, RateLimitedError — because Sheets and Drive are
 // one adapter behind one OAuth scope (docs/06-sheets-adapter.md §1).
 
-// ErrFolderNotAllowed is returned when a Drive folder id is absent from the
-// connector's own allowlist (config.scope.drive_folder_ids) — the Drive
-// analogue of ErrSpreadsheetNotAllowed, same doc-comment discipline: wrapped
-// with the offending id via fmt.Errorf's %w, so a caller can both errors.Is
-// against this sentinel and read the id out of Error(). A folder id is an
-// allowlist entry, not a credential, so it is safe to surface to the model
-// (docs/06-sheets-adapter.md §8's convention of naming the fix).
+// ErrFolderNotAllowed is returned for a Drive folder id absent from the
+// connector's allowlist — the Drive analogue of ErrSpreadsheetNotAllowed,
+// wrapped with the offending id. A folder id is an allowlist entry, not a
+// credential, so it is safe to surface to the model.
 var ErrFolderNotAllowed = errors.New("googlesheets: folder not on connector allowlist")
 
-// ErrFileNotAllowed is returned by GetFile when a file's own direct parent
-// folders — not the folder id the caller happened to ask about, since
-// drive_get_file takes a bare file id with no folder context at all — fail
-// to intersect the connector's allowlisted drive_folder_ids. Only *direct*
-// parents are ever considered: a file two levels deep inside an allowlisted
-// folder is rejected unless its immediate parent is itself allowlisted.
-// This is the conservative reading of docs/06-sheets-adapter.md §3 ("the
-// adapter must reject any spreadsheet/folder not in the allowlist, always")
-// — traversing nested subfolders would mean one allowlisted folder id
-// silently grants everything beneath it, an unbounded and unaudited scope
-// expansion the config's author never explicitly opted into. If nested
-// access is wanted, each subfolder must be allowlisted itself.
+// ErrFileNotAllowed is returned by GetFile when none of a file's *direct*
+// parent folders is allowlisted. Only direct parents count: a file two
+// levels inside an allowlisted folder is rejected unless its immediate
+// parent is allowlisted too. Traversing nested subfolders would let one
+// allowlisted id silently grant everything beneath it — an unbounded scope
+// expansion the config's author never opted into.
 var ErrFileNotAllowed = errors.New("googlesheets: file's parent folder not on connector allowlist")
 
-// ErrFileNotFound is returned when a file id doesn't resolve at all — an
-// upstream 404, a malformed id, or any other failure fetching a single
-// file's metadata. getFile collapses every such failure into this one
-// sentinel rather than propagating the upstream error text verbatim: an
-// upstream error can carry more detail than is safe to hand to the model
-// (see this package's doc comment on never letting a connector's decrypted
-// config, and by extension anything upstream-error-shaped that might
-// reference it, leave this package), and from the caller's perspective "the
-// file id doesn't work" is the only actionable fact either way.
+// ErrFileNotFound is returned when a file id doesn't resolve — a 404, a
+// malformed id, any metadata failure. Every such case collapses here rather
+// than propagating upstream error text, which can carry more detail than is
+// safe to hand the model; "the file id doesn't work" is the only actionable
+// fact either way.
 var ErrFileNotFound = errors.New("googlesheets: file not found")
 
-// maxFolderFiles caps how many files drive_list_folder returns from a
-// single upstream page, defensively — the Drive API's own default page
-// size for Files.List is already well under this, but a future change to
-// ListFiles' requested page size (or a Drive API behavior change) should
-// never let one tool call return an unbounded number of files to the model.
-// A page over the cap is truncated and reported via HasMore rather than
-// rejected outright, mirroring sheets_query_rows' "return what fits, say
-// there's more" convention rather than sheets_read_range's "reject
-// up front" one — the difference being that read_range's caller chose an
-// oversized range itself, while a folder's file count is not something the
-// caller controls at all.
+// maxFolderFiles defensively caps how many files one drive_list_folder call
+// returns. Drive's own default page size is well under this, but no future
+// page-size change should let one call return an unbounded list to the
+// model. An over-cap page is truncated and reported via HasMore rather than
+// rejected: unlike read_range's oversized range, a folder's file count is
+// not something the caller chose.
 const maxFolderFiles = 200
 
 // ---------------------------------------------------------------------------
@@ -120,14 +103,8 @@ func listFolder(ctx context.Context, api sheetsAPI, connectorID uuid.UUID, charg
 	// upstream ListFiles page"). Unlike queryRows' scan, a folder listing
 	// has no partial answer to fall back to across an exhausted bucket: an
 	// empty bucket here is always a full denial.
-	if charger != nil {
-		allowed, retryAfter, err := charger.ChargeRateLimit(ctx, connectorID, 1)
-		if err != nil {
-			return nil, fmt.Errorf("googlesheets: list folder: charge rate limit: %w", err)
-		}
-		if !allowed {
-			return nil, &RateLimitedError{RetryAfter: retryAfter}
-		}
+	if err := chargeOne(ctx, charger, connectorID, "list folder"); err != nil {
+		return nil, err
 	}
 
 	page, err := api.ListFiles(ctx, in.FolderID, in.PageToken)
@@ -188,30 +165,15 @@ func GetFile(ctx context.Context, ts oauth2.TokenSource, cfg *Config, connectorI
 	return getFile(ctx, api, cfg, connectorID, charger, fileID)
 }
 
-// getFile is GetFile minus client construction, so drive_test.go can drive
-// it against a mocked sheetsAPI. Order of operations:
+// getFile is GetFile minus client construction, so tests can drive it
+// against a mocked sheetsAPI.
 //
-//  1. Charge one rate-limit unit for the single upstream File() call about
-//     to be made — same one-charge-per-upstream-call discipline as
-//     readRange's Values.Get charge.
-//  2. Fetch the file's metadata. Any failure (a real 404, a revoked share,
-//     a malformed id — sheetsAPI.File doesn't distinguish, and this package
-//     never surfaces upstream error detail that might reference a
-//     connector's credentials) collapses to ErrFileNotFound.
-//  3. Re-check cfg's allowlist against the *fetched* Parents — never a
-//     value assumed from the caller's input, since the caller supplied only
-//     a file id, not a folder. Only direct parents count (see
-//     ErrFileNotAllowed's doc comment for why nested subfolders are
-//     deliberately not traversed).
+// The allowlist is re-checked against the *fetched* parents, never a value
+// assumed from input — the caller supplied a bare file id with no folder
+// context at all.
 func getFile(ctx context.Context, api sheetsAPI, cfg *Config, connectorID uuid.UUID, charger RateCharger, fileID string) (*FileInfo, error) {
-	if charger != nil {
-		allowed, retryAfter, err := charger.ChargeRateLimit(ctx, connectorID, 1)
-		if err != nil {
-			return nil, fmt.Errorf("googlesheets: get file: charge rate limit: %w", err)
-		}
-		if !allowed {
-			return nil, &RateLimitedError{RetryAfter: retryAfter}
-		}
+	if err := chargeOne(ctx, charger, connectorID, "get file"); err != nil {
+		return nil, err
 	}
 
 	f, err := api.File(ctx, fileID)
@@ -236,7 +198,7 @@ func getFile(ctx context.Context, api sheetsAPI, cfg *Config, connectorID uuid.U
 // allowlisted ones).
 func anyAllowed(parents, allowlist []string) bool {
 	for _, p := range parents {
-		if contains(allowlist, p) {
+		if slices.Contains(allowlist, p) {
 			return true
 		}
 	}
