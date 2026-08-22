@@ -156,6 +156,49 @@ export function assignSubscription(planId: string) {
   return apiRequest<SuccessResponse>("/subscription/assign", { method: "POST", body: { planId } });
 }
 
+// ---- MCP keys ----
+
+// One row as GET /mcp-keys returns it. Never carries the raw token or its
+// hash — see CreateMcpKeyResponse for the one response that does carry the
+// raw token. `scopes: null` means a full grant (narrowed at request time by
+// the creator's live RBAC), not "no scopes".
+export interface McpKeyResponse {
+  id: string;
+  organizationId: string;
+  userId: string;
+  name: string;
+  scopes: string[] | null;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+// POST /mcp-keys response. apiKey carries the raw `sk_live_...` token and is
+// populated **only** here — it is never returned by any other endpoint and
+// cannot be recovered later.
+export interface CreateMcpKeyResponse {
+  id: string;
+  name: string;
+  apiKey: string;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export function listMcpKeys() {
+  return apiRequest<McpKeyResponse[]>("/mcp-keys");
+}
+
+// expiresInDays omitted (or undefined) mints a key that never expires.
+export function createMcpKey(input: { name: string; expiresInDays?: number }) {
+  return apiRequest<CreateMcpKeyResponse>("/mcp-keys", { method: "POST", body: input });
+}
+
+// Idempotent — revoking an already-revoked key still succeeds.
+export function revokeMcpKey(keyId: string) {
+  return apiRequest<SuccessResponse>(`/mcp-keys/${keyId}`, { method: "DELETE" });
+}
+
 // ---- Audit logs ----
 
 export interface AuditLogResponse {
