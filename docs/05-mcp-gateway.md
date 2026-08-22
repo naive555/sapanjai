@@ -1,11 +1,24 @@
 # MCP Gateway — design notes
 
-> **Status: Phase 0 spike complete (2026-08-05). Verdict: feasible, no blockers.**
-> **The generic connector skeleton has since landed** (`internal/module/connector`,
-> `internal/shared/envelope`): the `connectors` table, RBAC-gated CRUD behind
-> `connector:{read,write,delete}`, envelope-encrypted `config`, and an empty
-> `Checker` registry (health-check stubbed at 501). See "Phase 2" below — the
-> gateway/MCP-protocol pieces (Phase 1) are still no production code.
+> **Status (2026-08-22): Phase 0 and Phase 1 shipped. Phase 2 shipped for one
+> connector, read-only. Phase 3 shipped in part.** The gateway itself —
+> `POST /mcp/:connectorId` (`internal/module/mcp`), org-scoped Personal
+> Access Tokens (`internal/module/mcpkey`, `/mcp-keys`), the RBAC-filtered
+> tool catalog, and the per-connector Redis rate limiter — is live production
+> code, built and verified end to end in
+> [`docs/07-sheets-adapter-plan.md`](07-sheets-adapter-plan.md) steps 1–4. The
+> first real connector, `google_sheets` (`internal/adapter/googlesheets`,
+> [`docs/06-sheets-adapter.md`](06-sheets-adapter.md)), is also live: allowlisted
+> Sheets + Drive reads, a registered `connector.Checker`, and dashboard pages
+> to mint/revoke MCP keys (`/mcp-keys`) and configure the connector
+> (`/connectors`, `/connectors/:id/google-sheets`). **Not built**, with the
+> trigger that would change that: any write tool (`sheets_append_row`, …),
+> the LINE adapter, an OAuth consent flow in the dashboard (onboarding is a
+> manual credential paste today), OAuth 2.1 / dynamic client registration for
+> Claude Desktop's connector UI, per-key tool scoping in the mint-key UI, and
+> MCP-specific plan limits (`max_mcp_calls_per_month`) — see
+> `docs/07-sheets-adapter-plan.md` §3 "Out of scope" and §9 below for the
+> full list. See "Suggested phases" for the phase-by-phase breakdown.
 > The product pivot: the Sapanjai (HeartBridge) platform core becomes a **Managed MCP Gateway** — per-org, permission-scoped [Model Context Protocol](https://modelcontextprotocol.io) endpoints that let AI agents (Claude, Cursor, …) reach customer data sources, starting with Thai accounting/ERP systems.
 > Everything below was validated by the spike in [`spikes/mcp-gateway/`](../spikes/mcp-gateway/) — its own Go module (`github.com/sapanjai/spikes/mcp-gateway`), not built or linted by `make`/CI. Its [`docs/FINDINGS.md`](../spikes/mcp-gateway/docs/FINDINGS.md) holds the full verification transcript and client-registration walkthrough; this document holds what the backend needs to know.
 
@@ -100,35 +113,57 @@ no code path where a model-supplied argument can widen tenant scope. The spike's
 `TestTenantIsolation` confirms a valid invoice id from org A returns "not found"
 for org B.
 
-## What this repo needs to add
+## What this repo added
 
-Additive-forward, per the schema ground rule.
+This section described a plan; here is what actually landed, per
+`docs/07-sheets-adapter-plan.md` steps 1–4, and where it differs.
 
-- **`mcp_api_keys`** — `(id, organization_id, user_id, name, key_hash,
-  last_used_at, expires_at, revoked_at)`. Hash the key; reuse the existing Redis
-  blacklist pattern for instant revocation.
-- **`internal/module/mcp`** — the usual handler → service → queries shape. The
-  handler is unusual only in delegating to the SDK's `StreamableHTTPHandler`
-  rather than returning JSON itself; the service owns the tool catalog and the
-  permission filter.
-- **`RequireMCPKey` middleware** — resolves an API key to
-  `(userID, orgID, role, actions)`: the same tuple `RequireOrg` already builds,
-  from a different credential.
-- **New permission actions in the seed** — `invoice:read`, `invoice:write`, and
-  whatever each connector adds. Ordinary `permissions` rows; the `rbac` module
-  needs no code change.
-- **Audit actions** — `mcp.session.opened`, `mcp.tool.called`, `mcp.tool.denied`,
-  written best-effort from the enforcement middleware. `tools/call` is the
-  natural auditable unit. This is a **product feature, not overhead**: "every
-  action your AI agent took against your accounting system, with the permission
-  that allowed it" is the compliance story the product is selling.
-- **Plan limits** — `plans.max_members` already establishes the pattern; add
-  `max_mcp_calls_per_month` / `max_connectors`, checked in the same middleware
-  that checks permissions.
-- **`docs/02-api-contract.md`** — gets an MCP section when the module lands. It
-  is a JSON-RPC envelope rather than REST, so it needs its own section shape.
-  *Deliberately not added yet* — the contract is the source of truth for routes
-  that exist.
+- **`mcp_api_keys`** (migration `00008`) — `(id, organization_id, user_id,
+  name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at)`.
+  One column beyond the original plan: `scopes text[]` (nullable — `NULL`
+  means "whatever the creator's live RBAC grant allows," re-resolved every
+  request; non-`NULL` narrows it, never widens it). Hashed with SHA-256, not
+  reused-Redis-blacklist — a PAT is long-lived by design, so instant Redis
+  revocation was deliberately dropped in favour of one indexed DB read per
+  call (`docs/07` §1 Decision 1); revisit only under measured load.
+  `internal/module/mcpkey` owns mint/list/revoke behind `/mcp-keys`, with a
+  dashboard page at `/mcp-keys` (step 10) to use it without curl.
+- **`internal/module/mcp`** — handler → service → catalog shape, mounting the
+  Go MCP SDK's `StreamableHTTPHandler` (stateless JSON) at
+  `POST /mcp/:connectorId`. The service owns the tool catalog and the
+  permission filter, exactly as planned.
+- **`RequireMCPKey` middleware** (`internal/middleware/mcpkey.go`) — resolves
+  a bearer PAT to `(userID, orgID, principal)` via `rbac.Service.Authorize`
+  intersected with the key's `scopes`. One wrinkle the plan didn't
+  anticipate: `internal/middleware` cannot import `internal/module/rbac`
+  (every handler already imports `middleware`, which would cycle), so the
+  principal resolver is injected from `server.go` as a
+  `func(...) (any, error)` closure with a type assertion on the other side —
+  contained, documented in the code, worth revisiting if a third caller ever
+  needs the same shape.
+- **New permission actions** — not `invoice:read`/`invoice:write` (those were
+  spike placeholders); the real ones seeded for the shipped connector are
+  `sheets:read` and `drive:read` (`internal/module/mcp/tools_sheets.go`,
+  `tools_drive.go`), plus `mcpkey:{read,write,delete}` for the PAT routes
+  themselves. `sheets:write` is reserved in `docs/06-sheets-adapter.md` §5
+  but nothing grants it yet — no write tool exists.
+- **Audit actions** — `mcp.session.started`, `mcp.tool.called`,
+  `mcp.tool.denied`, `mcp.ratelimit.hit`, and one not in the original plan,
+  `mcp.file.downloaded` (written by the signed-file-link download route,
+  `GET /mcp/files/:connectorId/:fileId`) — all in
+  `internal/module/auditlog/service.go`, written best-effort from the
+  gateway's enforcement path exactly as designed.
+- **Rate limiting** — `internal/infra/redis/ratelimit.go`, a Lua token-bucket
+  script keyed `mcp:ratelimit:<connectorId>` (`MCP_RATE_LIMIT_PER_MIN`,
+  default 60/min), charged per upstream page fetched by `sheets_query_rows`'s
+  scan loop and at a floor of 1 unit per `tools/call` otherwise. Not in the
+  original plan's list, but load-bearing per `docs/06-sheets-adapter.md` §6.
+- **Plan limits** — **not built.** `max_mcp_calls_per_month` /
+  `max_connectors` were judged not load-bearing for the MVP (the
+  per-connector rate limiter covers the quota-exhaustion risk that actually
+  threatens it); see `docs/07-sheets-adapter-plan.md` §3 "Out of scope."
+- **`docs/02-api-contract.md`** — has its MCP keys and MCP gateway sections
+  now (`docs/07` step 2 and step 3 onward keep it current per tool added).
 
 ## Client integration notes
 
@@ -157,13 +192,15 @@ spike's `docs/FINDINGS.md`.
 
 ## Open decisions
 
-Both want settling before Phase 1 code, since they shape the schema.
+Both resolved — see `docs/07-sheets-adapter-plan.md` §1 Decisions 1 and 2 for
+the full reasoning the owner signed off on 2026-08-18.
 
-1. **Credential + org binding.** Recommend org-scoped API keys (option 1 above).
-2. **OAuth or static bearer keys.** Recommend **static keys first** — ship, get
-   design partners onto Claude Code / Cursor — and **OAuth second**, when
-   Desktop's connector UI becomes a real acquisition channel. Do not let OAuth
-   block Phase 1.
+1. ~~**Credential + org binding.**~~ **Resolved: org-scoped API keys** (option
+   1 above), shipped as `internal/module/mcpkey`'s `mcp_api_keys` table.
+2. ~~**OAuth or static bearer keys.**~~ **Resolved: static keys** (PATs) —
+   shipped. OAuth is still second, and still not started (Phase 4 below);
+   nothing has changed the trigger condition (Claude Desktop's connector UI
+   becoming a real acquisition channel).
 
 ## Suggested phases
 
@@ -172,24 +209,42 @@ Standalone MCP server, dummy invoice tools, RBAC-filtered tool surface, both
 transports registered and confirmed connected in Claude Code. Done; see
 [`spikes/mcp-gateway/`](../spikes/mcp-gateway/).
 
-### Phase 1 — Gateway skeleton
-`mcp_api_keys` migration + sqlc queries. `RequireMCPKey`. `internal/module/mcp`
-mounting the SDK handler at `POST /mcp` in stateless mode. Port the spike's
-catalog + two-layer enforcement, calling the **real** `rbac.Service.HasPermission`
-rather than the spike's port. Audit actions. Seed the new permission actions.
-Still serving mock data — the goal is the authorization path in production shape.
+### Phase 1 — Gateway skeleton ✅
+Shipped. `mcp_api_keys` migration (`00008`) + sqlc queries, `RequireMCPKey`,
+`internal/module/mcp` mounting the SDK handler at `POST /mcp/:connectorId` in
+stateless mode (the path carries `:connectorId`, one refinement past this
+doc's original `POST /mcp` — see "The org comes from" below, unchanged: the
+org is still bound to the key, not the path). The spike's catalog + two-layer
+enforcement was ported calling the real `rbac.Service.Authorize` (not
+`HasPermission` directly — see "What this repo added" above for why). Audit
+actions and the rate limiter both landed in this phase too. Built and
+verified in `docs/07-sheets-adapter-plan.md` steps 1–4; step 3 in particular
+retired risk 1 below (the SDK mounts cleanly inside Echo).
 
-### Phase 2 — First real connector
-One Thai accounting system end-to-end. The generic skeleton (schema, envelope
-encryption, RBAC-gated CRUD, the `Checker` interface) is done — see the status
-note above — so what's left is the actual work: per-tenant upstream
-authentication, mapping the accounting system's data model onto stable tool
-schemas, implementing a `connector.Checker` for it, and absorbing its rate
-limits and outages.
+### Phase 2 — First real connector ✅ (read-only)
+One connector end-to-end: `google_sheets`, not a Thai accounting system —
+the owner redirected to Google Sheets/Drive first (`docs/06-sheets-adapter.md`).
+Per-tenant OAuth (manual credential paste, `docs/07` §1 Decision 2), all six
+spec'd read tools (`sheets_list_spreadsheets`, `sheets_describe_spreadsheet`,
+`sheets_query_rows`, `sheets_read_range`, `drive_list_folder`,
+`drive_get_file`), a registered `googlesheets.Checker`, and the connector's
+own rate-limit/outage handling are all live (`docs/07` steps 5–9). **Not
+done**: write tools (`docs/06` §9, `docs/07` §3) and a second connector type
+(FlowAccount, PEAK, Xero TH) — this phase is one connector deep, not the
+breadth the original phase description implied.
 
-### Phase 3 — Self-service
-Frontend pages to mint/revoke MCP keys, pick which tools a key exposes, and view
-the MCP audit trail. Plan-limit enforcement on calls and connectors.
+### Phase 3 — Self-service (partial)
+Done: dashboard pages to mint/revoke MCP keys (`/mcp-keys`, `docs/07` step
+10) and to configure the `google_sheets` connector including its allowlist
+(`/connectors`, `/connectors/:id/google-sheets`, step 11 — this step's scope
+grew to include the connectors list page itself, since none existed before
+it). Viewing the MCP audit trail has no dedicated page, but the existing
+`/audit-logs` page already lists every `mcp.*` action org-wide, filterable by
+action, so this is arguably covered rather than missing. **Not done**:
+picking which tools a key exposes (every key gets the creator's full
+intersected grant; there is no scope picker in the mint-key dialog — a known
+gap, see step 3's "known wart" in the archived tracker) and plan-limit
+enforcement on calls/connectors.
 
 ### Phase 4 — OAuth
 Dynamic client registration so Claude Desktop's connector UI works. Only once

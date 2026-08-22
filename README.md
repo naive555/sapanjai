@@ -57,9 +57,12 @@ apps/backend/
   internal/
     config/        env parsing + validation (fails fast at boot)
     server/        Echo wiring: middleware stack, error handler, route mounting
-    middleware/    RequireAuth, RequireOrg, RequirePermission, request ID
+    middleware/    RequireAuth, RequireOrg, RequirePermission, RequireMCPKey, request ID
     module/        one package per domain: auth, organization, rbac,
-                   auditlog, subscription, connector, health
+                   auditlog, subscription, connector, health, mcpkey, mcp
+    adapter/       per-connector-type upstream integrations (googlesheets/ — the
+                   first, Sheets + Drive; imports connector for the Checker
+                   interface, not the reverse)
     worker/        the Job interface + interval scheduler with Redis locking
     job/           registered jobs (sessioncleanup)
     infra/         database (pgx pool + sqlc-generated queries), redis
@@ -70,14 +73,16 @@ apps/backend/
 
 apps/frontend/
   app/(auth)/      login, register
-  app/(dashboard)/ organizations, members, roles, audit, subscription
+  app/(dashboard)/ organizations, members, roles, audit, subscription, mcp-keys, connectors
   app/api/[...path]/route.ts   runtime reverse proxy to the backend
   lib/api/         fetch client with single-flight 401 refresh
   lib/auth/        token store + session provider
   lib/org/         active-organization state
   components/      shadcn/ui primitives + app components
 
-docs/              source analysis, API contract, architecture, migration plan
+docs/              source analysis, API contract, architecture, migration plan,
+                   MCP gateway design (05), Google Sheets/Drive adapter spec (06)
+                   and its implementation plan (07)
 k8s/               Kubernetes manifests (api, worker, migrate Job, postgres, redis)
 compose.yaml       full stack: db, redis, api, worker, web
 ```
@@ -151,9 +156,14 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `GET /connectors/:connectorId` | perm:`connector:read` | One connector (never includes `config`) |
 | `PATCH /connectors/:connectorId` | perm:`connector:write` | Partial update; a supplied `config` is re-sealed |
 | `DELETE /connectors/:connectorId` | perm:`connector:delete` | Remove a connector |
-| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | Probe the upstream — `501` until a real adapter is registered |
+| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | Probe the upstream — `501` for `type: "generic"`, a real probe for `type: "google_sheets"` |
+| `POST /mcp-keys` | perm:`mcpkey:write` | Mint a Personal Access Token; the raw `apiKey` is returned once, here, and nowhere else |
+| `GET /mcp-keys` | perm:`mcpkey:read` | Org's MCP keys (never the hash or raw token) |
+| `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | Revoke a key (`revoked_at`) |
+| `POST /mcp/:connectorId` | MCP key² | Not REST — one Streamable HTTP MCP JSON-RPC endpoint per connector. See [MCP client setup](#mcp-client-setup) below. |
 
 ¹ reads `Authorization` if present, but does not require it.
+² `Authorization: Bearer sk_live_...` — an MCP key from `POST /mcp-keys` above, not a JWT access token.
 
 Common error responses: `401 Unauthorized` / `Token revoked`, `400 Missing x-organization-id header`, `403 Not a member of this organization`, `403 Missing permission: <action>`, `422 Validation failed`, `404 Route not found`. Service-level codes (`EMAIL_TAKEN`, `REFRESH_TOKEN_REUSE`, `LIMIT_EXCEEDED`, …) and their exact messages are tabulated in `docs/02-api-contract.md`.
 
@@ -257,7 +267,7 @@ With `make up` and `make api` running:
 make web   # cd apps/frontend && pnpm dev — Next.js on :4000
 ```
 
-`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Organizations, Members, Roles, Audit Logs, Subscription) talks to the live API.
+`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Organizations, Members, Roles, Audit Logs, Subscription, MCP keys, Connectors) talks to the live API. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
 
 **Same-origin only.** The browser never calls the Go API directly — it calls `/api/*` on the Next.js origin, and `app/api/[...path]/route.ts` proxies to `BACKEND_URL`. This is a Route Handler rather than a `next.config.ts` `rewrites()` entry on purpose: `next.config.ts` resolves once at build time, so a rewrite destination gets baked into the image, whereas the handler reads `process.env.BACKEND_URL` fresh on every request. The same production image therefore works in dev (`http://localhost:3000`) and in compose (`http://api:3000`) unchanged. A consequence worth knowing: **the backend has no CORS middleware and needs none.**
 
@@ -274,6 +284,36 @@ pnpm lint                # eslint
 ```
 
 These aren't wired into the root Makefile — run them from `apps/frontend/`. See [`apps/frontend/README.md`](apps/frontend/README.md) for the full breakdown.
+
+## MCP client setup
+
+The platform doubles as a **Managed MCP Gateway**: once a `google_sheets` connector is configured, an AI agent (Claude Code, Claude Desktop's HTTP path, Cursor, ...) can read a customer's spreadsheets and Drive files through the [Model Context Protocol](https://modelcontextprotocol.io), scoped by the same RBAC permissions as everything else here. Design notes: [`docs/05-mcp-gateway.md`](docs/05-mcp-gateway.md) (architecture) and [`docs/06-sheets-adapter.md`](docs/06-sheets-adapter.md) (the adapter spec). This walkthrough is everything needed to go from zero to a connected client using only this README.
+
+**1. What you need from Google first** — there is no OAuth consent flow in the dashboard yet (onboarding is a manual credential paste for the MVP), so a customer supplies their own:
+
+- A Google Cloud project with the **Sheets API** and **Drive API** enabled.
+- An **OAuth 2.0 client ID** (Desktop app type is simplest) — gives you a `client_id` and `client_secret`.
+- A **refresh token** for that client, scoped to `https://www.googleapis.com/auth/spreadsheets.readonly` and `https://www.googleapis.com/auth/drive.readonly` — obtained by running the OAuth consent screen once yourself (e.g. via [Google OAuth Playground](https://developers.google.com/oauthplayground) with your own client id/secret, or a short local script) and keeping the resulting `refresh_token`. A project left in **testing mode** (unverified, under 100 users) works fine for this — `spreadsheets.readonly`/`drive.readonly` are sensitive scopes and full verification is weeks of calendar time outside this project's control.
+- The **spreadsheet and/or Drive folder ids** you want the connector to be able to read (from each item's URL). This allowlist is enforced on every call regardless of what else the OAuth token can reach.
+
+**2. Create an org and mint an MCP key** — register/log in at [`localhost:4000`](http://localhost:4000), create an organization if you don't have one, then open **MCP keys** (`/mcp-keys`) → **Create key**. The raw key (`sk_live_...`) is shown exactly once — copy it now, it cannot be recovered later.
+
+**3. Create the connector** — open **Connectors** (`/connectors`) → create one with type `google_sheets`, then fill in its dedicated form (`/connectors/:id/google-sheets`) with the `client_id`/`client_secret`/`refresh_token` from step 1 and the spreadsheet/folder ids to allowlist. The config is write-only: once saved, no endpoint or page ever shows it back.
+
+**4. Run the health check** — from the connector's row, run **Health check**. It refreshes the OAuth token and reads metadata for the first allowlisted spreadsheet (or lists the first allowlisted folder if no spreadsheet is allowlisted); success flips the connector to `active`. A failure flips it to `error` without ever surfacing the underlying probe error (it may contain credential-shaped detail) — recheck the pasted credentials and the allowlist.
+
+**5. Point an MCP client at it.** The endpoint is `POST /mcp/:connectorId`, Streamable HTTP, stateless JSON — `Content-Type: application/json` and `Accept: application/json, text/event-stream` are both required on every request (the SDK rejects a POST missing either), and the credential is the MCP key from step 2, **not** a JWT access token:
+
+```bash
+claude mcp add sapanjai --scope local --transport http \
+  http://localhost:3000/mcp/<connectorId> \
+  --header "Authorization: Bearer sk_live_..."
+claude mcp list   # -> sapanjai: ... - ✔ Connected
+```
+
+(`--header` is variadic and swallows anything after it, so the URL must come *before* `--header` — a real gotcha hit during development.) `claude mcp list` should show the connection, and asking the agent to list its available tools should surface `sheets_list_spreadsheets`, `sheets_describe_spreadsheet`, `sheets_query_rows`, `sheets_read_range`, `drive_list_folder`, and `drive_get_file` — filtered to whatever `sheets:read`/`drive:read` the key's creator actually holds. A tool call against a spreadsheet outside the connector's allowlist is rejected every time, even if the underlying Google account could otherwise reach it.
+
+**What's not here yet:** write tools (append/update a sheet, upload to Drive), a LINE adapter, an OAuth consent flow in the dashboard (hence step 1's manual paste), and OAuth 2.1 / dynamic client registration for Claude Desktop's own connector-picker UI — see `docs/07-sheets-adapter-plan.md` §3 "Out of scope" for the full list. This walkthrough has been verified against the code and its tests but **not** re-run end to end against a real Google account as part of this documentation pass — treat step 1 onward as the intended path, not a confirmed transcript.
 
 ## Background worker
 
@@ -308,7 +348,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
-| `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) step 4. Charges 1 unit per `tools/call` today; a real adapter charges per upstream request instead |
+| `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) step 4. Most `google_sheets` tools charge a floor of 1 unit per `tools/call`; `sheets_query_rows`' bounded scan charges 1 unit per page fetched from the upstream API instead, so a single call can cost more than 1 |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |
 | `WORKER_JOB_TIMEOUT` | `5m` | per-run timeout, any job |
 | `SESSION_CLEANUP_INTERVAL` | `1h` | |
@@ -400,5 +440,8 @@ make swagger         # regenerate the OpenAPI spec (requires swag)
 | [`docs/02-api-contract.md`](docs/02-api-contract.md) | **Source of truth** for routes, headers, status codes, error messages |
 | [`docs/03-target-architecture.md`](docs/03-target-architecture.md) | Package layout, design decisions, resolved deviations |
 | [`docs/04-migration-plan.md`](docs/04-migration-plan.md) | Phased delivery plan |
+| [`docs/05-mcp-gateway.md`](docs/05-mcp-gateway.md) | Managed MCP Gateway architecture, phases, and shipped-vs-not status |
+| [`docs/06-sheets-adapter.md`](docs/06-sheets-adapter.md) | `google_sheets` connector spec: tool catalog, RBAC mapping, guardrails |
+| [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) | The 12-step implementation plan behind the adapter, with its decisions |
 | [`apps/frontend/README.md`](apps/frontend/README.md) | Frontend proxy, token model, page map |
 | [`k8s/README.md`](k8s/README.md) | Manifest layout and apply instructions |

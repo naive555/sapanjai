@@ -121,16 +121,48 @@ Sheets has **no schema** — an agent has no way to know what a tab is called or
   "response_format": "markdown | json, default markdown"
 }
 
-// output
+// output — no "total" field: see "Bounded scan, not a count" below
 {
-  "total": 340, "count": 50, "offset": 0,
+  "count": 50, "offset": 0,
   "has_more": true, "next_offset": 50,
+  "scanned_rows": 5000, "scan_complete": false,
   "rows": [{"contract_id": "C-0012", "status": "draft"}]
 }
 ```
 
 **Supported operators:** `eq`, `neq`, `contains`, `gt`, `lt`, `gte`, `lte`, `in`
 **Not supported:** free-form expressions, formulas, raw query strings — deliberately (see §6)
+
+#### Bounded scan, not a count
+
+The Sheets API has no server-side filter and no count endpoint, so an exact
+count of *every* matching row would mean evaluating the filter over the
+whole sheet — either unbounded memory or hundreds of upstream calls per call,
+which §6's "never load a whole sheet into memory" rule forbids at this
+spec's own target scale. An earlier draft of this section showed an
+unconditional `"total": 340` in the output above; that was dropped
+(`docs/07-sheets-adapter-plan.md` §1 Decision 4, confirmed by the owner
+2026-08-18) in favour of the honest, bounded shape actually implemented in
+`internal/module/mcp/tools_sheets.go` (`queryRowsOutput`) and
+`internal/adapter/googlesheets/query.go`:
+
+- `scanned_rows` — how many of the sheet's data rows this call actually
+  evaluated.
+- `scan_complete` — `true` only if the scan reached the sheet's real end
+  within this call's budget (a bounded page-fetch loop: pages of up to 5,000
+  rows via `Values.Get`, stopping at whichever comes first among enough
+  matches, the sheet's real end, a 50,000-row scan budget, or an exhausted
+  rate-limit bucket).
+- `total` — present **only when `scan_complete` is `true`**, in which case it
+  is exact and free. When `scan_complete` is `false`, there is no `total`
+  field at all, and both the tool description and the result text tell the
+  agent that `count`/`scanned_rows` are a lower bound, not a final answer —
+  narrow the filter or page forward with `next_offset` rather than assume
+  nothing else matches.
+
+See `docs/02-api-contract.md`'s `sheets_query_rows` entry for the full
+scan-loop description and `internal/adapter/googlesheets/query_test.go` for
+the tests proving the no-`total`-without-`scan_complete` invariant.
 
 ### 4.3 `drive_get_file`
 
@@ -235,7 +267,39 @@ Write tools need more safety thinking first (confirmation flow, dry-run, rollbac
 
 ## 10. Questions still to be decided
 
-1. **MCP client auth** — go with the PAT (option A)? This implies a new migration + module.
-2. **OAuth onboarding flow** — how will customers authorize Google? This needs an OAuth consent page in the Next.js dashboard (work that is not in the current roadmap).
-3. **Header row detection** — always assume the first row is the header, or let the config specify it? Real customer spreadsheets may have a title row above it.
-4. **Multi-tab join** — the agent will definitely ask questions spanning tabs (contracts ↔ partners). Do we let the agent call several tools and join the results itself, or build a workflow tool for it? (MCP best practice says start with coverage before workflow — **proposal: let the agent join it itself** in the MVP.)
+All four resolved by the owner 2026-08-18 (`docs/07-sheets-adapter-plan.md`
+§1 Decisions 1–4); this section is kept as a record of what was asked and
+where each answer actually lives in code, not as an open question anymore.
+
+1. **MCP client auth — resolved: Personal Access Tokens (option A).**
+   `docs/07-sheets-adapter-plan.md` §1 Decision 1. One migration
+   (`apps/backend/migrations/00008_mcp_api_keys.sql`) and one module,
+   `internal/module/mcpkey` (`mcp_api_keys` table, `sk_live_...` tokens
+   hashed with SHA-256, `scopes text[]` intersected with the creator's live
+   RBAC grant on every request). `POST /mcp-keys` returns the raw token
+   exactly once; `GET`/`DELETE /mcp-keys` list/revoke. A dashboard page at
+   `/mcp-keys` mints and revokes keys without curl
+   (`apps/frontend/app/(dashboard)/mcp-keys/page.tsx`).
+2. **OAuth onboarding flow — resolved: manual credential paste for the MVP.**
+   `docs/07-sheets-adapter-plan.md` §1 Decision 2. No OAuth consent page
+   exists; a customer's `client_id`/`client_secret`/`refresh_token` are
+   pasted into `POST /connectors`' `config` field (already
+   envelope-encrypted, already never echoed back), via the
+   `/connectors/:id/google-sheets` form
+   (`apps/frontend/components/connectors/google-sheets-form.tsx`). Onboarding
+   is a support conversation, not self-service, until a consent flow lands —
+   see `docs/07` §3 "Out of scope" for its trigger condition.
+3. **Header row detection — resolved: configurable per spreadsheet, row 1
+   default.** Resolved in `docs/07-sheets-adapter-plan.md` step 5. The
+   connector config's `scope.header_rows` is an optional
+   `{"<spreadsheet_id>": <row>}` map (§3 above); `Config.HeaderRow` in
+   `internal/adapter/googlesheets/config.go` returns the override when one
+   exists, otherwise row 1. Verified against the code: `HeaderRow` reads
+   `Scope.HeaderRows[spreadsheetID]`, falling back to `1` when absent or
+   `<= 0`.
+4. **Multi-tab join — resolved: the agent joins results itself in the MVP.**
+   No workflow/join tool was built — the catalog is exactly the six read
+   tools in §4 above, calling `sheets_describe_spreadsheet` then one or more
+   `sheets_query_rows` and combining results is left to the agent. Recorded
+   as deliberately out of scope in `docs/07-sheets-adapter-plan.md` §3, with
+   its trigger to revisit: "if transcripts show agents failing at it."
