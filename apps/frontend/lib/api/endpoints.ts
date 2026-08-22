@@ -156,6 +156,60 @@ export function assignSubscription(planId: string) {
   return apiRequest<SuccessResponse>("/subscription/assign", { method: "POST", body: { planId } });
 }
 
+// ---- Connectors ----
+
+// The connector row as every /connectors endpoint returns it. Deliberately
+// has no `config` field and never will — the decrypted config (an upstream
+// credential) never leaves the backend's connector.Service, so there is
+// nothing here for the UI to render back into a form. See
+// components/connectors/google-sheets-form.tsx.
+export interface ConnectorResponse {
+  id: string;
+  organizationId: string;
+  name: string;
+  type: string;
+  status: string;
+  lastHealthCheckAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listConnectors() {
+  return apiRequest<ConnectorResponse[]>("/connectors");
+}
+
+export function getConnector(connectorId: string) {
+  return apiRequest<ConnectorResponse>(`/connectors/${connectorId}`);
+}
+
+// config is required — a connector cannot exist without its credentials, so
+// there is no "create empty, configure later" path (docs/02-api-contract.md).
+export function createConnector(input: { name: string; type: string; config: Record<string, unknown> }) {
+  return apiRequest<ConnectorResponse>("/connectors", { method: "POST", body: input });
+}
+
+// A supplied `config` is re-sealed *whole*, not merged with what's stored —
+// callers must always submit the complete config object, never a partial one.
+export function updateConnector(
+  connectorId: string,
+  input: { name?: string; status?: string; config?: Record<string, unknown> },
+) {
+  return apiRequest<ConnectorResponse>(`/connectors/${connectorId}`, { method: "PATCH", body: input });
+}
+
+export function deleteConnector(connectorId: string) {
+  return apiRequest<SuccessResponse>(`/connectors/${connectorId}`, { method: "DELETE" });
+}
+
+// For type "generic" this always rejects with 501 HEALTH_CHECK_UNSUPPORTED
+// (no checker registered) and leaves the row untouched. For "google_sheets"
+// it's HTTP 200 either way — success or failure both write status/
+// lastHealthCheckAt and return the updated row; the probe's underlying error
+// is never returned, so callers cannot show a reason beyond "check failed".
+export function healthCheckConnector(connectorId: string) {
+  return apiRequest<ConnectorResponse>(`/connectors/${connectorId}/health-check`, { method: "POST" });
+}
+
 // ---- MCP keys ----
 
 // One row as GET /mcp-keys returns it. Never carries the raw token or its

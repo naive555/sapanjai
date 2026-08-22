@@ -25,11 +25,12 @@ function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <McpKeysPage />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 // Scans a Storage object for a substring across both keys and values, since
@@ -126,7 +127,7 @@ describe("McpKeysPage", () => {
     };
     createMcpKeyMock.mockResolvedValue(created);
 
-    renderPage();
+    const queryClient = renderPage();
 
     await screen.findByText(/no mcp keys yet/i);
 
@@ -146,6 +147,13 @@ describe("McpKeysPage", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("sk_live_abcdef0123456789")).not.toBeInTheDocument();
+    });
+    // Not just gone from the DOM: useMutation caches its last `data` (the
+    // whole create response, raw token included), and that entry outlives
+    // the hook's own reset() unless the cache drops it too.
+    await waitFor(() => {
+      const cached = JSON.stringify(queryClient.getMutationCache().getAll().map((m) => m.state));
+      expect(cached).not.toContain("sk_live_abcdef0123456789");
     });
     expect(storageContains(localStorage, "sk_live_abcdef0123456789")).toBe(false);
     expect(storageContains(sessionStorage, "sk_live_abcdef0123456789")).toBe(false);

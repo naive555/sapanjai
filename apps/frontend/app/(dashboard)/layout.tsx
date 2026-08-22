@@ -29,6 +29,7 @@ const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; 
     items: [
       { href: "/members", label: "Members" },
       { href: "/roles", label: "Roles" },
+      { href: "/connectors", label: "Connectors" },
       { href: "/mcp-keys", label: "MCP keys" },
       { href: "/audit", label: "Audit log" },
       { href: "/subscription", label: "Subscription" },

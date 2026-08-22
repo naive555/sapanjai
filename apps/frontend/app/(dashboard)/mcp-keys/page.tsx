@@ -125,6 +125,11 @@ export default function McpKeysPage() {
   });
 
   const createMutation = useMutation({
+    // The response `data` is the one and only copy of the raw key, so the
+    // cache entry has to go when dismissReveal resets the mutation —
+    // reset() alone just detaches the hook and leaves the entry sitting in
+    // the MutationCache for gcTime (5 minutes by default).
+    gcTime: 0,
     mutationFn: (values: CreateKeyValues) =>
       createMcpKey({
         name: values.name,
