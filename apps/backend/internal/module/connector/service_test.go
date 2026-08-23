@@ -632,7 +632,7 @@ func TestService_CheckHealth_DecryptFailurePropagates(t *testing.T) {
 	}
 }
 
-// ---- OpenConfig (docs/07-sheets-adapter-plan.md step 6: the MCP gateway's
+// ---- OpenConfig (docs/07-sheets-adapter-decisions.md step 6: the MCP gateway's
 // seam onto an already-fetched row's decrypted config) ----
 
 func TestService_OpenConfig_DecryptsAndParses(t *testing.T) {

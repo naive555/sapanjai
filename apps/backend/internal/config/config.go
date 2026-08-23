@@ -59,7 +59,7 @@ type Config struct {
 	// per minute (internal/infra/redis.RateLimiter, key
 	// "mcp:ratelimit:<connectorId>"), enforced in internal/module/mcp
 	// before a tools/call is dispatched. See
-	// docs/07-sheets-adapter-plan.md step 4.
+	// docs/07-sheets-adapter-decisions.md step 4.
 	MCPRateLimitPerMin int
 }
 

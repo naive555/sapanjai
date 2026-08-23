@@ -127,7 +127,7 @@ Org-scoped upstream connections (DB creds, API keys, ...) for the Managed MCP
 Gateway product (`docs/05-mcp-gateway.md`). `type` accepts `"generic"` (the
 skeleton placeholder — no adapter, health-check always 501) and
 `"google_sheets"` (the first real adapter, `internal/adapter/googlesheets`,
-`docs/07-sheets-adapter-plan.md` step 5) — more per-type integrations
+`docs/07-sheets-adapter-decisions.md` step 5) — more per-type integrations
 (FlowAccount, PEAK, ...) land the same way.
 
 | Method/Path | Guard | Body | Behavior |
@@ -160,7 +160,7 @@ rejected. At least one of `spreadsheet_ids` / `drive_folder_ids` must be
 non-empty. `header_rows` is an optional per-spreadsheet override for the
 header row (default: row 1) — real customer sheets often carry a title
 banner above the real header. Onboarding is manual credential paste for the
-MVP (`docs/07-sheets-adapter-plan.md` §1 Decision 2) — no OAuth consent flow
+MVP (`docs/07-sheets-adapter-decisions.md` §1 Decision 2) — no OAuth consent flow
 in the dashboard yet.
 
 Response shape (all endpoints except `DELETE`, which returns `{ success: true }`):
@@ -177,7 +177,7 @@ DTO or log line carries it.
 ### MCP keys (`/mcp-keys`)
 
 Org-scoped, revocable Personal Access Tokens (PATs) that MCP clients present
-as a bearer credential (`docs/07-sheets-adapter-plan.md` Decision 1).
+as a bearer credential (`docs/07-sheets-adapter-decisions.md` Decision 1).
 `scopes` is enforced by the MCP gateway below: it intersects a key's
 (nullable) `scopes` with the creator's live RBAC grant, re-resolved on every
 request — a key can only ever narrow that grant, never widen it.
@@ -201,7 +201,7 @@ Not a REST route — one Streamable HTTP MCP endpoint per connector, speaking
 the [Model Context Protocol](https://modelcontextprotocol.io) JSON-RPC 2.0
 envelope over a single `POST`. This section describes the envelope and
 gateway-specific behavior rather than a request/response table, per
-`docs/05-mcp-gateway.md`. Implemented in `docs/07-sheets-adapter-plan.md`
+`docs/05-mcp-gateway.md`. Implemented in `docs/07-sheets-adapter-decisions.md`
 step 3, which proves the full authorization path (PAT → org → connector →
 RBAC-filtered tool list → `tools/call` → audit) against one trivial tool
 before any Google API code exists.

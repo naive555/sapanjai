@@ -86,7 +86,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		return nil, fmt.Errorf("connector master key: %w", err)
 	}
 	// googlesheets.NewChecker is the first real health-check adapter
-	// (docs/07-sheets-adapter-plan.md step 5); every other connector type
+	// (docs/07-sheets-adapter-decisions.md step 5); every other connector type
 	// still resolves to 501 HEALTH_CHECK_UNSUPPORTED with no Checker
 	// registered.
 	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(googlesheets.NewChecker()), log)
@@ -95,7 +95,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	mcpKeySvc := mcpkey.NewService(store, log)
 	mcpkey.NewHandler(mcpKeySvc).Register(e.Group("/mcp-keys"), guards)
 
-	// The MCP gateway (docs/07-sheets-adapter-plan.md step 3) uses a
+	// The MCP gateway (docs/07-sheets-adapter-decisions.md step 3) uses a
 	// different credential than every other route: a long-lived PAT
 	// (mcp_api_keys), not the JWT pair RequireAuth/RequireOrg/
 	// RequirePermission verify. RequireMCPKey re-resolves the caller's live

@@ -8,7 +8,7 @@
 > - [ ] Step 3 *(optional)* — `sapanjai_whoami`
 >
 > **What this is.** A re-cut of
-> [`docs/07-sheets-adapter-plan.md`](../../docs/07-sheets-adapter-plan.md)
+> [`docs/07-sheets-adapter-decisions.md`](../../docs/07-sheets-adapter-decisions.md)
 > steps 1–3, written after verifying the repo at `d11c5d1`. It does not
 > contradict `docs/07`; it re-slices the same work along a connector-agnostic
 > boundary so the gateway core can be finished while the choice of *next*

@@ -296,7 +296,7 @@ func TestService_Revoke_ErrorPropagates(t *testing.T) {
 
 // ---- HashToken sanity (belt-and-braces on the documented deviation) ----
 //
-// Exported in step 3 (docs/07-sheets-adapter-plan.md) so
+// Exported in step 3 (docs/07-sheets-adapter-decisions.md) so
 // internal/middleware.RequireMCPKey can hash a presented bearer token with
 // the exact same function used at mint time; this test still exercises it
 // through the package's public surface.

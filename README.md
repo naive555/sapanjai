@@ -313,7 +313,7 @@ claude mcp list   # -> sapanjai: ... - ✔ Connected
 
 (`--header` is variadic and swallows anything after it, so the URL must come *before* `--header` — a real gotcha hit during development.) `claude mcp list` should show the connection, and asking the agent to list its available tools should surface `sheets_list_spreadsheets`, `sheets_describe_spreadsheet`, `sheets_query_rows`, `sheets_read_range`, `drive_list_folder`, and `drive_get_file` — filtered to whatever `sheets:read`/`drive:read` the key's creator actually holds. A tool call against a spreadsheet outside the connector's allowlist is rejected every time, even if the underlying Google account could otherwise reach it.
 
-**What's not here yet:** write tools (append/update a sheet, upload to Drive), a LINE adapter, an OAuth consent flow in the dashboard (hence step 1's manual paste), and OAuth 2.1 / dynamic client registration for Claude Desktop's own connector-picker UI — see `docs/07-sheets-adapter-plan.md` §3 "Out of scope" for the full list. This walkthrough has been verified against the code and its tests but **not** re-run end to end against a real Google account as part of this documentation pass — treat step 1 onward as the intended path, not a confirmed transcript.
+**What's not here yet:** write tools (append/update a sheet, upload to Drive), a LINE adapter, an OAuth consent flow in the dashboard (hence step 1's manual paste), and OAuth 2.1 / dynamic client registration for Claude Desktop's own connector-picker UI — see `docs/07-sheets-adapter-decisions.md` §3 "Out of scope" for the full list. This walkthrough has been verified against the code and its tests but **not** re-run end to end against a real Google account as part of this documentation pass — treat step 1 onward as the intended path, not a confirmed transcript.
 
 ## Background worker
 
@@ -348,7 +348,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
-| `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) step 4. Most `google_sheets` tools charge a floor of 1 unit per `tools/call`; `sheets_query_rows`' bounded scan charges 1 unit per page fetched from the upstream API instead, so a single call can cost more than 1 |
+| `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-decisions.md`](docs/07-sheets-adapter-decisions.md) step 4. Most `google_sheets` tools charge a floor of 1 unit per `tools/call`; `sheets_query_rows`' bounded scan charges 1 unit per page fetched from the upstream API instead, so a single call can cost more than 1 |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |
 | `WORKER_JOB_TIMEOUT` | `5m` | per-run timeout, any job |
 | `SESSION_CLEANUP_INTERVAL` | `1h` | |
@@ -442,6 +442,6 @@ make swagger         # regenerate the OpenAPI spec (requires swag)
 | [`docs/04-migration-plan.md`](docs/04-migration-plan.md) | Phased delivery plan |
 | [`docs/05-mcp-gateway.md`](docs/05-mcp-gateway.md) | Managed MCP Gateway architecture, phases, and shipped-vs-not status |
 | [`docs/06-sheets-adapter.md`](docs/06-sheets-adapter.md) | `google_sheets` connector spec: tool catalog, RBAC mapping, guardrails |
-| [`docs/07-sheets-adapter-plan.md`](docs/07-sheets-adapter-plan.md) | The 12-step implementation plan behind the adapter, with its decisions |
+| [`docs/07-sheets-adapter-decisions.md`](docs/07-sheets-adapter-decisions.md) | Why the adapter is shaped the way it is — the four decisions, what was left unbuilt and its trigger, and the risks still open. The 12 build steps are archived in `.claude/plans/archives/2026-08-18-sheets-adapter.md` |
 | [`apps/frontend/README.md`](apps/frontend/README.md) | Frontend proxy, token model, page map |
 | [`k8s/README.md`](k8s/README.md) | Manifest layout and apply instructions |

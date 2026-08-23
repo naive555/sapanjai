@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// This file is docs/07-sheets-adapter-plan.md step 9's required unit test
+// This file is docs/07-sheets-adapter-decisions.md step 9's required unit test
 // suite. Every test name starts with TestDrive so
 // `go test ./internal/adapter/googlesheets/ -run TestDrive` selects exactly
 // this file. Only mockSheetsAPI (checker_test.go) is ever mocked here —

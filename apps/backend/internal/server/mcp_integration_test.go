@@ -43,7 +43,7 @@ func createTestConnector(t *testing.T, client *http.Client, baseURL string, org 
 }
 
 // testDriveFolderID is the Drive folder id createGoogleSheetsTestConnector
-// allowlists on every connector it creates (docs/07-sheets-adapter-plan.md
+// allowlists on every connector it creates (docs/07-sheets-adapter-decisions.md
 // step 9) — a fixed constant, not a parameter, specifically so adding it
 // never requires touching any of this helper's existing call sites. A
 // plausibly-real-shaped id, never actually reachable, exactly like the
@@ -252,7 +252,7 @@ func TestIntegration_MCP_ExpiredKey(t *testing.T) {
 
 	// The API only accepts a future expiresInDays at mint time; backdating
 	// requires a direct write, which is exactly the kind of assertion
-	// docs/07-sheets-adapter-plan.md step 3 calls for testing via SQL.
+	// docs/07-sheets-adapter-decisions.md step 3 calls for testing via SQL.
 	if _, err := store.Pool.Exec(context.Background(),
 		`UPDATE mcp_api_keys SET expires_at = now() - interval '1 hour' WHERE id = $1`, keyID); err != nil {
 		t.Fatalf("backdate expires_at: %v", err)
@@ -439,7 +439,7 @@ func TestIntegration_MCP_HappyPath(t *testing.T) {
 	})
 }
 
-// ---- rate limiting (docs/07-sheets-adapter-plan.md step 4) ----
+// ---- rate limiting (docs/07-sheets-adapter-decisions.md step 4) ----
 
 // TestIntegration_MCP_RateLimitTripsAndAudits exhausts a connector's
 // per-minute bucket and confirms the next tools/call is refused cleanly —
@@ -501,7 +501,7 @@ func TestIntegration_MCP_RateLimitTripsAndAudits(t *testing.T) {
 	})
 }
 
-// ---- Google Sheets tools (docs/07-sheets-adapter-plan.md step 6) ----
+// ---- Google Sheets tools (docs/07-sheets-adapter-decisions.md step 6) ----
 
 // TestIntegration_MCP_SheetsToolsInvisibleWithoutSheetsRead proves the
 // plan's required visibility test end to end: a member with some other
@@ -692,7 +692,7 @@ func TestIntegration_MCP_DescribeSpreadsheet_IncludeSampleRowsBounded(t *testing
 	}
 }
 
-// ---- sheets_query_rows (docs/07-sheets-adapter-plan.md step 7) ----
+// ---- sheets_query_rows (docs/07-sheets-adapter-decisions.md step 7) ----
 
 // TestIntegration_MCP_QueryRows_SpreadsheetNotAllowed mirrors
 // TestIntegration_MCP_DescribeSpreadsheet_SpreadsheetNotAllowed: the
@@ -906,7 +906,7 @@ func TestIntegration_MCP_QueryRows_InvalidFilterOperator(t *testing.T) {
 	}
 }
 
-// ---- sheets_read_range (docs/07-sheets-adapter-plan.md step 8) ----
+// ---- sheets_read_range (docs/07-sheets-adapter-decisions.md step 8) ----
 
 // TestIntegration_MCP_ReadRange_SpreadsheetNotAllowed mirrors
 // TestIntegration_MCP_QueryRows_SpreadsheetNotAllowed: the allowlist check
@@ -1049,7 +1049,7 @@ func TestIntegration_MCP_ReadRange_OverCapRejected(t *testing.T) {
 	}
 }
 
-// ---- Drive tools (docs/07-sheets-adapter-plan.md step 9) ----
+// ---- Drive tools (docs/07-sheets-adapter-decisions.md step 9) ----
 
 // TestIntegration_MCPDrive_ToolsInvisibleWithoutDriveRead mirrors
 // TestIntegration_MCP_SheetsToolsInvisibleWithoutSheetsRead: a principal
@@ -1180,7 +1180,7 @@ func TestIntegration_MCPDrive_ListFolder_FolderNotAllowed(t *testing.T) {
 	})
 }
 
-// ---- Signed download link route (docs/07-sheets-adapter-plan.md step 9) ----
+// ---- Signed download link route (docs/07-sheets-adapter-decisions.md step 9) ----
 
 // downloadFileURL builds a GET /mcp/files/:connectorId/:fileId URL with the
 // given query params, for tests that craft an invalid link by hand — none

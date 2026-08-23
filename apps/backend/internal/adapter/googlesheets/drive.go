@@ -12,7 +12,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// This file is docs/07-sheets-adapter-plan.md step 9: the Drive half of the
+// This file is docs/07-sheets-adapter-decisions.md step 9: the Drive half of the
 // adapter, drive_list_folder and drive_get_file. It shares the same
 // allowlist and OAuth machinery steps 5-8 built for Sheets — Config,
 // newClient, RateCharger, RateLimitedError — because Sheets and Drive are
@@ -237,7 +237,7 @@ func DownloadFile(ctx context.Context, ts oauth2.TokenSource, fileID string) (io
 // representation and have no "raw bytes" a Files.Get(...).Download() call
 // can return; they must be exported to a concrete format first (out of
 // scope for the read-only MVP). drive_get_file checks this before ever
-// minting a download link, per docs/07-sheets-adapter-plan.md step 9.
+// minting a download link, per docs/07-sheets-adapter-decisions.md step 9.
 const googleNativeMimePrefix = "application/vnd.google-apps."
 
 // IsGoogleNativeMimeType reports whether mime names a Google-native format.

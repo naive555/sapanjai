@@ -16,7 +16,7 @@ import (
 // requestTimeout bounds every upstream Google API call *except* a file
 // download's body read — see downloadTimeout's doc comment for why the two
 // need different budgets. Passed via option.WithHTTPClient rather than left
-// to the SDK's default (no timeout), per docs/07-sheets-adapter-plan.md
+// to the SDK's default (no timeout), per docs/07-sheets-adapter-decisions.md
 // step 5.
 const requestTimeout = 15 * time.Second
 

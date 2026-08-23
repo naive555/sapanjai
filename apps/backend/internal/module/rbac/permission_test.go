@@ -72,7 +72,7 @@ func TestPrincipal_Allows(t *testing.T) {
 
 // ---- Principal.Narrow ----
 //
-// docs/07-sheets-adapter-plan.md Decision 1: an MCP key's scopes intersect
+// docs/07-sheets-adapter-decisions.md Decision 1: an MCP key's scopes intersect
 // the live RBAC grant and can only ever narrow it, never widen it.
 
 func TestPrincipal_Narrow_NilScopesLeavesPrincipalUnchanged(t *testing.T) {
@@ -111,7 +111,7 @@ func TestPrincipal_Narrow_MemberIntersection(t *testing.T) {
 }
 
 // TestPrincipal_Narrow_OwnerBypassDoesNotSurviveScoping is the specific
-// case docs/07-sheets-adapter-plan.md step 3 calls out by name: "An owner's
+// case docs/07-sheets-adapter-decisions.md step 3 calls out by name: "An owner's
 // bypass must also be narrowed by a non-NULL scopes list, otherwise a
 // scoped key held by an owner silently grants everything."
 //

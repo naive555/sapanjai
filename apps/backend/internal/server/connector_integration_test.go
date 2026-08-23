@@ -259,7 +259,7 @@ func TestIntegration_ConnectorsInvalidType(t *testing.T) {
 // TestIntegration_ConnectorsGoogleSheetsTypeAccepted proves "google_sheets"
 // is now a recognized connector type end to end through the request
 // validator and the service's own IsValidType check
-// (docs/07-sheets-adapter-plan.md step 5) — until this step it was rejected
+// (docs/07-sheets-adapter-decisions.md step 5) — until this step it was rejected
 // exactly like "flowaccount" above. The health-check route itself is not
 // exercised here: it requires a real Google OAuth token exchange, which
 // this suite must not attempt (internal/adapter/googlesheets's own tests

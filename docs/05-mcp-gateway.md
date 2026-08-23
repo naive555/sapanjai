@@ -6,7 +6,7 @@
 > Access Tokens (`internal/module/mcpkey`, `/mcp-keys`), the RBAC-filtered
 > tool catalog, and the per-connector Redis rate limiter — is live production
 > code, built and verified end to end in
-> [`docs/07-sheets-adapter-plan.md`](07-sheets-adapter-plan.md) steps 1–4. The
+> [`docs/07-sheets-adapter-decisions.md`](07-sheets-adapter-decisions.md) steps 1–4. The
 > first real connector, `google_sheets` (`internal/adapter/googlesheets`,
 > [`docs/06-sheets-adapter.md`](06-sheets-adapter.md)), is also live: allowlisted
 > Sheets + Drive reads, a registered `connector.Checker`, and dashboard pages
@@ -17,7 +17,7 @@
 > manual credential paste today), OAuth 2.1 / dynamic client registration for
 > Claude Desktop's connector UI, per-key tool scoping in the mint-key UI, and
 > MCP-specific plan limits (`max_mcp_calls_per_month`) — see
-> `docs/07-sheets-adapter-plan.md` §3 "Out of scope" and §9 below for the
+> `docs/07-sheets-adapter-decisions.md` §3 "Out of scope" and §9 below for the
 > full list. See "Suggested phases" for the phase-by-phase breakdown.
 > The product pivot: the Sapanjai (HeartBridge) platform core becomes a **Managed MCP Gateway** — per-org, permission-scoped [Model Context Protocol](https://modelcontextprotocol.io) endpoints that let AI agents (Claude, Cursor, …) reach customer data sources, starting with Thai accounting/ERP systems.
 > Everything below was validated by the spike in [`spikes/mcp-gateway/`](../spikes/mcp-gateway/) — its own Go module (`github.com/sapanjai/spikes/mcp-gateway`), not built or linted by `make`/CI. Its [`docs/FINDINGS.md`](../spikes/mcp-gateway/docs/FINDINGS.md) holds the full verification transcript and client-registration walkthrough; this document holds what the backend needs to know.
@@ -116,7 +116,7 @@ for org B.
 ## What this repo added
 
 This section described a plan; here is what actually landed, per
-`docs/07-sheets-adapter-plan.md` steps 1–4, and where it differs.
+`docs/07-sheets-adapter-decisions.md` steps 1–4, and where it differs.
 
 - **`mcp_api_keys`** (migration `00008`) — `(id, organization_id, user_id,
   name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at)`.
@@ -161,7 +161,7 @@ This section described a plan; here is what actually landed, per
 - **Plan limits** — **not built.** `max_mcp_calls_per_month` /
   `max_connectors` were judged not load-bearing for the MVP (the
   per-connector rate limiter covers the quota-exhaustion risk that actually
-  threatens it); see `docs/07-sheets-adapter-plan.md` §3 "Out of scope."
+  threatens it); see `docs/07-sheets-adapter-decisions.md` §3 "Out of scope."
 - **`docs/02-api-contract.md`** — has its MCP keys and MCP gateway sections
   now (`docs/07` step 2 and step 3 onward keep it current per tool added).
 
@@ -192,7 +192,7 @@ spike's `docs/FINDINGS.md`.
 
 ## Open decisions
 
-Both resolved — see `docs/07-sheets-adapter-plan.md` §1 Decisions 1 and 2 for
+Both resolved — see `docs/07-sheets-adapter-decisions.md` §1 Decisions 1 and 2 for
 the full reasoning the owner signed off on 2026-08-18.
 
 1. ~~**Credential + org binding.**~~ **Resolved: org-scoped API keys** (option
@@ -218,7 +218,7 @@ org is still bound to the key, not the path). The spike's catalog + two-layer
 enforcement was ported calling the real `rbac.Service.Authorize` (not
 `HasPermission` directly — see "What this repo added" above for why). Audit
 actions and the rate limiter both landed in this phase too. Built and
-verified in `docs/07-sheets-adapter-plan.md` steps 1–4; step 3 in particular
+verified in `docs/07-sheets-adapter-decisions.md` steps 1–4; step 3 in particular
 retired risk 1 below (the SDK mounts cleanly inside Echo).
 
 ### Phase 2 — First real connector ✅ (read-only)

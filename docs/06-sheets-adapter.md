@@ -1,7 +1,12 @@
-# Sapanjai — Google Sheets/Drive Adapter Spec (v0.1 draft)
+# Sapanjai — Google Sheets/Drive Adapter Spec
 
-> Status: draft, written to be used as input for a Claude Code prompt.
-> Scope: **read-only MVP** — write tools are in §9 (not built yet).
+> **Status: built.** The read-only MVP described here shipped 2026-08-22
+> (`internal/adapter/googlesheets`); this is the maintained spec for it, not a
+> proposal. Write tools remain unbuilt — §9.
+>
+> **Decisions behind it:** [`07-sheets-adapter-decisions.md`](07-sheets-adapter-decisions.md) ·
+> **Gateway it plugs into:** [`05-mcp-gateway.md`](05-mcp-gateway.md) ·
+> **What of that gateway is connector-agnostic:** [`08-gateway-core.md`](08-gateway-core.md)
 
 ---
 
@@ -24,19 +29,31 @@ POST /mcp/:connectorId        Streamable HTTP, stateless JSON
 - Stateless JSON (no session/SSE) — easier to scale, and it fits the existing k8s deployment
 - `connectorId` sits in the path so that a single org with several Google accounts can keep separate endpoints
 
-### ⚠️ Gap that has to be decided first: how does the MCP client authenticate?
+### Client auth: Personal Access Tokens
 
-The current access token lives 15 minutes — an MCP client (Claude Desktop) has no way to refresh it on its own, and there is no browser flow.
+**Resolved — option A below.** The gateway authenticates MCP clients with
+org-scoped PATs (`mcp_api_keys`, `internal/module/mcpkey`,
+`Authorization: Bearer sk_live_...`), not with the JWT pair. Full reasoning in
+[`07-sheets-adapter-decisions.md`](07-sheets-adapter-decisions.md) §1
+Decision 1.
 
-Options:
+The problem it solves: the access token lives 15 minutes, and an MCP client
+(Claude Desktop) has no way to refresh it on its own — there is no browser flow
+at the far end. The three options weighed, kept as the record of what was
+considered:
 
 | Option                                                                                                          | Pros                                                              | Cons                                                                            |
 | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **A. Personal Access Token (PAT)** — new `api_keys` table, store the hash, `Authorization: Bearer sk_live_...` | Simplest; matches the mental model of an MCP config; revocable     | Requires a new module + migration                                               |
+| **A. Personal Access Token (PAT)** — new table, store the hash, `Authorization: Bearer sk_live_...` | Simplest; matches the mental model of an MCP config; revocable     | Requires a new module + migration                                               |
 | **B. OAuth 2.1 per the MCP spec**                                                                               | Standard; natively supported by clients                            | Far more work; requires building an authorization server                        |
 | **C. Stretch the refresh token and use it directly**                                                            | Nothing new to add                                                 | Violates the security model as designed (refresh tokens should be short-lived + rotate) — **not recommended** |
 
-**Proposal: A for the MVP** — 1 migration + 1 small module. The PAT is bound to an org + a set of permissions (a subset of the creator's role).
+B is not closed forever — it is `05-mcp-gateway.md` Phase 4, triggered by
+Claude Desktop's connector UI becoming a real acquisition channel.
+
+As built, the PAT is bound to an org and, optionally, to a subset of the
+creator's permissions (`scopes`) that is re-intersected with their live RBAC
+grant on every request — it narrows, never widens.
 
 ---
 
@@ -141,7 +158,7 @@ whole sheet — either unbounded memory or hundreds of upstream calls per call,
 which §6's "never load a whole sheet into memory" rule forbids at this
 spec's own target scale. An earlier draft of this section showed an
 unconditional `"total": 340` in the output above; that was dropped
-(`docs/07-sheets-adapter-plan.md` §1 Decision 4, confirmed by the owner
+(`docs/07-sheets-adapter-decisions.md` §1 Decision 4, confirmed by the owner
 2026-08-18) in favour of the honest, bounded shape actually implemented in
 `internal/module/mcp/tools_sheets.go` (`queryRowsOutput`) and
 `internal/adapter/googlesheets/query.go`:
@@ -181,20 +198,25 @@ Uses the existing semantics (`*` > `resource:verb` > `resource:*`); the matcher 
 | `sheets:write`                | (phase 2)                                     |
 | `connector:read/write/delete` | CRUD on the connector itself — existing, unchanged |
 
-### ⚠️ Where the existing middleware does not apply directly
+### Why the matcher is a function, not middleware
 
-`RequirePermission(action)` is Echo middleware bound to a route — but **every MCP tool call arrives on the same route** (`POST /mcp/:connectorId`), and the required permission differs per tool named in the body.
+`RequirePermission(action)` is Echo middleware bound to a route — but **every
+MCP tool call arrives on the same route** (`POST /mcp/:connectorId`), and the
+required permission differs per tool named in the body. Route middleware cannot
+express that.
 
-The permission matcher has to be pulled out into a function callable from inside the handler:
+So the matcher was pulled out of the middleware path into a plain function,
+`rbac.ActionMatches`, with a resolved `rbac.Principal` carrying the caller's
+granted actions (`internal/module/rbac/permission.go`). The MCP handler calls it
+per tool; `Service.HasPermission` — which the existing middleware still calls —
+became a thin wrapper over the same function, so the semantics exist once.
+Reasoning in [`07-sheets-adapter-decisions.md`](07-sheets-adapter-decisions.md)
+§1 Decision 3.
 
-```go
-// internal/module/rbac — extract the logic the middleware currently uses, for reuse
-func (s *Service) HasPermission(ctx, userID, orgID uuid.UUID, action string) (bool, error)
-```
-
-The MCP handler then calls it itself, per tool — and the existing middleware still calls that same function, so the logic is not duplicated.
-
-**And `tools/list` must be filtered by the caller's permissions** — an agent should not see a tool it cannot call (it wastes context, and it leaks what capabilities exist).
+**`tools/list` is filtered by the caller's permissions** — an agent never sees a
+tool it cannot call (it wastes context, and it leaks what capabilities exist).
+A second check runs at `tools/call` time, so revoking a permission takes effect
+on the next call rather than the next reconnect.
 
 ---
 
@@ -267,12 +289,12 @@ Write tools need more safety thinking first (confirmation flow, dry-run, rollbac
 
 ## 10. Questions still to be decided
 
-All four resolved by the owner 2026-08-18 (`docs/07-sheets-adapter-plan.md`
+All four resolved by the owner 2026-08-18 (`docs/07-sheets-adapter-decisions.md`
 §1 Decisions 1–4); this section is kept as a record of what was asked and
 where each answer actually lives in code, not as an open question anymore.
 
 1. **MCP client auth — resolved: Personal Access Tokens (option A).**
-   `docs/07-sheets-adapter-plan.md` §1 Decision 1. One migration
+   `docs/07-sheets-adapter-decisions.md` §1 Decision 1. One migration
    (`apps/backend/migrations/00008_mcp_api_keys.sql`) and one module,
    `internal/module/mcpkey` (`mcp_api_keys` table, `sk_live_...` tokens
    hashed with SHA-256, `scopes text[]` intersected with the creator's live
@@ -281,7 +303,7 @@ where each answer actually lives in code, not as an open question anymore.
    `/mcp-keys` mints and revokes keys without curl
    (`apps/frontend/app/(dashboard)/mcp-keys/page.tsx`).
 2. **OAuth onboarding flow — resolved: manual credential paste for the MVP.**
-   `docs/07-sheets-adapter-plan.md` §1 Decision 2. No OAuth consent page
+   `docs/07-sheets-adapter-decisions.md` §1 Decision 2. No OAuth consent page
    exists; a customer's `client_id`/`client_secret`/`refresh_token` are
    pasted into `POST /connectors`' `config` field (already
    envelope-encrypted, already never echoed back), via the
@@ -290,7 +312,7 @@ where each answer actually lives in code, not as an open question anymore.
    is a support conversation, not self-service, until a consent flow lands —
    see `docs/07` §3 "Out of scope" for its trigger condition.
 3. **Header row detection — resolved: configurable per spreadsheet, row 1
-   default.** Resolved in `docs/07-sheets-adapter-plan.md` step 5. The
+   default.** Resolved in `docs/07-sheets-adapter-decisions.md` step 5. The
    connector config's `scope.header_rows` is an optional
    `{"<spreadsheet_id>": <row>}` map (§3 above); `Config.HeaderRow` in
    `internal/adapter/googlesheets/config.go` returns the override when one
@@ -301,5 +323,5 @@ where each answer actually lives in code, not as an open question anymore.
    No workflow/join tool was built — the catalog is exactly the six read
    tools in §4 above, calling `sheets_describe_spreadsheet` then one or more
    `sheets_query_rows` and combining results is left to the agent. Recorded
-   as deliberately out of scope in `docs/07-sheets-adapter-plan.md` §3, with
+   as deliberately out of scope in `docs/07-sheets-adapter-decisions.md` §3, with
    its trigger to revisit: "if transcripts show agents failing at it."

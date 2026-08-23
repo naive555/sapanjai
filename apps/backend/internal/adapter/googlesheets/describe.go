@@ -49,7 +49,7 @@ type DescribeSpreadsheetOutput struct {
 // DescribeSpreadsheet describes spreadsheetID's tabs, headers, and
 // (optionally) a few sample rows per tab. It checks cfg's allowlist itself
 // — every call, against the cfg the caller just decrypted, never a cached
-// value (docs/07-sheets-adapter-plan.md step 5's design point) — so this is
+// value (docs/07-sheets-adapter-decisions.md step 5's design point) — so this is
 // the one place that check is guaranteed to run regardless of what the
 // caller remembered to do first. A spreadsheetID absent from
 // cfg.Scope.SpreadsheetIDs returns an error wrapping ErrSpreadsheetNotAllowed

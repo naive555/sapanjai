@@ -93,7 +93,7 @@ return {allowed, retry_after}
 //
 // It counts upstream Google API requests, not MCP tool calls (see
 // internal/module/mcp/service.go's dispatch-time check and
-// docs/07-sheets-adapter-plan.md step 4) — Take's n parameter is how a
+// docs/07-sheets-adapter-decisions.md step 4) — Take's n parameter is how a
 // caller charges more than the floor-of-1 per tools/call: step 7's paged
 // scan will call Take once per page fetched, mid-scan, charging n=1 each
 // time rather than the whole scan's page count up front.

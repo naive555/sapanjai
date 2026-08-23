@@ -256,7 +256,7 @@ func (s *Service) CheckHealth(ctx context.Context, organizationID, connectorID u
 // of openConfig: the returned map is this call's only copy and must never
 // reach a DTO, a log line, or an audit field. Re-decrypting on every call
 // (rather than caching the result) is deliberate — see
-// docs/07-sheets-adapter-plan.md step 5's "every tool calls [the allowlist]
+// docs/07-sheets-adapter-decisions.md step 5's "every tool calls [the allowlist]
 // on every request against the stored config, never against a value cached
 // from connector-creation time": a caller that re-fetches the row per
 // request and calls this each time automatically re-reads a narrowed

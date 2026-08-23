@@ -69,11 +69,11 @@ Excluded by §1's test. Several of these are already built for `google_sheets`;
 | Google OAuth consent flow, token refresh, credential paste UI | Google-specific. FlowAccount authenticates with an API key; nothing carries over. Lives in `internal/adapter/googlesheets/oauth.go` — do not lift it into the core speculatively. |
 | `sheets_*` / `drive_*` tools, the spreadsheet/folder allowlist, sample-row and scan budgets | Per-adapter. The allowlist is a `google_sheets` config field, not a connector-core concept; the next connector's equivalent may not be a list of ids at all. |
 | Google API quota handling | Upstream-specific. |
-| Write and action tools, and any human-in-the-loop approval mechanism | No write tool exists for any connector (`07-sheets-adapter-plan.md` §3). Approval design depends on what the writes *are* — an approval UX for "append a spreadsheet row" and one for "issue an invoice" are not the same product. |
+| Write and action tools, and any human-in-the-loop approval mechanism | No write tool exists for any connector (`07-sheets-adapter-decisions.md` §3). Approval design depends on what the writes *are* — an approval UX for "append a spreadsheet row" and one for "issue an invoice" are not the same product. |
 | Per-connector rate limiting | Belongs with the adapter that needs it, and is already built (`mcp:ratelimit:<connectorId>`) driven by `06-sheets-adapter.md` §6's quota math. A FlowAccount adapter would want different units and a different charge point. |
 | HTTP+SSE transport / a `/sse` route | See §5. |
-| Plan limits (`max_mcp_calls_per_month`, `max_connectors`) | Judged not load-bearing for the MVP in `07-sheets-adapter-plan.md` §3; the per-connector limiter covers the quota-exhaustion risk that actually threatens it. Unchanged here. |
-| PAT expiry sweep job, PAT rotation endpoint, Redis-cached key lookup | Housekeeping and optimization, not capability. Expired and revoked keys are already rejected at auth time; the row lingering costs nothing. Revisit under measured load (`07-sheets-adapter-plan.md` §1 Decision 1). |
+| Plan limits (`max_mcp_calls_per_month`, `max_connectors`) | Judged not load-bearing for the MVP in `07-sheets-adapter-decisions.md` §3; the per-connector limiter covers the quota-exhaustion risk that actually threatens it. Unchanged here. |
+| PAT expiry sweep job, PAT rotation endpoint, Redis-cached key lookup | Housekeeping and optimization, not capability. Expired and revoked keys are already rejected at auth time; the row lingering costs nothing. Revisit under measured load (`07-sheets-adapter-decisions.md` §1 Decision 1). |
 
 ## 4. Key scoping: the assumptions behind `scopes`
 

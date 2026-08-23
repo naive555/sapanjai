@@ -13,7 +13,7 @@ import (
 
 // scopes requested for every google_sheets connector — read-only, matching
 // the read-only MVP (docs/06-sheets-adapter.md). Write scopes are out of
-// scope until Phase 2 (docs/07-sheets-adapter-plan.md §3).
+// scope until Phase 2 (docs/07-sheets-adapter-decisions.md §3).
 var scopes = []string{
 	"https://www.googleapis.com/auth/spreadsheets.readonly",
 	"https://www.googleapis.com/auth/drive.readonly",

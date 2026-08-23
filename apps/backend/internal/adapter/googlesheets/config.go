@@ -1,5 +1,5 @@
 // Package googlesheets is the connector adapter for type "google_sheets"
-// (docs/06-sheets-adapter.md, docs/07-sheets-adapter-plan.md step 5). It
+// (docs/06-sheets-adapter.md, docs/07-sheets-adapter-decisions.md step 5). It
 // imports internal/module/connector for the Checker interface; connector
 // does not import this package back — the registry that wires them together
 // is assembled in internal/server/server.go, so there is no import cycle.
@@ -42,7 +42,7 @@ type Config struct {
 }
 
 // OAuthConfig is the credential a customer pastes in for the MVP's
-// manual-credential-paste onboarding (docs/07-sheets-adapter-plan.md §1
+// manual-credential-paste onboarding (docs/07-sheets-adapter-decisions.md §1
 // Decision 2 — no dashboard consent flow yet).
 type OAuthConfig struct {
 	RefreshToken string

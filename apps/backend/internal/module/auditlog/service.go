@@ -34,7 +34,7 @@ const (
 	ActionConnectorDeleted = "connector.deleted"
 
 	// MCP gateway actions (internal/module/mcp), written from the
-	// tools/call-time enforcement middleware — see docs/07-sheets-adapter-plan.md
+	// tools/call-time enforcement middleware — see docs/07-sheets-adapter-decisions.md
 	// step 3. All three are written; metadata never carries the bearer
 	// token, decrypted connector config, or a whole request/tool-argument
 	// struct (CLAUDE.md's redaction ground rule) — only connector_id, tool,
@@ -45,7 +45,7 @@ const (
 
 	// ActionMCPRateLimitHit is written when a connector's rate-limit
 	// bucket (internal/infra/redis.RateLimiter) is exhausted at
-	// tools/call dispatch time — docs/07-sheets-adapter-plan.md step 4.
+	// tools/call dispatch time — docs/07-sheets-adapter-decisions.md step 4.
 	// Metadata carries connector_id and tool, the same shape as
 	// ActionMCPToolDenied, minus missing_permission (this is a quota
 	// failure, not an authorization one).
@@ -53,7 +53,7 @@ const (
 
 	// ActionMCPFileDownloaded is written by GET /mcp/files/:connectorId/
 	// :fileId (internal/module/mcp/handler.go's downloadFile) once a
-	// download has actually streamed — docs/07-sheets-adapter-plan.md step
+	// download has actually streamed — docs/07-sheets-adapter-decisions.md step
 	// 9. This route has no bearer-token principal (the signed link itself
 	// is the credential), so the actor recorded is the uid the link was
 	// minted for, not a re-resolved live grant. Metadata carries

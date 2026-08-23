@@ -206,7 +206,7 @@ func (s *Service) Authorize(ctx context.Context, userID, organizationID uuid.UUI
 // the roles tables entirely ("*"); otherwise the caller's roles' permission
 // actions are checked for "*", an exact match, or a "<resource>:*"
 // wildcard. A thin wrapper over Authorize(...).Allows(action) since
-// step 1 of docs/07-sheets-adapter-plan.md — the single-action call site
+// step 1 of docs/07-sheets-adapter-decisions.md — the single-action call site
 // (RequirePermission) is unchanged, the semantics now live in one place.
 func (s *Service) HasPermission(ctx context.Context, userID, organizationID uuid.UUID, action string) (bool, error) {
 	principal, err := s.Authorize(ctx, userID, organizationID)

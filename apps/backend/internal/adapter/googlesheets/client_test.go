@@ -14,7 +14,7 @@ import (
 
 // TestClient_SpreadsheetMeta_ContractsWithGoogleAPI is the one place in
 // this package's test suite a real Google response shape is asserted
-// (docs/07-sheets-adapter-plan.md step 5). It drives the actual client —
+// (docs/07-sheets-adapter-decisions.md step 5). It drives the actual client —
 // the real google.golang.org/api/sheets/v4 wrapper, not a mock — against an
 // httptest server via option.WithEndpoint, proving client.SpreadsheetMeta's
 // mapping from the Sheets API's JSON shape to our Meta type is correct.

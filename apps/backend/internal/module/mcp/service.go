@@ -201,7 +201,7 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 				// unpermitted call should never spend budget) and before
 				// dispatch — landed here, ahead of any real adapter, so no
 				// tool ever ships able to reach a Google API unguarded
-				// (docs/07-sheets-adapter-plan.md step 4). toolCallCost is
+				// (docs/07-sheets-adapter-decisions.md step 4). toolCallCost is
 				// the dispatch-time floor; a real adapter charges its own
 				// per-upstream-request cost mid-execution via
 				// Service.ChargeRateLimit instead of relying solely on
