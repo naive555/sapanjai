@@ -33,3 +33,35 @@ func TestOrgSlugValidation(t *testing.T) {
 		})
 	}
 }
+
+type permActionFixture struct {
+	Action string `validate:"permaction"`
+}
+
+func TestPermActionValidation(t *testing.T) {
+	v := newRequestValidator()
+
+	tests := []struct {
+		name    string
+		action  string
+		wantErr bool
+	}{
+		{"bare wildcard", "*", false},
+		{"exact resource:verb", "connector:read", false},
+		{"resource wildcard", "sheets:*", false},
+		{"empty", "", true},
+		{"uppercase rejected", "Connector:Read", true},
+		{"too many segments", "a:b:c", true},
+		{"missing resource", ":read", true},
+		{"missing verb", "connector:", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := v.Validate(&permActionFixture{Action: tt.action})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.action, err, tt.wantErr)
+			}
+		})
+	}
+}

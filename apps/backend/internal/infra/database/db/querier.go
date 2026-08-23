@@ -16,6 +16,11 @@ type Querier interface {
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
+	// scopes ($6) is nullable: a nil slice binds NULL (no independent
+	// restriction, the key rides the creator's live grant), a non-empty slice
+	// narrows it. mcpkey.Service.Create is responsible for never passing a
+	// non-nil empty slice here — that would silently mint a key that permits
+	// nothing.
 	CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (McpApiKey, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (Membership, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)

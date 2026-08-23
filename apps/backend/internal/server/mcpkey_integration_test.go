@@ -105,6 +105,87 @@ func TestIntegration_MCPKeysCRUD_OwnerHappyPath(t *testing.T) {
 	})
 }
 
+// TestIntegration_MCPKeysScopes exercises the three-state `scopes` contract
+// through the live API — mint with scopes, mint without, and the `[]`
+// rejection — end to end rather than around it with raw SQL.
+func TestIntegration_MCPKeysScopes(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcpkeys-scopes")
+	headers := map[string]string{
+		"Authorization":     "Bearer " + org.Owner.AccessToken,
+		"x-organization-id": org.ID,
+	}
+
+	t.Run("minting with scopes persists them and GET echoes them back", func(t *testing.T) {
+		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/mcp-keys",
+			map[string]any{"name": "scoped-via-api", "scopes": []string{"connector:read", "sheets:*"}}, headers)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create: status = %d, want 200; body = %v", resp.StatusCode, body)
+		}
+		keyID, _ := body["id"].(string)
+		if keyID == "" {
+			t.Fatalf("create: missing id: %v", body)
+		}
+
+		_, rows := doJSONList(t, client, ts.URL, "/mcp-keys", headers)
+		found := findByID(rows, keyID)
+		if found == nil {
+			t.Fatalf("expected key %s in list, got %v", keyID, rows)
+		}
+		scopesAny, _ := found["scopes"].([]any)
+		got := make([]string, len(scopesAny))
+		for i, s := range scopesAny {
+			got[i], _ = s.(string)
+		}
+		want := []string{"connector:read", "sheets:*"}
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("scopes = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("minting without scopes yields null", func(t *testing.T) {
+		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/mcp-keys",
+			map[string]any{"name": "unrestricted-via-api"}, headers)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("create: status = %d, want 200; body = %v", resp.StatusCode, body)
+		}
+		keyID, _ := body["id"].(string)
+
+		_, rows := doJSONList(t, client, ts.URL, "/mcp-keys", headers)
+		found := findByID(rows, keyID)
+		if found == nil {
+			t.Fatalf("expected key %s in list, got %v", keyID, rows)
+		}
+		if found["scopes"] != nil {
+			t.Fatalf("scopes = %v, want nil (null) when scopes is omitted", found["scopes"])
+		}
+	})
+
+	t.Run("scopes: [] is rejected 422", func(t *testing.T) {
+		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/mcp-keys",
+			map[string]any{"name": "empty-scopes", "scopes": []string{}}, headers)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422; body = %v", resp.StatusCode, body)
+		}
+		if body["message"] != "Validation failed" {
+			t.Fatalf("message = %v, want %q", body["message"], "Validation failed")
+		}
+	})
+
+	t.Run("a malformed scope string is rejected 422", func(t *testing.T) {
+		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/mcp-keys",
+			map[string]any{"name": "bad-scope", "scopes": []string{"Connector:Read"}}, headers)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422; body = %v", resp.StatusCode, body)
+		}
+		if body["message"] != "Validation failed" {
+			t.Fatalf("message = %v, want %q", body["message"], "Validation failed")
+		}
+	})
+}
+
 func TestIntegration_MCPKeysDuplicateName(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
 	client := ts.Client()

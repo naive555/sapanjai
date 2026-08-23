@@ -116,6 +116,30 @@ func mintMCPKeyAs(t *testing.T, client *http.Client, baseURL, orgID, callerToken
 	return id, apiKey
 }
 
+// mintMCPKeyWithScopesAs is mintMCPKeyAs plus a mint-time `scopes` list, for
+// tests that need a key narrowed away from (or including) a specific action.
+// Minting through the API, rather than an `UPDATE mcp_api_keys SET scopes`
+// afterward, exercises POST /mcp-keys' scopes field end to end.
+func mintMCPKeyWithScopesAs(t *testing.T, client *http.Client, baseURL, orgID, callerToken, name string, scopes []string) (id, apiKey string) {
+	t.Helper()
+
+	resp, body := doJSON(t, client, baseURL, http.MethodPost, "/mcp-keys",
+		map[string]any{"name": name, "scopes": scopes},
+		map[string]string{
+			"Authorization":     "Bearer " + callerToken,
+			"x-organization-id": orgID,
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint scoped mcp key: status = %d, want 200; body = %v", resp.StatusCode, body)
+	}
+	id, _ = body["id"].(string)
+	apiKey, _ = body["apiKey"].(string)
+	if id == "" || apiKey == "" {
+		t.Fatalf("mint scoped mcp key: missing id/apiKey: %v", body)
+	}
+	return id, apiKey
+}
+
 // bearerRoundTripper attaches an MCP PAT the way a real MCP client's
 // configured Authorization header would — mirrors
 // spikes/mcp-gateway/internal/gateway/gateway_test.go's bearerRoundTripper.
@@ -328,22 +352,17 @@ func TestIntegration_MCP_PrincipalWithoutConnectorReadSeesNoTools(t *testing.T) 
 // ---- scoped-key narrowing (Decision 1) ----
 
 func TestIntegration_MCP_ScopedKeyNarrowsOwnerBypass(t *testing.T) {
-	ts, _, store := setupTestServer(t)
+	ts, _, _ := setupTestServer(t)
 	client := ts.Client()
 
 	org := createOrgWithOwner(t, client, ts.URL, "mcp-scoped-owner")
 	connID := createTestConnector(t, client, ts.URL, org, "conn-scoped-owner")
-	keyID, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "scoped-key")
 
 	// The owner would normally see sapanjai_describe_connector via the
 	// owner bypass. Scope this specific key to an unrelated action —
-	// mcpkey:read, nothing to do with connector:read — directly via SQL,
-	// exactly as step 3 prescribes for exercising a code path nothing else
-	// writes yet.
-	if _, err := store.Pool.Exec(context.Background(),
-		`UPDATE mcp_api_keys SET scopes = $1 WHERE id = $2`, []string{"mcpkey:read"}, keyID); err != nil {
-		t.Fatalf("set scopes: %v", err)
-	}
+	// mcpkey:read, nothing to do with connector:read — at mint time via
+	// POST /mcp-keys' scopes field.
+	_, apiKey := mintMCPKeyWithScopesAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "scoped-key", []string{"mcpkey:read"})
 
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 
@@ -359,17 +378,12 @@ func TestIntegration_MCP_ScopedKeyNarrowsOwnerBypass(t *testing.T) {
 }
 
 func TestIntegration_MCP_ScopedKeyIncludingPermissionStillWorks(t *testing.T) {
-	ts, _, store := setupTestServer(t)
+	ts, _, _ := setupTestServer(t)
 	client := ts.Client()
 
 	org := createOrgWithOwner(t, client, ts.URL, "mcp-scoped-included")
 	connID := createTestConnector(t, client, ts.URL, org, "conn-scoped-included")
-	keyID, apiKey := mintMCPKeyAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "scoped-key-included")
-
-	if _, err := store.Pool.Exec(context.Background(),
-		`UPDATE mcp_api_keys SET scopes = $1 WHERE id = $2`, []string{"connector:read"}, keyID); err != nil {
-		t.Fatalf("set scopes: %v", err)
-	}
+	_, apiKey := mintMCPKeyWithScopesAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, "scoped-key-included", []string{"connector:read"})
 
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 

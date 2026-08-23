@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,14 +18,26 @@ import (
 	appmw "github.com/sapanjai/backend/internal/middleware"
 )
 
+// testPermActionPattern mirrors internal/server/validator.go's unexported
+// permActionPattern (that package can't be imported here without a cycle),
+// so CreateRequest.Scopes' "permaction" tag has something registered to
+// find — an unregistered tag panics at struct-cache time regardless of
+// whether any request in a given test actually sets Scopes.
+var testPermActionPattern = regexp.MustCompile(`^(\*|[a-z][a-z0-9_]*:(\*|[a-z][a-z0-9_]*))$`)
+
 // testValidator adapts go-playground/validator to echo.Validator, mirroring
 // internal/server/validator.go's requestValidator so CreateRequest's struct
 // tags are actually exercised here — the "connectortype"-style custom tag
-// isn't needed by this module, so this is the plain validator only.
+// isn't needed by this module, so "permaction" is the only custom tag
+// registered.
 type testValidator struct{ v *validator.Validate }
 
 func newTestValidator() *testValidator {
-	return &testValidator{v: validator.New(validator.WithRequiredStructEnabled())}
+	v := validator.New(validator.WithRequiredStructEnabled())
+	_ = v.RegisterValidation("permaction", func(fl validator.FieldLevel) bool {
+		return testPermActionPattern.MatchString(fl.Field().String())
+	})
+	return &testValidator{v: v}
 }
 
 func (tv *testValidator) Validate(i any) error {

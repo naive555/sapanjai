@@ -63,7 +63,7 @@ func (h *Handler) create(c echo.Context) error {
 		return err
 	}
 
-	row, rawToken, err := h.service.Create(c.Request().Context(), appmw.OrgID(c), appmw.UserID(c), req.Name, req.ExpiresInDays)
+	row, rawToken, err := h.service.Create(c.Request().Context(), appmw.OrgID(c), appmw.UserID(c), req.Name, req.ExpiresInDays, req.Scopes)
 	if err != nil {
 		return err
 	}

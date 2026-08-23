@@ -81,7 +81,7 @@ func TestService_Create_HappyPath(t *testing.T) {
 	}
 	svc := NewService(store, newTestLog())
 
-	row, rawToken, err := svc.Create(context.Background(), orgID, actorID, "laptop", nil)
+	row, rawToken, err := svc.Create(context.Background(), orgID, actorID, "laptop", nil, nil)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -127,11 +127,11 @@ func TestService_Create_TokensAreUnique(t *testing.T) {
 	}
 	svc := NewService(store, newTestLog())
 
-	_, token1, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "a", nil)
+	_, token1, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "a", nil, nil)
 	if err != nil {
 		t.Fatalf("Create 1: %v", err)
 	}
-	_, token2, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "b", nil)
+	_, token2, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "b", nil, nil)
 	if err != nil {
 		t.Fatalf("Create 2: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestService_Create_ExpiresInDaysSetsAbsoluteExpiry(t *testing.T) {
 
 	days := 30
 	before := time.Now().Add(30 * 24 * time.Hour)
-	if _, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "expiring", &days); err != nil {
+	if _, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "expiring", &days, nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	after := time.Now().Add(30 * 24 * time.Hour)
@@ -168,6 +168,64 @@ func TestService_Create_ExpiresInDaysSetsAbsoluteExpiry(t *testing.T) {
 	}
 }
 
+func TestService_Create_ScopesPassThroughVerbatim(t *testing.T) {
+	var captured db.CreateMCPKeyParams
+	store := &mockMCPKeyStore{
+		getMCPKeyByName: func(ctx context.Context, arg db.GetMCPKeyByNameParams) (db.McpApiKey, error) {
+			return db.McpApiKey{}, pgx.ErrNoRows
+		},
+		createMCPKey: func(ctx context.Context, arg db.CreateMCPKeyParams) (db.McpApiKey, error) {
+			captured = arg
+			return db.McpApiKey{ID: uuid.New(), Name: arg.Name, Scopes: arg.Scopes}, nil
+		},
+	}
+	svc := NewService(store, newTestLog())
+
+	scopes := []string{"connector:read", "sheets:*"}
+	if _, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "scoped", nil, scopes); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if len(captured.Scopes) != len(scopes) {
+		t.Fatalf("Scopes = %v, want %v", captured.Scopes, scopes)
+	}
+	for i, s := range scopes {
+		if captured.Scopes[i] != s {
+			t.Fatalf("Scopes = %v, want %v", captured.Scopes, scopes)
+		}
+	}
+}
+
+// TestService_Create_NilScopesStayNil guards the exact bug the three-state
+// contract exists to avoid: passing scopes=nil through to CreateMCPKeyParams
+// must reach the store as a nil slice, not a non-nil empty one.
+// []string{} is a *non-NULL* empty Postgres array — a key that permits
+// nothing — while nil binds NULL, "no independent restriction". A silent
+// nil-to-[]string{} promotion anywhere in Create would flip every
+// unrestricted key ever minted into a permanently useless one.
+func TestService_Create_NilScopesStayNil(t *testing.T) {
+	var captured db.CreateMCPKeyParams
+	store := &mockMCPKeyStore{
+		getMCPKeyByName: func(ctx context.Context, arg db.GetMCPKeyByNameParams) (db.McpApiKey, error) {
+			return db.McpApiKey{}, pgx.ErrNoRows
+		},
+		createMCPKey: func(ctx context.Context, arg db.CreateMCPKeyParams) (db.McpApiKey, error) {
+			captured = arg
+			return db.McpApiKey{ID: uuid.New(), Name: arg.Name}, nil
+		},
+	}
+	svc := NewService(store, newTestLog())
+
+	if _, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "unrestricted", nil, nil); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if captured.Scopes != nil {
+		t.Fatalf("Scopes = %#v, want nil (got a non-nil slice, len %d) — this binds a non-NULL empty "+
+			"Postgres array, not NULL", captured.Scopes, len(captured.Scopes))
+	}
+}
+
 func TestService_Create_NameTaken(t *testing.T) {
 	store := &mockMCPKeyStore{
 		getMCPKeyByName: func(ctx context.Context, arg db.GetMCPKeyByNameParams) (db.McpApiKey, error) {
@@ -176,7 +234,7 @@ func TestService_Create_NameTaken(t *testing.T) {
 	}
 	svc := NewService(store, newTestLog())
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "dup-name", nil)
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "dup-name", nil, nil)
 	if code := appErrorCode(t, err); code != apperror.MCPKeyNameTaken {
 		t.Fatalf("code = %q, want %q", code, apperror.MCPKeyNameTaken)
 	}
@@ -191,7 +249,7 @@ func TestService_Create_NameLookupErrorPropagates(t *testing.T) {
 	}
 	svc := NewService(store, newTestLog())
 
-	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "x", nil)
+	_, _, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "x", nil, nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -213,7 +271,7 @@ func TestService_Create_InsertErrorPropagates(t *testing.T) {
 	}
 	svc := NewService(store, newTestLog())
 
-	_, rawToken, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "x", nil)
+	_, rawToken, err := svc.Create(context.Background(), uuid.New(), uuid.New(), "x", nil, nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}

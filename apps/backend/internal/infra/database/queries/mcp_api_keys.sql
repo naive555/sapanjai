@@ -1,6 +1,11 @@
 -- name: CreateMCPKey :one
-INSERT INTO mcp_api_keys (organization_id, user_id, name, key_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+-- scopes ($6) is nullable: a nil slice binds NULL (no independent
+-- restriction, the key rides the creator's live grant), a non-empty slice
+-- narrows it. mcpkey.Service.Create is responsible for never passing a
+-- non-nil empty slice here — that would silently mint a key that permits
+-- nothing.
+INSERT INTO mcp_api_keys (organization_id, user_id, name, key_hash, expires_at, scopes)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetMCPKeyByName :one

@@ -62,7 +62,25 @@ func NewService(store mcpKeyStore, log *slog.Logger) *Service {
 //
 // Order: name collision, generate + hash, insert. expiresInDays, if given,
 // sets an absolute expiry from now(); nil means the key never expires.
-func (s *Service) Create(ctx context.Context, organizationID, actorID uuid.UUID, name string, expiresInDays *int) (db.McpApiKey, string, error) {
+//
+// scopes is passed through to CreateMCPKeyParams verbatim, nil or not — the
+// handler's dto.CreateRequest.Scopes already carries the caller's exact
+// intent (nil = unrestricted, non-empty = narrowed; `[]` never reaches here,
+// the "permaction" validator's min=1 rejects it with 422 first), so there is
+// nothing for this layer to normalize.
+//
+// Deliberately not validated against the creator's current RBAC grant here.
+// rbac.Principal.Narrow intersects scopes with the *live* grant on every
+// gateway request, not a grant snapshotted at mint time, so a scope the
+// creator does not hold is simply inert on every call it would matter for —
+// rejecting it here would buy nothing and would cost two things: it bakes a
+// point-in-time permission set into a long-lived credential (the opposite of
+// the narrow-never-widen design), and it produces a confusing 422 on a scope
+// that was valid when typed but stopped being held moments before the mint
+// request landed, purely because of an unrelated role change. See
+// docs/08-gateway-core.md §4 ("Scopes are not validated against the
+// creator's grant at mint time").
+func (s *Service) Create(ctx context.Context, organizationID, actorID uuid.UUID, name string, expiresInDays *int, scopes []string) (db.McpApiKey, string, error) {
 	_, err := s.store.GetMCPKeyByName(ctx, db.GetMCPKeyByNameParams{OrganizationID: organizationID, Name: name})
 	if err == nil {
 		return db.McpApiKey{}, "", apperror.New(apperror.MCPKeyNameTaken)
@@ -87,6 +105,7 @@ func (s *Service) Create(ctx context.Context, organizationID, actorID uuid.UUID,
 		Name:           name,
 		KeyHash:        HashToken(rawToken),
 		ExpiresAt:      expiresAt,
+		Scopes:         scopes,
 	})
 	if err != nil {
 		return db.McpApiKey{}, "", err

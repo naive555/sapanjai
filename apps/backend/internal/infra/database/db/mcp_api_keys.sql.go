@@ -13,8 +13,8 @@ import (
 )
 
 const createMCPKey = `-- name: CreateMCPKey :one
-INSERT INTO mcp_api_keys (organization_id, user_id, name, key_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO mcp_api_keys (organization_id, user_id, name, key_hash, expires_at, scopes)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, organization_id, user_id, name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at
 `
 
@@ -24,8 +24,14 @@ type CreateMCPKeyParams struct {
 	Name           string           `json:"name"`
 	KeyHash        string           `json:"key_hash"`
 	ExpiresAt      pgtype.Timestamp `json:"expires_at"`
+	Scopes         []string         `json:"scopes"`
 }
 
+// scopes ($6) is nullable: a nil slice binds NULL (no independent
+// restriction, the key rides the creator's live grant), a non-empty slice
+// narrows it. mcpkey.Service.Create is responsible for never passing a
+// non-nil empty slice here — that would silently mint a key that permits
+// nothing.
 func (q *Queries) CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (McpApiKey, error) {
 	row := q.db.QueryRow(ctx, createMCPKey,
 		arg.OrganizationID,
@@ -33,6 +39,7 @@ func (q *Queries) CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (Mcp
 		arg.Name,
 		arg.KeyHash,
 		arg.ExpiresAt,
+		arg.Scopes,
 	)
 	var i McpApiKey
 	err := row.Scan(

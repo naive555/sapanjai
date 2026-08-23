@@ -20,6 +20,15 @@ type requestValidator struct {
 // hyphens only.
 var orgSlugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// permActionPattern matches a single RBAC action string, the same shape
+// ActionMatches (internal/module/rbac/permission.go) already understands:
+// the bare wildcard "*", an exact "resource:verb", or a resource-scoped
+// "resource:*". resource and verb are each a lowercase identifier —
+// letters/digits/underscore, starting with a letter — mirroring how actions
+// are seeded (rbac roles, connector/mcpkey PermissionRead-style constants)
+// rather than accepting arbitrary punctuation no seeded action ever uses.
+var permActionPattern = regexp.MustCompile(`^(\*|[a-z][a-z0-9_]*:(\*|[a-z][a-z0-9_]*))$`)
+
 func newRequestValidator() *requestValidator {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	// registered as "orgslug"; used by organization.CreateRequest.Slug.
@@ -31,6 +40,15 @@ func newRequestValidator() *requestValidator {
 	// constant there, not a tag edit here.
 	_ = v.RegisterValidation("connectortype", func(fl validator.FieldLevel) bool {
 		return connector.IsValidType(fl.Field().String())
+	})
+	// registered as "permaction"; used by mcpkey.CreateRequest.Scopes (one
+	// tag application per element via `dive`). Deliberately not validated
+	// against the caller's live grant here or anywhere else at mint time —
+	// see docs/08-gateway-core.md §4 and mcpkey.Service.Create's doc
+	// comment — this only rejects a string that could never be a valid
+	// action, not one the caller happens not to hold right now.
+	_ = v.RegisterValidation("permaction", func(fl validator.FieldLevel) bool {
+		return permActionPattern.MatchString(fl.Field().String())
 	})
 	return &requestValidator{v: v}
 }
