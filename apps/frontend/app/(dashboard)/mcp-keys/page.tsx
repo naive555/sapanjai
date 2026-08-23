@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlusIcon } from "lucide-react";
@@ -8,6 +9,8 @@ import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { Callout } from "@/components/callout";
+import { CopyableCode } from "@/components/copyable-code";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
 import { PermissionToken } from "@/components/permission-token";
@@ -26,6 +29,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input";
 import { TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/lib/api/client";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   createMcpKey,
   listMcpKeys,
@@ -76,19 +80,6 @@ function StatusBadge({ status }: { status: KeyStatus }) {
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "—";
-}
-
-// Copies the raw key to the clipboard. The Clipboard API is absent in jsdom
-// and in any non-secure-context browser tab, so this has to degrade to a
-// manual-copy nudge rather than throwing past the caller.
-async function copyToClipboard(value: string): Promise<boolean> {
-  try {
-    if (!navigator.clipboard?.writeText) return false;
-    await navigator.clipboard.writeText(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export default function McpKeysPage() {
@@ -347,7 +338,7 @@ export default function McpKeysPage() {
        * revealKey is cleared from state.
        */}
       <Dialog open={revealKey !== null} onOpenChange={() => {}}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent showCloseButton={false} className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Key created — copy it now</DialogTitle>
             <DialogDescription>
@@ -356,7 +347,7 @@ export default function McpKeysPage() {
             </DialogDescription>
           </DialogHeader>
           {revealKey && (
-            <div className="flex flex-col gap-3">
+            <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
               <div className="rounded-md border bg-muted/40 p-3">
                 <code className="block w-full overflow-x-auto font-mono text-sm break-all select-all">
                   {revealKey.apiKey}
@@ -368,6 +359,51 @@ export default function McpKeysPage() {
               <p className="text-sm font-medium text-destructive">
                 You will not see this key again. Store it somewhere safe before closing this dialog.
               </p>
+
+              {/*
+                * The wiring snippet is here, and only here, on purpose: this
+                * is the one moment the raw key exists to be pasted into it.
+                * A copy of this on a docs page would have a placeholder where
+                * the token is, which is exactly the step people get wrong.
+                */}
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-sm font-medium">Point a client at a connector</p>
+                <p className="text-sm text-muted-foreground">
+                  The endpoint is one per connector. Replace the host with your Sapanjai API address (the API,
+                  not this dashboard) and <span className="font-mono">CONNECTOR_ID</span> with the id from the
+                  connector&apos;s own page URL on{" "}
+                  <Link
+                    href="/connectors"
+                    className="text-foreground underline underline-offset-4 hover:text-signal"
+                  >
+                    connectors
+                  </Link>
+                  .
+                </p>
+                <CopyableCode
+                  label="the client wiring command"
+                  value={`claude mcp add sapanjai --scope local --transport http \\
+  https://YOUR_SAPANJAI_HOST/mcp/CONNECTOR_ID \\
+  --header "Authorization: Bearer ${revealKey.apiKey}"`}
+                />
+                <p className="text-sm text-muted-foreground">
+                  The URL has to come before <span className="font-mono">--header</span> — that flag is
+                  variadic and will otherwise swallow the address. Calling the endpoint directly is a{" "}
+                  <span className="font-mono">POST</span> to the same URL with that{" "}
+                  <span className="font-mono">Authorization</span> header.
+                </p>
+              </div>
+
+              <Callout variant="boundary" title="Missing a tool? It was filtered, not broken">
+                An agent only ever sees the tools this key is permitted to call — anything else is absent from
+                its tool list entirely, rather than failing when called. The one that catches people out:{" "}
+                <span className="font-mono">drive:read</span> is a separate permission, and{" "}
+                <span className="font-mono">sheets:read</span> never implies it. A key whose holder has only{" "}
+                <span className="font-mono">sheets:read</span> will not show{" "}
+                <span className="font-mono">drive_list_folder</span> or{" "}
+                <span className="font-mono">drive_get_file</span> at all. Grants are re-read on every call, so
+                fixing the role takes effect on the agent&apos;s next request — no need to reconnect it.
+              </Callout>
             </div>
           )}
           <DialogFooter>

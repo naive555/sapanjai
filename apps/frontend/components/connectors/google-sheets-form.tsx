@@ -1,13 +1,24 @@
 "use client";
 
+import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm, type Control } from "react-hook-form";
 import { z } from "zod";
 
+import { Callout } from "@/components/callout";
+import { CopyableCode } from "@/components/copyable-code";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+
+// The exact scopes the adapter requests when it exchanges a refresh token
+// (apps/backend/internal/adapter/googlesheets/oauth.go). Shown here because a
+// token minted with the wrong ones fails only at health-check time, with a
+// message that deliberately says nothing about why — so the cheapest place to
+// catch the mistake is beside the field where the token is pasted.
+const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 // Splits a one-id-per-line (commas also accepted) textarea into string[] —
 // same idiom as roles/page.tsx's permissions textarea.
@@ -170,11 +181,19 @@ export function GoogleSheetsFormFields({
 }) {
   return (
     <FieldGroup>
-      <div className="rounded-md border border-dashed bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground">
+      <Callout>
         {mode === "replace"
           ? "Submitting replaces the entire stored configuration — both the OAuth credentials and the allowlist — since nothing here can be pre-filled: no endpoint ever returns a stored config back."
-          : "Credentials are sealed at rest and never returned by the API, so this form can't be pre-filled later — a future edit replaces the whole configuration rather than merging into it."}
-      </div>
+          : "Credentials are sealed at rest and never returned by the API, so this form can't be pre-filled later — a future edit replaces the whole configuration rather than merging into it."}{" "}
+        Don&apos;t have these values yet?{" "}
+        <Link
+          href="/connectors/google-sheets-setup"
+          className="text-foreground underline underline-offset-4 hover:text-signal"
+        >
+          Walk through getting them from Google
+        </Link>
+        .
+      </Callout>
 
       <Field data-invalid={!!errors.clientId}>
         <FieldLabel htmlFor="gs-client-id">Client ID</FieldLabel>
@@ -208,10 +227,25 @@ export function GoogleSheetsFormFields({
           )}
         />
         <FieldDescription>
-          Pasted manually for now — there is no OAuth consent flow in the dashboard yet.
+          Pasted manually for now — there is no OAuth consent flow in the dashboard yet. The token has to
+          carry exactly these two scopes, and no others:
+        </FieldDescription>
+        <CopyableCode value={SHEETS_SCOPE} label="the read-only Sheets scope" />
+        <CopyableCode value={DRIVE_SCOPE} label="the read-only Drive scope" />
+        <FieldDescription>
+          Note the <span className="font-mono">.readonly</span> on each. Nothing in the gateway writes to a
+          sheet, so a token carrying write scopes gains you nothing and widens what a leak would cost.
         </FieldDescription>
         <FieldError errors={[errors.refreshToken]} />
       </Field>
+
+      <Callout variant="boundary" title="This allowlist is the boundary — not the credentials">
+        Every request is checked against these two lists before Sapanjai calls Google. An ID that is not
+        listed here is refused even when the connector&apos;s own OAuth token could open it perfectly well —
+        that is what stops an agent talked into asking for the wrong document from getting it. The flip side
+        is the mistake nearly everyone makes once: a spreadsheet you forgot to list simply will not work, no
+        matter how correct the credentials are.
+      </Callout>
 
       <Field data-invalid={!!errors.spreadsheetIdsText}>
         <FieldLabel htmlFor="gs-spreadsheet-ids">Allowed spreadsheet IDs</FieldLabel>
@@ -249,6 +283,8 @@ export function GoogleSheetsFormFields({
         />
         <FieldDescription>
           One Drive folder ID per line. At least one spreadsheet or folder must be listed above or here.
+          Folders don&apos;t cascade: a file is reachable only if the folder listed here is its{" "}
+          <em>direct</em> parent, so nested subfolders need listing too.
         </FieldDescription>
         <FieldError errors={[errors.driveFolderIdsText]} />
       </Field>
@@ -274,6 +310,18 @@ export function GoogleSheetsFormFields({
         </FieldDescription>
         <FieldError errors={[errors.headerRowsText]} />
       </Field>
+
+      <Callout title="Prove it works before handing it to an agent">
+        Saving stores the configuration; it does not test it. Run{" "}
+        <span className="font-medium text-foreground">Run health check</span> from the connector&apos;s row on{" "}
+        <Link href="/connectors" className="text-foreground underline underline-offset-4 hover:text-signal">
+          connectors
+        </Link>{" "}
+        — it exchanges the refresh token for a live access token and reads one allowlisted document with it,
+        then flips the connector to <span className="font-medium text-foreground">active</span>. It probes the
+        first spreadsheet on the list (or the first folder, if you listed no spreadsheets), so a pass proves
+        the credentials and that one ID — not every ID here.
+      </Callout>
     </FieldGroup>
   );
 }

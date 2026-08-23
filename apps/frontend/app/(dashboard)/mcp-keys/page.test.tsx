@@ -159,6 +159,40 @@ describe("McpKeysPage", () => {
     expect(storageContains(sessionStorage, "sk_live_abcdef0123456789")).toBe(false);
   });
 
+  it("hands back a wiring command carrying the real token, and says why a tool may be missing", async () => {
+    listMcpKeysMock.mockResolvedValue([]);
+    createMcpKeyMock.mockResolvedValue({
+      id: "new-key",
+      name: "New key",
+      apiKey: "sk_live_abcdef0123456789",
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+    } satisfies CreateMcpKeyResponse);
+
+    renderPage();
+    await screen.findByText(/no mcp keys yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "New key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    const command = (await screen.findByText(/claude mcp add sapanjai/)).textContent ?? "";
+
+    // The token is interpolated into the command, not left as a placeholder:
+    // this dialog is the only moment it exists, so making the reader paste it
+    // in a second time is a step that can only go wrong.
+    expect(command).toContain("sk_live_abcdef0123456789");
+
+    // --header is variadic and swallows whatever follows it, so a command
+    // with the URL after the flag silently registers a server with no
+    // address. Order is the correctness property here, not cosmetics.
+    expect(command.indexOf("/mcp/")).toBeLessThan(command.indexOf("--header"));
+
+    // "Why can't the agent see drive_get_file" is a support ticket unless the
+    // separate-permission rule is stated where the key is handed over.
+    expect(screen.getByText("drive:read")).toBeInTheDocument();
+    expect(screen.getByText("drive_get_file")).toBeInTheDocument();
+  });
+
   it("rejects an out-of-range expiry instead of silently minting a never-expiring key", async () => {
     listMcpKeysMock.mockResolvedValue([]);
 

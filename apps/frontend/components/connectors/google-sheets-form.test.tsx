@@ -156,6 +156,37 @@ describe("GoogleSheetsForm", () => {
     expect(storageContains(sessionStorage, "1//0g-refresh-token-value")).toBe(false);
   });
 
+  // The scopes are restated as literals rather than imported from the
+  // component, so that a typo introduced there fails here instead of being
+  // echoed back. A refresh token minted with a wrong scope is only caught by
+  // the health check, which by design reports nothing about why it failed.
+  it("prints the exact read-only scopes a refresh token has to carry", () => {
+    render(<GoogleSheetsForm onSubmit={vi.fn()} submitting={false} />);
+
+    expect(
+      screen.getByText("https://www.googleapis.com/auth/spreadsheets.readonly"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("https://www.googleapis.com/auth/drive.readonly")).toBeInTheDocument();
+  });
+
+  it("points at the walkthrough for the credentials it can't help you obtain", () => {
+    render(<GoogleSheetsForm onSubmit={vi.fn()} submitting={false} />);
+
+    expect(screen.getByRole("link", { name: /walk through/i })).toHaveAttribute(
+      "href",
+      "/connectors/google-sheets-setup",
+    );
+  });
+
+  it("says plainly that the allowlist, not the token, is what bounds access", () => {
+    render(<GoogleSheetsForm onSubmit={vi.fn()} submitting={false} />);
+
+    // The single most common support question is a correctly-credentialled
+    // connector that "can't see" a sheet nobody added to the list, so the
+    // form has to make the boundary explicit rather than implying it.
+    expect(screen.getByText(/allowlist is the boundary/i)).toBeInTheDocument();
+  });
+
   it("renders the secret fields as password inputs so they aren't shoulder-surfed", () => {
     render(<GoogleSheetsForm onSubmit={vi.fn()} submitting={false} />);
 

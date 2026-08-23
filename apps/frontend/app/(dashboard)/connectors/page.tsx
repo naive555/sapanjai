@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PlusIcon } from "lucide-react";
+import { BookOpenIcon, PlusIcon } from "lucide-react";
 import { Controller, useForm, useWatch, type Control } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -214,6 +214,9 @@ export default function ConnectorsPage() {
         title="connectors"
         description="Upstream connections (Google Sheets, and the generic skeleton) for the MCP gateway."
       >
+        <Button variant="ghost" size="sm" render={<Link href="/connectors/google-sheets-setup" />}>
+          <BookOpenIcon className="size-4" /> Setup guide
+        </Button>
         <Dialog
           open={createOpen}
           onOpenChange={(open) => {
@@ -394,7 +397,14 @@ export default function ConnectorsPage() {
             })
           ) : (
             <TableMessage colSpan={6}>
-              No connectors yet. Create one to give the MCP gateway an upstream to reach.
+              No connectors yet. Create one to give the MCP gateway an upstream to reach — or{" "}
+              <Link
+                href="/connectors/google-sheets-setup"
+                className="text-foreground underline underline-offset-4 hover:text-signal"
+              >
+                walk through the Google setup
+              </Link>{" "}
+              first if you don&apos;t have credentials yet.
             </TableMessage>
           )}
         </TableBody>
