@@ -370,8 +370,8 @@ export default function McpKeysPage() {
                 <p className="text-sm font-medium">Point a client at a connector</p>
                 <p className="text-sm text-muted-foreground">
                   The endpoint is one per connector. Replace the host with your Sapanjai API address (the API,
-                  not this dashboard) and <span className="font-mono">CONNECTOR_ID</span> with the id from the
-                  connector&apos;s own page URL on{" "}
+                  not this dashboard) and <span className="font-mono">CONNECTOR_ID</span> with the ID shown on
+                  the connector&apos;s row on{" "}
                   <Link
                     href="/connectors"
                     className="text-foreground underline underline-offset-4 hover:text-signal"

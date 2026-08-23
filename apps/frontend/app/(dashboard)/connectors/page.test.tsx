@@ -213,4 +213,29 @@ describe("ConnectorsPage", () => {
       expect(cached).not.toContain(secret);
     });
   });
+
+  it("exposes each connector's id, truncated on screen but copied whole", async () => {
+    const id = "7f3a91c2-4e0b-4d18-9a55-2c6b8e1f0d34";
+    // A generic connector on purpose: its name isn't a link, so before this
+    // column there was no way to reach its id from the dashboard at all.
+    listConnectorsMock.mockResolvedValue([makeConnector({ id, name: "Ledger", type: "generic" })]);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    renderPage();
+
+    // Truncated for the column's sake, but the whole value has to stay
+    // reachable — an id you can only read the first eight characters of is
+    // no more use than one that isn't shown.
+    const copy = await screen.findByRole("button", { name: `Copy connector ID ${id}` });
+    expect(copy).toHaveAttribute("title", id);
+    expect(copy.textContent).not.toContain(id);
+
+    fireEvent.click(copy);
+
+    // The MCP endpoint URL needs every character; a truncated paste 404s
+    // with a message that deliberately can't say why.
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(id));
+  });
 });

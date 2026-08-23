@@ -16,6 +16,7 @@ import {
   toGoogleSheetsConfig,
   type GoogleSheetsFieldValues,
 } from "@/components/connectors/google-sheets-form";
+import { CopyableId } from "@/components/copyable-id";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -333,13 +334,13 @@ export default function ConnectorsPage() {
       </PageHeader>
 
       <DataTable
-        columns={["Name", "Type", "Status", "Last health check", "Created", { label: "", align: "end" }]}
+        columns={["Name", "ID", "Type", "Status", "Last health check", "Created", { label: "", align: "end" }]}
       >
         <TableBody>
           {isLoading ? (
-            <TableMessage colSpan={6}>Loading…</TableMessage>
+            <TableMessage colSpan={7}>Loading…</TableMessage>
           ) : isError ? (
-            <TableMessage colSpan={6}>
+            <TableMessage colSpan={7}>
               {error instanceof ApiError && error.status === 403
                 ? "You don't have permission to view connectors in this organization."
                 : "Failed to load connectors."}
@@ -361,6 +362,16 @@ export default function ConnectorsPage() {
                     ) : (
                       connector.name
                     )}
+                  </TableCell>
+                  {/*
+                    * The id is the one field an MCP client actually needs —
+                    * POST /mcp/:connectorId — and before this column the only
+                    * way to obtain it was to open a google_sheets connector
+                    * and read the address bar, which left generic connectors
+                    * with no route to their own id at all.
+                    */}
+                  <TableCell>
+                    <CopyableId value={connector.id} label="connector ID" />
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{typeLabel(connector.type)}</TableCell>
                   <TableCell>
@@ -396,7 +407,7 @@ export default function ConnectorsPage() {
               );
             })
           ) : (
-            <TableMessage colSpan={6}>
+            <TableMessage colSpan={7}>
               No connectors yet. Create one to give the MCP gateway an upstream to reach — or{" "}
               <Link
                 href="/connectors/google-sheets-setup"
