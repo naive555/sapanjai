@@ -73,5 +73,11 @@ sqlc:
 	cd apps/backend && sqlc generate
 
 ## Regenerate Swagger/OpenAPI docs (requires swag installed: go install github.com/swaggo/swag/cmd/swag@latest)
+## Deliberately WITHOUT --useStructName: that flag names each definition by its
+## bare Go struct name, so every module's CreateRequest/SuccessResponse collapsed
+## into one definition and whichever package swag parsed last silently won —
+## /swagger showed organization.CreateRequest as the body of POST /mcp-keys and
+## POST /connectors. Package-qualified names are uglier but cannot collide as
+## modules are added. Do not re-add the flag.
 swagger:
-	cd apps/backend && swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal --useStructName
+	cd apps/backend && swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal

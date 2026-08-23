@@ -62,26 +62,26 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/LogResponse"
+                                "$ref": "#/definitions/internal_module_auditlog.LogResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -106,7 +106,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/LoginRequest"
+                            "$ref": "#/definitions/internal_module_auth.LoginRequest"
                         }
                     }
                 ],
@@ -114,25 +114,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/TokenResponse"
+                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
                         }
                     },
                     "401": {
                         "description": "INVALID_CREDENTIALS",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "429": {
                         "description": "TOO_MANY_ATTEMPTS",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -163,7 +163,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/RefreshRequest"
+                            "$ref": "#/definitions/internal_module_auth.RefreshRequest"
                         }
                     }
                 ],
@@ -171,13 +171,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/LogoutResponse"
+                            "$ref": "#/definitions/internal_module_auth.LogoutResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -202,7 +202,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/RefreshRequest"
+                            "$ref": "#/definitions/internal_module_auth.RefreshRequest"
                         }
                     }
                 ],
@@ -210,19 +210,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/TokenResponse"
+                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
                         }
                     },
                     "401": {
                         "description": "INVALID_REFRESH_TOKEN / REFRESH_TOKEN_REUSE / REFRESH_TOKEN_EXPIRED",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -247,7 +247,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/RegisterRequest"
+                            "$ref": "#/definitions/internal_module_auth.RegisterRequest"
                         }
                     }
                 ],
@@ -255,19 +255,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/TokenResponse"
+                            "$ref": "#/definitions/internal_module_auth.TokenResponse"
                         }
                     },
                     "409": {
                         "description": "EMAIL_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -302,20 +302,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/ConnectorResponse"
+                                "$ref": "#/definitions/internal_module_connector.ConnectorResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:read",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -350,7 +350,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/CreateRequest"
+                            "$ref": "#/definitions/internal_module_connector.CreateRequest"
                         }
                     }
                 ],
@@ -358,31 +358,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ConnectorResponse"
+                            "$ref": "#/definitions/internal_module_connector.ConnectorResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:write / LIMIT_EXCEEDED",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "CONNECTOR_NAME_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed / INVALID_CONNECTOR_TYPE",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -422,25 +422,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ConnectorResponse"
+                            "$ref": "#/definitions/internal_module_connector.ConnectorResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:read",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -478,25 +478,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_connector.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:delete",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -538,7 +538,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/UpdateRequest"
+                            "$ref": "#/definitions/internal_module_connector.UpdateRequest"
                         }
                     }
                 ],
@@ -546,31 +546,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ConnectorResponse"
+                            "$ref": "#/definitions/internal_module_connector.ConnectorResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:write",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -610,31 +610,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/ConnectorResponse"
+                            "$ref": "#/definitions/internal_module_connector.ConnectorResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: connector:write",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "501": {
                         "description": "HEALTH_CHECK_UNSUPPORTED",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -689,20 +689,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/MCPKeyResponse"
+                                "$ref": "#/definitions/internal_module_mcpkey.MCPKeyResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: mcpkey:read",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -737,7 +737,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/CreateRequest"
+                            "$ref": "#/definitions/internal_module_mcpkey.CreateRequest"
                         }
                     }
                 ],
@@ -745,31 +745,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/CreateResponse"
+                            "$ref": "#/definitions/internal_module_mcpkey.CreateResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: mcpkey:write",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "MCP_KEY_NAME_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -809,25 +809,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_mcpkey.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Missing permission: mcpkey:delete",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MCP_KEY_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -853,7 +853,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/MembershipResponse"
+                                "$ref": "#/definitions/internal_module_organization.MembershipResponse"
                             }
                         }
                     }
@@ -882,7 +882,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/CreateRequest"
+                            "$ref": "#/definitions/internal_module_organization.CreateRequest"
                         }
                     }
                 ],
@@ -890,19 +890,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/OrgResponse"
+                            "$ref": "#/definitions/internal_module_organization.OrgResponse"
                         }
                     },
                     "409": {
                         "description": "SLUG_TAKEN",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -939,7 +939,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/InviteRequest"
+                            "$ref": "#/definitions/internal_module_organization.InviteRequest"
                         }
                     }
                 ],
@@ -947,37 +947,37 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_organization.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "FORBIDDEN / LIMIT_EXCEEDED / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "USER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "ALREADY_MEMBER",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1012,20 +1012,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/MemberResponse"
+                                "$ref": "#/definitions/internal_module_organization.MemberResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1065,25 +1065,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_organization.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "CANNOT_REMOVE_OWNER / FORBIDDEN / Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1109,14 +1109,14 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/PlanResponse"
+                                "$ref": "#/definitions/internal_module_subscription.PlanResponse"
                             }
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1153,7 +1153,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/AssignRoleRequest"
+                            "$ref": "#/definitions/internal_module_rbac.AssignRoleRequest"
                         }
                     }
                 ],
@@ -1161,31 +1161,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_rbac.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "MEMBER_NOT_FOUND / ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1220,20 +1220,20 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/RoleResponse"
+                                "$ref": "#/definitions/internal_module_rbac.RoleResponse"
                             }
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1268,7 +1268,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/CreateRoleRequest"
+                            "$ref": "#/definitions/internal_module_rbac.CreateRoleRequest"
                         }
                     }
                 ],
@@ -1276,25 +1276,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/RoleRowResponse"
+                            "$ref": "#/definitions/internal_module_rbac.RoleRowResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1338,7 +1338,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/UpdatePermissionsRequest"
+                            "$ref": "#/definitions/internal_module_rbac.UpdatePermissionsRequest"
                         }
                     }
                 ],
@@ -1346,31 +1346,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_rbac.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "ROLE_NOT_FOUND",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1403,19 +1403,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SubscriptionResponse"
+                            "$ref": "#/definitions/internal_module_subscription.SubscriptionResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1452,7 +1452,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/AssignRequest"
+                            "$ref": "#/definitions/internal_module_subscription.AssignRequest"
                         }
                     }
                 ],
@@ -1460,25 +1460,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
+                            "$ref": "#/definitions/internal_module_subscription.SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Missing x-organization-id header",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "403": {
                         "description": "Not a member of this organization",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     },
                     "422": {
                         "description": "Validation failed",
                         "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
                     }
                 }
@@ -1486,25 +1486,33 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "AssignRequest": {
+        "github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse": {
             "type": "object",
-            "required": [
-                "planId"
-            ],
             "properties": {
-                "planId": {
+                "message": {
                     "type": "string"
                 }
             }
         },
-        "AssignRoleRequest": {
+        "internal_module_auditlog.LogResponse": {
             "type": "object",
-            "required": [
-                "roleId",
-                "userId"
-            ],
             "properties": {
-                "roleId": {
+                "action": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "organizationId": {
                     "type": "string"
                 },
                 "userId": {
@@ -1512,7 +1520,72 @@ const docTemplate = `{
                 }
             }
         },
-        "ConnectorResponse": {
+        "internal_module_auth.LoginRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_auth.LogoutResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_auth.RefreshRequest": {
+            "type": "object",
+            "required": [
+                "refreshToken"
+            ],
+            "properties": {
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_auth.RegisterRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string",
+                    "minLength": 8
+                }
+            }
+        },
+        "internal_module_auth.TokenResponse": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_connector.ConnectorResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1541,24 +1614,84 @@ const docTemplate = `{
                 }
             }
         },
-        "CreateRequest": {
+        "internal_module_connector.CreateRequest": {
             "type": "object",
             "required": [
+                "config",
                 "name",
-                "slug"
+                "type"
             ],
             "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "name": {
                     "type": "string",
+                    "maxLength": 100,
                     "minLength": 1
                 },
-                "slug": {
-                    "type": "string",
-                    "minLength": 2
+                "type": {
+                    "type": "string"
                 }
             }
         },
-        "CreateResponse": {
+        "internal_module_connector.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_connector.UpdateRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "inactive",
+                        "error"
+                    ]
+                }
+            }
+        },
+        "internal_module_mcpkey.CreateRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "expiresInDays": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                },
+                "scopes": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_module_mcpkey.CreateResponse": {
             "type": "object",
             "properties": {
                 "apiKey": {
@@ -1578,104 +1711,7 @@ const docTemplate = `{
                 }
             }
         },
-        "CreateRoleRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "InviteRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "role"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "member"
-                    ]
-                }
-            }
-        },
-        "LogResponse": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string"
-                },
-                "createdAt": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "organizationId": {
-                    "type": "string"
-                },
-                "userId": {
-                    "type": "string"
-                }
-            }
-        },
-        "LoginRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "password"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                }
-            }
-        },
-        "LogoutResponse": {
-            "type": "object",
-            "properties": {
-                "success": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "MCPKeyResponse": {
+        "internal_module_mcpkey.MCPKeyResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1710,7 +1746,51 @@ const docTemplate = `{
                 }
             }
         },
-        "MemberResponse": {
+        "internal_module_mcpkey.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_organization.CreateRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "slug"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "slug": {
+                    "type": "string",
+                    "minLength": 2
+                }
+            }
+        },
+        "internal_module_organization.InviteRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "role"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "admin",
+                        "member"
+                    ]
+                }
+            }
+        },
+        "internal_module_organization.MemberResponse": {
             "type": "object",
             "properties": {
                 "displayName": {
@@ -1730,7 +1810,7 @@ const docTemplate = `{
                 }
             }
         },
-        "MembershipResponse": {
+        "internal_module_organization.MembershipResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1740,7 +1820,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "organization": {
-                    "$ref": "#/definitions/OrgResponse"
+                    "$ref": "#/definitions/internal_module_organization.OrgResponse"
                 },
                 "organizationId": {
                     "type": "string"
@@ -1753,7 +1833,7 @@ const docTemplate = `{
                 }
             }
         },
-        "OrgResponse": {
+        "internal_module_organization.OrgResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1773,7 +1853,51 @@ const docTemplate = `{
                 }
             }
         },
-        "PermissionResponse": {
+        "internal_module_organization.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_rbac.AssignRoleRequest": {
+            "type": "object",
+            "required": [
+                "roleId",
+                "userId"
+            ],
+            "properties": {
+                "roleId": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_rbac.CreateRoleRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_module_rbac.PermissionResponse": {
             "type": "object",
             "properties": {
                 "action": {
@@ -1790,7 +1914,83 @@ const docTemplate = `{
                 }
             }
         },
-        "PlanResponse": {
+        "internal_module_rbac.RoleResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_rbac.PermissionResponse"
+                    }
+                }
+            }
+        },
+        "internal_module_rbac.RoleRowResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_rbac.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_rbac.UpdatePermissionsRequest": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_module_subscription.AssignRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "planId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_subscription.PlanResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1810,84 +2010,7 @@ const docTemplate = `{
                 }
             }
         },
-        "RefreshRequest": {
-            "type": "object",
-            "required": [
-                "refreshToken"
-            ],
-            "properties": {
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
-        "RegisterRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "password"
-            ],
-            "properties": {
-                "displayName": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string",
-                    "minLength": 8
-                }
-            }
-        },
-        "RoleResponse": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "organizationId": {
-                    "type": "string"
-                },
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/PermissionResponse"
-                    }
-                }
-            }
-        },
-        "RoleRowResponse": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "organizationId": {
-                    "type": "string"
-                }
-            }
-        },
-        "SubscriptionResponse": {
+        "internal_module_subscription.SubscriptionResponse": {
             "type": "object",
             "properties": {
                 "createdAt": {
@@ -1906,7 +2029,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "plan": {
-                    "$ref": "#/definitions/PlanResponse"
+                    "$ref": "#/definitions/internal_module_subscription.PlanResponse"
                 },
                 "planId": {
                     "type": "string"
@@ -1916,55 +2039,11 @@ const docTemplate = `{
                 }
             }
         },
-        "SuccessResponse": {
+        "internal_module_subscription.SuccessResponse": {
             "type": "object",
             "properties": {
                 "success": {
                     "type": "boolean"
-                }
-            }
-        },
-        "TokenResponse": {
-            "type": "object",
-            "properties": {
-                "accessToken": {
-                    "type": "string"
-                },
-                "refreshToken": {
-                    "type": "string"
-                }
-            }
-        },
-        "UpdatePermissionsRequest": {
-            "type": "object",
-            "properties": {
-                "permissions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "UpdateRequest": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 100,
-                    "minLength": 1
-                },
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "active",
-                        "inactive",
-                        "error"
-                    ]
                 }
             }
         }

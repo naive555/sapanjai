@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/sapanjai/backend/internal/config"
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	applogger "github.com/sapanjai/backend/internal/shared/logger"
-	"github.com/joho/godotenv"
 )
 
 var defaultPlans = []struct {
