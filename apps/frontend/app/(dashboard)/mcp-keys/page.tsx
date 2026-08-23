@@ -16,6 +16,7 @@ import { PageHeader, TableMessage } from "@/components/page-header";
 import { PermissionToken } from "@/components/permission-token";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/lib/api/client";
@@ -44,20 +53,81 @@ import { useActiveOrgId } from "@/lib/org/active-org";
 // null, silently minting a never-expiring key instead of rejecting the input.
 const MAX_EXPIRES_IN_DAYS = 3650;
 
-const createKeySchema = z.object({
-  name: z.string().min(1, "Name is required").max(100, "Name must be 100 characters or fewer"),
-  // Kept as a string on the form (a plain text input), then parsed to a
-  // number — or omitted entirely — in the mutation below. Blank means "never
-  // expires", so it has to stay distinguishable from "0".
-  expiresInDays: z
-    .string()
-    .optional()
-    .refine(
-      (value) =>
-        !value || (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= MAX_EXPIRES_IN_DAYS),
-      { message: `Must be a whole number between 1 and ${MAX_EXPIRES_IN_DAYS}` },
-    ),
-});
+// Mirrors permActionPattern in apps/backend/internal/server/validator.go —
+// that file is the source of truth for what a valid RBAC action string looks
+// like. This is a client-side echo of it so a malformed free-text scope
+// surfaces as an inline field error instead of a round-trip 422.
+const PERM_ACTION_PATTERN = /^(\*|[a-z][a-z0-9_]*:(\*|[a-z][a-z0-9_]*))$/;
+
+// Mirrors the `max=64` on CreateRequest.Scopes (mcpkey/dto.go).
+const MAX_SCOPES = 64;
+
+// The actions the gateway actually gates today (docs/08-gateway-core.md §3):
+// sapanjai_describe_connector on connector:read, the sheets_*/drive_* read
+// tools on sheets:read/drive:read. The catalog grows with each new adapter,
+// so anything else — a future FlowAccount action, say — goes through the
+// free-text field below rather than waiting on this list.
+const SCOPE_CHECKBOXES = [
+  { scope: "connector:read", field: "scopeConnectorRead" },
+  { scope: "sheets:read", field: "scopeSheetsRead" },
+  { scope: "drive:read", field: "scopeDriveRead" },
+] as const;
+
+// Splits a free-form scope entry on commas and/or whitespace — same
+// forgiving parse as parsePermissions on the roles page
+// (app/(dashboard)/roles/page.tsx), applied to the same shape of input.
+function parseCustomScopes(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const createKeySchema = z
+  .object({
+    name: z.string().min(1, "Name is required").max(100, "Name must be 100 characters or fewer"),
+    // Kept as a string on the form (a plain text input), then parsed to a
+    // number — or omitted entirely — in the mutation below. Blank means "never
+    // expires", so it has to stay distinguishable from "0".
+    expiresInDays: z
+      .string()
+      .optional()
+      .refine(
+        (value) =>
+          !value || (/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= MAX_EXPIRES_IN_DAYS),
+        { message: `Must be a whole number between 1 and ${MAX_EXPIRES_IN_DAYS}` },
+      ),
+    scopeConnectorRead: z.boolean(),
+    scopeSheetsRead: z.boolean(),
+    scopeDriveRead: z.boolean(),
+    // Free text for anything outside SCOPE_CHECKBOXES. A single string field
+    // can't carry a per-token check on its own, so it's parsed and validated
+    // token-by-token in superRefine below.
+    customScopes: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    const tokens = parseCustomScopes(values.customScopes);
+    const invalidToken = tokens.find((token) => !PERM_ACTION_PATTERN.test(token));
+    if (invalidToken) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["customScopes"],
+        message: `"${invalidToken}" isn't a valid action — expected "*", "resource:verb", or "resource:*".`,
+      });
+      return;
+    }
+    const checkboxCount = [values.scopeConnectorRead, values.scopeSheetsRead, values.scopeDriveRead].filter(
+      Boolean,
+    ).length;
+    if (checkboxCount + tokens.length > MAX_SCOPES) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["customScopes"],
+        message: `Too many scopes selected (max ${MAX_SCOPES}).`,
+      });
+    }
+  });
 type CreateKeyValues = z.infer<typeof createKeySchema>;
 
 type KeyStatus = "active" | "expired" | "revoked";
@@ -112,7 +182,14 @@ export default function McpKeysPage() {
   // ---- create key ----
   const createForm = useForm<CreateKeyValues>({
     resolver: zodResolver(createKeySchema),
-    defaultValues: { name: "", expiresInDays: "" },
+    defaultValues: {
+      name: "",
+      expiresInDays: "",
+      scopeConnectorRead: false,
+      scopeSheetsRead: false,
+      scopeDriveRead: false,
+      customScopes: "",
+    },
   });
 
   const createMutation = useMutation({
@@ -121,11 +198,32 @@ export default function McpKeysPage() {
     // reset() alone just detaches the hook and leaves the entry sitting in
     // the MutationCache for gcTime (5 minutes by default).
     gcTime: 0,
-    mutationFn: (values: CreateKeyValues) =>
-      createMcpKey({
+    mutationFn: (values: CreateKeyValues) => {
+      // Deduped: checking connector:read *and* typing it into the free-text
+      // field is one scope, not two — the backend would otherwise store the
+      // repeat verbatim in the text[] column and the table would render the
+      // same token twice. Set preserves insertion order, so the checkbox
+      // actions stay ahead of the free-text ones.
+      const scopes = [
+        ...new Set([
+          ...(values.scopeConnectorRead ? ["connector:read"] : []),
+          ...(values.scopeSheetsRead ? ["sheets:read"] : []),
+          ...(values.scopeDriveRead ? ["drive:read"] : []),
+          ...parseCustomScopes(values.customScopes),
+        ]),
+      ];
+      return createMcpKey({
         name: values.name,
         expiresInDays: values.expiresInDays ? Number(values.expiresInDays) : undefined,
-      }),
+        // Invariant, load-bearing: an empty selection must omit `scopes`
+        // from the request body entirely, never send `scopes: []`. The
+        // backend rejects an empty list with a 422 by design
+        // (docs/08-gateway-core.md §4, Q4) — a key that permits nothing is
+        // a configuration mistake, not "unrestricted". Omitting the field is
+        // how "ride the creator's live permissions" is spelled on the wire.
+        ...(scopes.length > 0 ? { scopes } : {}),
+      });
+    },
     onSuccess: (created) => {
       invalidateKeys();
       createForm.reset();
@@ -220,6 +318,49 @@ export default function McpKeysPage() {
                   <FieldDescription>Leave blank for a key that never expires.</FieldDescription>
                   <FieldError errors={[createForm.formState.errors.expiresInDays]} />
                 </Field>
+                <FieldSet>
+                  <FieldLegend variant="label">Scopes</FieldLegend>
+                  <FieldDescription>
+                    Leave everything below untouched and the key rides your current permissions, re-checked
+                    on every call. Selecting scopes narrows the key to that subset instead — narrows only,
+                    never widens.
+                  </FieldDescription>
+                  <div className="flex flex-col gap-2">
+                    {SCOPE_CHECKBOXES.map(({ scope, field: fieldName }) => {
+                      const inputId = `key-scope-${scope.replace(":", "-")}`;
+                      return (
+                        <Field key={scope} orientation="horizontal" className="gap-2">
+                          <Controller
+                            control={createForm.control}
+                            name={fieldName}
+                            render={({ field }) => (
+                              <Checkbox
+                                id={inputId}
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            )}
+                          />
+                          <FieldLabel htmlFor={inputId} className="font-mono text-sm font-normal">
+                            {scope}
+                          </FieldLabel>
+                        </Field>
+                      );
+                    })}
+                  </div>
+                  <Field data-invalid={!!createForm.formState.errors.customScopes}>
+                    <FieldLabel htmlFor="key-scope-custom">Other scopes</FieldLabel>
+                    <Controller
+                      control={createForm.control}
+                      name="customScopes"
+                      render={({ field }) => (
+                        <Input id="key-scope-custom" placeholder="billing:read, invoice:write" {...field} />
+                      )}
+                    />
+                    <FieldDescription>Comma- or space-separated. Only needed for an action outside the list above.</FieldDescription>
+                    <FieldError errors={[createForm.formState.errors.customScopes]} />
+                  </Field>
+                </FieldSet>
               </FieldGroup>
               <DialogFooter>
                 <Button type="submit" disabled={createMutation.isPending}>

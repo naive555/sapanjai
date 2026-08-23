@@ -244,7 +244,11 @@ export function listMcpKeys() {
 }
 
 // expiresInDays omitted (or undefined) mints a key that never expires.
-export function createMcpKey(input: { name: string; expiresInDays?: number }) {
+// scopes follows the same three-state contract as McpKeyResponse.scopes:
+// omitted/undefined means unrestricted (the key rides the creator's live
+// grant); a non-empty array narrows it. Never pass `[]` here — the backend
+// rejects an empty list with a 422 by design (docs/08-gateway-core.md §4).
+export function createMcpKey(input: { name: string; expiresInDays?: number; scopes?: string[] }) {
   return apiRequest<CreateMcpKeyResponse>("/mcp-keys", { method: "POST", body: input });
 }
 

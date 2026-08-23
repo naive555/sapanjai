@@ -214,6 +214,102 @@ describe("McpKeysPage", () => {
     expect(createMcpKeyMock).not.toHaveBeenCalled();
   });
 
+  it("omits `scopes` entirely when nothing is selected — never sends an empty array", async () => {
+    listMcpKeysMock.mockResolvedValue([]);
+    createMcpKeyMock.mockResolvedValue({
+      id: "new-key",
+      name: "New key",
+      apiKey: "sk_live_abcdef0123456789",
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+    } satisfies CreateMcpKeyResponse);
+
+    renderPage();
+    await screen.findByText(/no mcp keys yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "New key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => expect(createMcpKeyMock).toHaveBeenCalledTimes(1));
+    // The property must be genuinely absent, not present-and-empty: `[]` is
+    // a 422 by design (docs/08-gateway-core.md §4, Q4).
+    expect(createMcpKeyMock.mock.calls[0]![0]).not.toHaveProperty("scopes");
+  });
+
+  it("sends exactly the selected scopes — checkboxes plus free text, and nothing else", async () => {
+    listMcpKeysMock.mockResolvedValue([]);
+    createMcpKeyMock.mockResolvedValue({
+      id: "new-key",
+      name: "New key",
+      apiKey: "sk_live_abcdef0123456789",
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+    } satisfies CreateMcpKeyResponse);
+
+    renderPage();
+    await screen.findByText(/no mcp keys yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Scoped key" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "connector:read" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "sheets:read" }));
+    // Free text is parsed on comma and/or whitespace.
+    fireEvent.change(screen.getByLabelText("Other scopes"), {
+      target: { value: "billing:read, invoice:write" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(createMcpKeyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Scoped key",
+          scopes: ["connector:read", "sheets:read", "billing:read", "invoice:write"],
+        }),
+      ),
+    );
+  });
+
+  it("sends a scope once when a checkbox and the free-text field name the same action", async () => {
+    listMcpKeysMock.mockResolvedValue([]);
+    createMcpKeyMock.mockResolvedValue({
+      id: "new-key",
+      name: "Dupe key",
+      apiKey: "sk_live_abcdef0123456789",
+      expiresAt: null,
+      createdAt: new Date().toISOString(),
+    } satisfies CreateMcpKeyResponse);
+
+    renderPage();
+    await screen.findByText(/no mcp keys yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Dupe key" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "connector:read" }));
+    fireEvent.change(screen.getByLabelText("Other scopes"), {
+      target: { value: "connector:read, billing:read" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(createMcpKeyMock).toHaveBeenCalledWith(
+        expect.objectContaining({ scopes: ["connector:read", "billing:read"] }),
+      ),
+    );
+  });
+
+  it("rejects a malformed free-text scope with an inline error instead of a round-trip 422", async () => {
+    listMcpKeysMock.mockResolvedValue([]);
+
+    renderPage();
+    await screen.findByText(/no mcp keys yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create key/i }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Bad scope key" } });
+    // Uppercase fails the same permaction regex the backend enforces.
+    fireEvent.change(screen.getByLabelText("Other scopes"), { target: { value: "Connector:Read" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByText(/isn't a valid action/i)).toBeInTheDocument();
+    expect(createMcpKeyMock).not.toHaveBeenCalled();
+  });
+
   it("revokes the selected key and refetches the list", async () => {
     const key: McpKeyResponse = {
       id: "key-1",
