@@ -42,6 +42,9 @@ export default function RegisterPage() {
         displayName: values.displayName?.trim() || undefined,
       });
       applyTokens(tokens);
+      // Deliberately not /overview, unlike login: someone who just
+      // registered has no organization at all yet, and the overview would
+      // only tell them to go make one. Send them where that happens.
       router.replace("/organizations");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Something went wrong. Try again.");

@@ -19,6 +19,15 @@ import { cn } from "@/lib/utils";
 // drives the disabled/greyed-out state below — the RequireAuth/RequireOrg
 // split survives as behaviour, it just isn't the user-facing vocabulary.
 const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; label: string }[] }[] = [
+  // The landing page leads the nav with no eyebrow of its own: a group
+  // label reading "overview" directly above an item reading "Overview" is
+  // the same word twice. It still carries requiresOrg, so it greys out
+  // exactly like every other org-scoped route when nothing is selected.
+  {
+    label: "",
+    requiresOrg: true,
+    items: [{ href: "/overview", label: "Overview" }],
+  },
   {
     label: "connection",
     requiresOrg: true,
@@ -57,8 +66,10 @@ function NavLinks({ className }: { className?: string }) {
   return (
     <>
       {NAV_GROUPS.map((group) => (
-        <div key={group.label} className={className}>
-          <div className="label-eyebrow mb-2 hidden px-2.5 md:block">{group.label}</div>
+        <div key={group.label || group.items[0].href} className={className}>
+          {group.label && (
+            <div className="label-eyebrow mb-2 hidden px-2.5 md:block">{group.label}</div>
+          )}
           <div className="flex gap-1 md:flex-col">
             {group.items.map((item) => {
               const disabled = group.requiresOrg && !hasActiveOrg;
@@ -131,7 +142,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-screen flex-1">
       <aside className="hidden w-56 shrink-0 flex-col gap-7 border-r bg-sidebar px-3 py-5 md:flex">
         <Link
-          href="/organizations"
+          href="/overview"
           className="font-display px-2.5 text-[0.9375rem] leading-none focus-visible:ring-2
             focus-visible:ring-ring/50 focus-visible:outline-none"
         >

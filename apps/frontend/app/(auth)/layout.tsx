@@ -13,7 +13,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (status === "authed") {
-      router.replace("/organizations");
+      router.replace("/overview");
     }
   }, [status, router]);
 

@@ -70,7 +70,16 @@ export function ConnectorSpan({
   mcpKeys,
   recentLogs,
 }: {
-  connector: ConnectorResponse;
+  /**
+   * `null` is the explicit zero-connector mode (overview page, Phase 5): the
+   * whole span renders dashed as the onboarding checklist, each node's
+   * caption naming the step that creates it. Deliberately not a synthetic
+   * `ConnectorResponse` stand-in — a fabricated row (a fake id, a fake
+   * "generic" type) would lie to every downstream reader of this component,
+   * so the connector/upstream nodes below branch on `connector === null`
+   * explicitly instead of being handed a lie to render.
+   */
+  connector: ConnectorResponse | null;
   mcpKeys: McpKeyResponse[];
   recentLogs: AuditLogResponse[];
 }) {
@@ -89,8 +98,8 @@ export function ConnectorSpan({
   const callCount = recentLogs.filter((log) => log.action === "mcp.tool.called").length;
   const deniedCount = recentLogs.filter((log) => log.action === "mcp.tool.denied").length;
 
-  const connectorActive = connector.status === "active";
-  const connectorError = connector.status === "error";
+  const connectorActive = connector?.status === "active";
+  const connectorError = connector?.status === "error";
 
   const nodes: NodeSpec[] = [
     {
@@ -128,25 +137,29 @@ export function ConnectorSpan({
     },
     {
       eyebrow: "connector",
-      value: connector.name,
-      caption: connectorActive
-        ? "active"
-        : connectorError
-          ? "check the config, then run a health check"
-          : "run a health check",
+      value: connector ? connector.name : "none",
+      caption: !connector
+        ? "create a connector to get started"
+        : connectorActive
+          ? "active"
+          : connectorError
+            ? "check the config, then run a health check"
+            : "run a health check",
       ownBroken: !connectorActive,
     },
     {
       eyebrow: "upstream",
-      value: typeLabel(connector.type),
-      caption: connectorActive
-        ? connector.lastHealthCheckAt
-          ? `checked ${formatTimestamp(connector.lastHealthCheckAt)}`
-          : "checked"
-        : "not reachable until the connector is active",
+      value: connector ? typeLabel(connector.type) : "—",
+      caption: !connector
+        ? "nothing to reach until a connector exists"
+        : connectorActive
+          ? connector.lastHealthCheckAt
+            ? `checked ${formatTimestamp(connector.lastHealthCheckAt)}`
+            : "checked"
+          : "not reachable until the connector is active",
       // Mirrors the connector node on purpose: nothing downstream of an
-      // inactive connector is actually reachable, so it never reads as
-      // "connected" on its own account either.
+      // inactive (or nonexistent) connector is actually reachable, so it
+      // never reads as "connected" on its own account either.
       ownBroken: !connectorActive,
     },
   ];
@@ -170,11 +183,11 @@ export function ConnectorSpan({
   const previousStatus = useRef<string | undefined>(undefined);
   const [sweep, setSweep] = useState(0);
   useEffect(() => {
-    if (previousStatus.current !== undefined && previousStatus.current !== "active" && connector.status === "active") {
+    if (previousStatus.current !== undefined && previousStatus.current !== "active" && connectorActive) {
       setSweep((n) => n + 1);
     }
-    previousStatus.current = connector.status;
-  }, [connector.status]);
+    previousStatus.current = connector?.status;
+  }, [connector?.status, connectorActive]);
 
   return (
     <div
