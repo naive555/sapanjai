@@ -1,6 +1,14 @@
 # Frontend — from platform console to gateway console
 
-> **Status: proposed, not started (2026-08-24).**
+> **Status: complete (planned 2026-08-24, finished 2026-08-24).** All 5 phases
+> shipped.
+>
+> - [x] Phase 1 — Foundation: `font-heading`, nav re-grouping, thesis copy (`e70237c`)
+> - [x] Phase 2 — Activity: typed gateway rows, the eight missing actions (`0c94ce6`)
+> - [x] Phase 3 — Connector detail: the Span, a permanent endpoint home (`cfbaa77`)
+> - [x] Phase 4 — Backend: `since` + repeatable `action` on `/audit-logs` (`8a9d1c6`)
+> - [x] Phase 5 — Overview: the Span as the front door *(in the working tree,
+>       not yet committed as of archiving)*
 >
 > **Read first:** `CLAUDE.md`, `docs/02-api-contract.md`, `docs/05-mcp-gateway.md`,
 > `docs/07-sheets-adapter-decisions.md`, `apps/frontend/app/globals.css` (the palette
@@ -16,6 +24,11 @@
 > **Execution rule:** this plan is phased, and each phase is an approval gate. Stop
 > after each phase, report what landed, and wait — approving one phase never approves
 > the next.
+>
+> **Archived 2026-08-24, once the last phase shipped.** The maintained state of this
+> work lives in the code and in `docs/02-api-contract.md` (the `/audit-logs` params
+> and the recorded-actions list) — those are the files to update when it changes
+> again, not this one.
 
 ---
 
@@ -322,10 +335,21 @@ states all render, plus dark mode and a 375px viewport.
   backend work listed as not-built in `docs/05` and `docs/07` §3.
 - CORS anything. The browser only ever calls same-origin `/api/*`.
 
-## 5. Open questions to settle before Phase 5
+## 5. Open questions — settled before Phase 5
+
+Both were put to the owner before Phase 5 was implemented, and both are reflected in
+the shipped code.
 
 - **Does the overview need a cross-connector view when an org has one connector?**
-  Most will. Recommendation: render the single Span full-width and skip the stack.
-- **Should `mcp.session.started` appear in the activity feed by default?** It fires on
-  every agent reconnect and will dominate the list. Recommendation: record it, but
-  filter it out of the default view and surface it as "last seen" on the Span instead.
+  **Settled as recommended:** a single connector renders its Span full-width; two or
+  more stack. `app/(dashboard)/overview/page.tsx` needs no branch for this — the Span
+  is full-width on its own, so the one-connector case falls out of the same `.map`.
+- **Should `mcp.session.started` appear in the activity feed by default?**
+  **Settled against the recommendation.** The plan proposed filtering it out of the
+  activity feed's default view; the owner scoped that narrower — hide it on the
+  **overview only**, and leave `/activity` exactly as it shipped in Phase 2. So the
+  overview's 24-hour counts exclude it (a reconnect is not tool traffic) and the Span
+  surfaces it as "last seen", while `/activity` still lists session rows by default
+  with the `mcp` namespace filter available. Rationale: `/activity` is the
+  everything-that-happened record, and silently dropping an action from it would make
+  a working agent look idle.
