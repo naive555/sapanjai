@@ -40,12 +40,15 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env.docker
+      - .env
     environment:
       # Built from the same vars/defaults as the db service above so the
-      # credentials can never drift apart. Not in .env.docker, because only
-      # compose knows the `db` service hostname.
+      # credentials can never drift apart. Overrides the host-side value in
+      # .env, because only compose knows the `db` service hostname.
       DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-sapanjai}?sslmode=disable
+      # Same reason: .env points at localhost for host-side `make api`, but
+      # from inside the network Redis answers to the `redis` service name.
+      REDIS_URL: redis://redis:6379
     depends_on:
       db:
         condition: service_healthy
@@ -59,14 +62,15 @@ services:
     container_name: sapanjai-worker
     entrypoint: ["/app/worker"]
     env_file:
-      - .env.docker
+      - .env
     environment:
       # The worker's internal ops endpoint; also what the image's
-      # HEALTHCHECK probes, overriding the API's PORT from .env.docker.
+      # HEALTHCHECK probes, overriding the API's PORT from .env.
       WORKER_PORT: "3001"
       HEALTHCHECK_PORT: "3001"
-      # Kept identical to the api service's — see the note there.
+      # Both kept identical to the api service's — see the notes there.
       DATABASE_URL: postgres://${DATABASE_USER:-username}:${DATABASE_PASSWORD:-password}@db:5432/${DATABASE_NAME:-sapanjai}?sslmode=disable
+      REDIS_URL: redis://redis:6379
     depends_on:
       db:
         condition: service_healthy

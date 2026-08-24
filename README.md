@@ -355,7 +355,9 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `SESSION_CLEANUP_RETENTION` | `720h` | how long a revoked-but-unexpired session survives (30d) |
 | `SESSION_CLEANUP_BATCH_SIZE` | `1000` | rows per `DELETE` statement |
 
-`DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname. `.env.docker` supplies the rest of the env for the containerized api/worker — throwaway dev placeholders, and it deliberately omits `DATABASE_URL` for the same reason. Like `.env`, it is git-ignored and created from a tracked template: `cp .env.docker.example .env.docker` before your first `docker compose up`.
+A single `.env` serves both paths — `make api`/`make worker` load it via godotenv, and compose passes the same file to the containerized api/worker as `env_file`. Only the two host-specific URLs differ, and compose overrides them per service rather than in a second file: `DATABASE_URL` (the `db` hostname) and `REDIS_URL` (`redis://redis:6379`). That is safe in both directions — `godotenv.Load` never overrides a variable compose has already set, and `.env` is in `apps/backend/.dockerignore`, so nothing is baked into the image.
+
+`DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname.
 
 Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (max 5 / 15 min), `worker:lock:<jobName>` (TTL ≈ job interval), `mcp:ratelimit:<connectorId>` (token bucket, idle TTL 2 min).
 
@@ -371,8 +373,7 @@ docker build -t sapanjai-api:dev ./apps/backend
 docker build -t sapanjai-web:dev ./apps/frontend
 
 # full stack: db, redis, api, worker, web — web waits on api's HEALTHCHECK
-cp .env.docker.example .env.docker   # once per clone; .env.docker is git-ignored
-docker compose up -d --build
+docker compose up -d --build   # reads the same .env as the host-side workflow
 open http://localhost:4000
 ```
 
