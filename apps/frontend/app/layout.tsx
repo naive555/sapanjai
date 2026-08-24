@@ -27,7 +27,7 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Sapanjai",
-  description: "Multi-tenant B2B SaaS platform dashboard",
+  description: "Managed MCP gateway — connect an agent to your systems, scoped and audited.",
 };
 
 export default function RootLayout({

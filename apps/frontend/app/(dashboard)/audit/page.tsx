@@ -85,7 +85,7 @@ export default function AuditPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="audit log" description="An append-only record of everything that happened here." />
+      <PageHeader title="activity" description="Every call an agent made, and everything it was refused." />
 
       <div className="flex flex-wrap items-end gap-4">
         <Filter label="Action">

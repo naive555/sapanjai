@@ -29,7 +29,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               Sapan<span className="text-signal">jai</span>
             </span>
             <p className="text-sm text-muted-foreground">
-              Tenants, roles, and an audit trail for all of it.
+              Give an agent a safe door into your systems.
             </p>
           </div>
           <ThemeToggle />

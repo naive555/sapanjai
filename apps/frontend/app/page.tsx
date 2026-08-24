@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-import { FullPageSkeleton } from "@/components/full-page-skeleton";
 import { useSession } from "@/lib/auth/use-session";
 
 export default function Home() {
@@ -18,5 +17,15 @@ export default function Home() {
     }
   }, [status, router]);
 
-  return <FullPageSkeleton />;
+  // Every visitor sees this for the instant it takes to resolve session
+  // status and redirect, so it is the product's actual first frame — a quiet
+  // wordmark and the thesis, not a loading skeleton with nothing to say.
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+      <span className="font-display text-base leading-none">
+        Sapan<span className="text-signal">jai</span>
+      </span>
+      <p className="text-sm text-muted-foreground">Give an agent a safe door into your systems.</p>
+    </div>
+  );
 }

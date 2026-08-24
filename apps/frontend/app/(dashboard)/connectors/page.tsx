@@ -213,7 +213,7 @@ export default function ConnectorsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="connectors"
-        description="Upstream connections (Google Sheets, and the generic skeleton) for the MCP gateway."
+        description="The systems an agent can reach through this organization."
       >
         <Button variant="ghost" size="sm" render={<Link href="/connectors/google-sheets-setup" />}>
           <BookOpenIcon className="size-4" /> Setup guide

@@ -22,6 +22,7 @@
   --font-sans: var(--font-plex-sans);
   --font-mono: var(--font-plex-mono);
   --font-display: var(--font-martian);
+  --font-heading: var(--font-plex-sans);
 
   /* Authority scale — used by role tiers, scope chain, permission grammar. */
   --color-signal: var(--signal);
@@ -189,6 +190,16 @@
   font-family: var(--font-display);
   font-variation-settings: "wdth" 87.5;
   letter-spacing: -0.03em;
+}
+
+/* Three type tiers, one body face doing double duty: display (Martian) is
+   reserved for the wordmark and page titles; heading is Plex Sans tightened
+   just enough to read as its own tier — dialog titles, card titles, section
+   headings; sans is Plex Sans at rest, for body copy and controls. Weight is
+   supplied per call site (font-medium), not hardcoded here. */
+@utility font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.011em;
 }
 
 /* Section eyebrows in the rail: small, wide-tracked, never shouty. */

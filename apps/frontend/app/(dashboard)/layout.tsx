@@ -13,27 +13,40 @@ import { useSession } from "@/lib/auth/use-session";
 import { useActiveOrgId } from "@/lib/org/active-org";
 import { cn } from "@/lib/utils";
 
-// Grouped by what each route actually requires of a request, mirroring the
-// backend's own middleware split: "account" routes need only a session,
-// "tenant" routes additionally need the x-organization-id header. The
-// grouping is the reason the second group greys out with no org selected.
+// Grouped by what the admin is doing, not by which backend middleware guards
+// the route: what's connected, who can reach it, what happened, and account-
+// level setup that isn't scoped to an organization at all. requiresOrg still
+// drives the disabled/greyed-out state below — the RequireAuth/RequireOrg
+// split survives as behaviour, it just isn't the user-facing vocabulary.
 const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; label: string }[] }[] = [
   {
-    label: "account",
-    requiresOrg: false,
-    items: [{ href: "/organizations", label: "Organizations" }],
+    label: "connection",
+    requiresOrg: true,
+    items: [
+      { href: "/connectors", label: "Connectors" },
+      { href: "/mcp-keys", label: "MCP keys" },
+    ],
   },
   {
-    label: "tenant",
+    label: "access",
     requiresOrg: true,
     items: [
       { href: "/members", label: "Members" },
       { href: "/roles", label: "Roles" },
-      { href: "/connectors", label: "Connectors" },
-      { href: "/mcp-keys", label: "MCP keys" },
-      { href: "/audit", label: "Audit log" },
+    ],
+  },
+  {
+    label: "record",
+    requiresOrg: true,
+    items: [
+      { href: "/audit", label: "Activity" },
       { href: "/subscription", label: "Subscription" },
     ],
+  },
+  {
+    label: "account",
+    requiresOrg: false,
+    items: [{ href: "/organizations", label: "Organizations" }],
   },
 ];
 
