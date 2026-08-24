@@ -1,11 +1,12 @@
 # MCP Gateway Core (connector-agnostic) — execution plan
 
-> **Status: not started (planned 2026-08-23).** 0 / 2 required steps shipped
-> (step 3 is optional and gated on open question Q1).
+> **Status: complete (planned 2026-08-23, finished 2026-08-24).** 2 / 2
+> required steps shipped, plus the optional step 3 — the owner answered Q1
+> yes.
 >
-> - [ ] Step 1 — Accept `scopes` on `POST /mcp-keys`
-> - [ ] Step 2 — Scope selection in the MCP keys dashboard
-> - [ ] Step 3 *(optional)* — `sapanjai_whoami`
+> - [x] Step 1 — Accept `scopes` on `POST /mcp-keys` (`529c78d`)
+> - [x] Step 2 — Scope selection in the MCP keys dashboard (`55d8548`)
+> - [x] Step 3 *(optional)* — `sapanjai_whoami`
 >
 > **What this is.** A re-cut of
 > [`docs/07-sheets-adapter-decisions.md`](../../docs/07-sheets-adapter-decisions.md)

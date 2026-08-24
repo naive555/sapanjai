@@ -118,13 +118,18 @@ re-check meaningful — there is no cached session to go stale.
 
 ## 6. Open questions
 
-**Q1 — Is a `sapanjai_whoami` tool worth building?**
-`sapanjai_describe_connector` already proved the handshake, so a tool returning
-the caller's org and *resolved* permissions would be a diagnostic convenience —
-"what does this key actually allow?" answered in one `tools/call` instead of a
-support ticket — rather than risk retirement.
-*Resolved by:* whether scoped keys turn out to be common in practice. If keys
-stay mostly unscoped, skip it.
+**Q1 — Is a `sapanjai_whoami` tool worth building? — CLOSED (yes, built
+2026-08-24).** `sapanjai_describe_connector` had already proved the handshake,
+so this was a diagnostic convenience — "what does this key actually allow?"
+answered in one `tools/call` instead of a support ticket — rather than risk
+retirement. Built anyway, once step 1 made scopes settable at mint time and
+gave a mis-scoped key something to be diagnosed. It is the second
+connector-agnostic tool, gated on `connector:read` (the same action
+`sapanjai_describe_connector` uses — a dedicated `whoami:read` action nobody
+seeds would make it invisible to every existing key), and returns
+`{organizationId, keyName, permissions}` and nothing else: `["*"]` for an
+unscoped key riding an owner's bypass, `[]` (never `null`) for a principal
+with no resolved actions.
 
 **Q2 — Should the dashboard warn about scopes the creator does not hold?**
 §4 settles that the backend will not reject them. The open part is whether the
