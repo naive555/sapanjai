@@ -7,8 +7,11 @@ It exists because the `google_sheets` adapter shipped first and the next
 connector is undecided — so the boundary needs stating before Google-shaped
 assumptions harden into the core.
 
-It records assumptions and decisions, not tasks. The current work item is
-[`.claude/plans/2026-08-23-gateway-core.md`](../.claude/plans/2026-08-23-gateway-core.md).
+It records assumptions and decisions, not tasks. The work item that produced
+it shipped complete on 2026-08-24 and is archived at
+[`.claude/plans/archives/2026-08-23-gateway-core.md`](../.claude/plans/archives/2026-08-23-gateway-core.md);
+this file, `05-mcp-gateway.md`, and `02-api-contract.md` hold the maintained
+state from here on.
 
 ---
 

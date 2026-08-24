@@ -9,7 +9,7 @@
 > - [x] Step 3 *(optional)* — `sapanjai_whoami`
 >
 > **What this is.** A re-cut of
-> [`docs/07-sheets-adapter-decisions.md`](../../docs/07-sheets-adapter-decisions.md)
+> [`docs/07-sheets-adapter-decisions.md`](../../../docs/07-sheets-adapter-decisions.md)
 > steps 1–3, written after verifying the repo at `d11c5d1`. It does not
 > contradict `docs/07`; it re-slices the same work along a connector-agnostic
 > boundary so the gateway core can be finished while the choice of *next*
@@ -21,15 +21,15 @@
 > unfinished piece of connector-agnostic scope, cut into mergeable steps.
 >
 > **Assumptions & boundary:**
-> [`docs/08-gateway-core.md`](../../docs/08-gateway-core.md) — what counts as
+> [`docs/08-gateway-core.md`](../../../docs/08-gateway-core.md) — what counts as
 > connector-agnostic and why, the `scopes` design decisions, and the open
 > questions. Read it before changing any step here.
-> **Spec:** [`docs/05-mcp-gateway.md`](../../docs/05-mcp-gateway.md) ·
-> **Contract:** [`docs/02-api-contract.md`](../../docs/02-api-contract.md)
+> **Spec:** [`docs/05-mcp-gateway.md`](../../../docs/05-mcp-gateway.md) ·
+> **Contract:** [`docs/02-api-contract.md`](../../../docs/02-api-contract.md)
 >
-> **Archive this file into `archives/` once the last step ships.** `docs/08`,
-> `docs/05`, and `docs/02` hold this feature's maintained state — those are the
-> files to update when it changes again, not this one.
+> **Archived 2026-08-24, once the last step shipped.** `docs/08`, `docs/05`,
+> and `docs/02` hold this feature's maintained state — those are the files to
+> update when it changes again, not this one.
 
 ---
 
@@ -137,7 +137,7 @@ and both frontend surfaces. Nothing in this plan touches any of it.
 **Out of scope, and why.** The boundary test — *"if the first connector were
 FlowAccount instead of Google Sheets, would this be needed unchanged?"* — and
 the full exclusion table live in
-[`docs/08-gateway-core.md`](../../docs/08-gateway-core.md) §1 and §3. In
+[`docs/08-gateway-core.md`](../../../docs/08-gateway-core.md) §1 and §3. In
 short: no Google OAuth, no `sheets_*`/`drive_*` tools or allowlist, no write
 tools or approval flow, no per-connector rate limiting, no `/sse` route, no
 plan limits, no PAT cleanup job.
@@ -318,7 +318,7 @@ make swagger && make test && make lint
 
 ## 4. Open questions
 
-Recorded in [`docs/08-gateway-core.md`](../../docs/08-gateway-core.md) §6, with
+Recorded in [`docs/08-gateway-core.md`](../../../docs/08-gateway-core.md) §6, with
 what would resolve each. The two that gate work here:
 
 - **Q1** — is `sapanjai_whoami` worth building? Gates step 3 entirely.
