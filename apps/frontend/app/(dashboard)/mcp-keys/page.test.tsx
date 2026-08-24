@@ -159,7 +159,7 @@ describe("McpKeysPage", () => {
     expect(storageContains(sessionStorage, "sk_live_abcdef0123456789")).toBe(false);
   });
 
-  it("hands back a wiring command carrying the real token, and says why a tool may be missing", async () => {
+  it("points to the connectors page for wiring instead of repeating the command here", async () => {
     listMcpKeysMock.mockResolvedValue([]);
     createMcpKeyMock.mockResolvedValue({
       id: "new-key",
@@ -175,22 +175,15 @@ describe("McpKeysPage", () => {
     fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "New key" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    const command = (await screen.findByText(/claude mcp add sapanjai/)).textContent ?? "";
+    await screen.findByText("sk_live_abcdef0123456789");
 
-    // The token is interpolated into the command, not left as a placeholder:
-    // this dialog is the only moment it exists, so making the reader paste it
-    // in a second time is a step that can only go wrong.
-    expect(command).toContain("sk_live_abcdef0123456789");
-
-    // --header is variadic and swallows whatever follows it, so a command
-    // with the URL after the flag silently registers a server with no
-    // address. Order is the correctness property here, not cosmetics.
-    expect(command.indexOf("/mcp/")).toBeLessThan(command.indexOf("--header"));
-
-    // "Why can't the agent see drive_get_file" is a support ticket unless the
-    // separate-permission rule is stated where the key is handed over.
-    expect(screen.getByText("drive:read")).toBeInTheDocument();
-    expect(screen.getByText("drive_get_file")).toBeInTheDocument();
+    // The wiring command (and its drive:read/sheets:read explainer) moved to
+    // each connector's own detail page, which can show it permanently with a
+    // placeholder for the token — this dialog only ever links there now.
+    expect(screen.queryByText(/claude mcp add sapanjai/)).not.toBeInTheDocument();
+    expect(screen.queryByText("drive:read")).not.toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /go to connectors/i });
+    expect(link).toHaveAttribute("href", "/connectors");
   });
 
   it("rejects an out-of-range expiry instead of silently minting a never-expiring key", async () => {

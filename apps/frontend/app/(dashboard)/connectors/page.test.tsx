@@ -92,12 +92,16 @@ describe("ConnectorsPage", () => {
     const rowError = screen.getByText("Broken sheet").closest("tr")!;
     expect(within(rowError).getByText("Error")).toBeInTheDocument();
 
-    // Only a google_sheets row is a link through to its config page.
+    // Every row links to its own detail page now, regardless of type — the
+    // google_sheets-only config form is reachable from there instead.
     expect(within(rowActive).getByRole("link", { name: "Billing sheet" })).toHaveAttribute(
       "href",
-      "/connectors/c-active/google-sheets",
+      "/connectors/c-active",
     );
-    expect(within(rowInactive).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(rowInactive).getByRole("link", { name: "Fresh connector" })).toHaveAttribute(
+      "href",
+      "/connectors/c-inactive",
+    );
   });
 
   it("deletes the selected connector with the right id and refetches the list", async () => {

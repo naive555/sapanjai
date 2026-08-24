@@ -178,3 +178,25 @@ export function ActivityDetail({ action, metadata }: { action: string; metadata:
       return <FallbackFields metadata={metadata} />;
   }
 }
+
+/**
+ * One audit row's `action`, split at the last dot. Audit actions are dotted
+ * paths — the namespace is context, the last segment is what happened — so
+ * splitting them lets the eye scan the verbs down a column instead of
+ * re-reading a shared prefix on every row.
+ *
+ * Lives here beside `ActivityDetail` because the two are always rendered as
+ * a pair: every table showing one shows the other, and a second copy of this
+ * split would drift from the first the moment either is adjusted.
+ */
+export function ActionToken({ action }: { action: string }) {
+  const split = action.lastIndexOf(".");
+  if (split === -1) return <span className="font-mono text-[0.8125rem]">{action}</span>;
+
+  return (
+    <span className="font-mono text-[0.8125rem] whitespace-nowrap">
+      <span className="text-muted-foreground">{action.slice(0, split + 1)}</span>
+      <span className="text-foreground">{action.slice(split + 1)}</span>
+    </span>
+  );
+}

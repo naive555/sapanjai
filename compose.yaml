@@ -89,6 +89,13 @@ services:
       # the /api/* proxy rewrite to the api service via compose's internal
       # DNS (not localhost, since web and api are separate containers).
       BACKEND_URL: http://api:3000
+      # Unlike BACKEND_URL above, this address is handed to the *browser*
+      # (the connector detail page's wiring snippet) or to an agent running
+      # on the host — neither can resolve compose's internal `api` DNS name,
+      # so this has to be the host-published port instead: the api service
+      # publishes 3000 on localhost (see the `api` service's `ports:` above),
+      # and the agent runs on the same host as the browser.
+      GATEWAY_URL: http://localhost:3000
     depends_on:
       api:
         condition: service_healthy

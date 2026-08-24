@@ -352,16 +352,9 @@ export default function ConnectorsPage() {
               return (
                 <TableRow key={connector.id}>
                   <TableCell className="font-medium">
-                    {connector.type === "google_sheets" ? (
-                      <Link
-                        href={`/connectors/${connector.id}/google-sheets`}
-                        className="underline-offset-4 hover:underline"
-                      >
-                        {connector.name}
-                      </Link>
-                    ) : (
-                      connector.name
-                    )}
+                    <Link href={`/connectors/${connector.id}`} className="underline-offset-4 hover:underline">
+                      {connector.name}
+                    </Link>
                   </TableCell>
                   {/*
                     * The id is the one field an MCP client actually needs —

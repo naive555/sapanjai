@@ -9,8 +9,6 @@ import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { Callout } from "@/components/callout";
-import { CopyableCode } from "@/components/copyable-code";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
 import { PermissionToken } from "@/components/permission-token";
@@ -502,49 +500,24 @@ export default function McpKeysPage() {
               </p>
 
               {/*
-                * The wiring snippet is here, and only here, on purpose: this
-                * is the one moment the raw key exists to be pasted into it.
-                * A copy of this on a docs page would have a placeholder where
-                * the token is, which is exactly the step people get wrong.
+                * The wiring command used to live here, on the argument that
+                * a copy elsewhere would only have a placeholder where the
+                * token goes. But a key isn't scoped to one connector, so
+                * this dialog has no single endpoint to build a command for
+                * — and once it closed, there was nowhere left to find one at
+                * all. It now lives permanently on each connector's own page
+                * with a `<paste your key>` placeholder: the version a reader
+                * can return to.
                 */}
               <div className="space-y-2 border-t pt-3">
-                <p className="text-sm font-medium">Point a client at a connector</p>
                 <p className="text-sm text-muted-foreground">
-                  The endpoint is one per connector. Replace the host with your Sapanjai API address (the API,
-                  not this dashboard) and <span className="font-mono">CONNECTOR_ID</span> with the ID shown on
-                  the connector&apos;s row on{" "}
-                  <Link
-                    href="/connectors"
-                    className="text-foreground underline underline-offset-4 hover:text-signal"
-                  >
-                    connectors
-                  </Link>
-                  .
+                  Point a client at a connector from that connector&apos;s own page — each one shows the
+                  endpoint and the wiring command permanently, with a placeholder where this key goes.
                 </p>
-                <CopyableCode
-                  label="the client wiring command"
-                  value={`claude mcp add sapanjai --scope local --transport http \\
-  https://YOUR_SAPANJAI_HOST/mcp/CONNECTOR_ID \\
-  --header "Authorization: Bearer ${revealKey.apiKey}"`}
-                />
-                <p className="text-sm text-muted-foreground">
-                  The URL has to come before <span className="font-mono">--header</span> — that flag is
-                  variadic and will otherwise swallow the address. Calling the endpoint directly is a{" "}
-                  <span className="font-mono">POST</span> to the same URL with that{" "}
-                  <span className="font-mono">Authorization</span> header.
-                </p>
+                <Button type="button" variant="outline" size="sm" render={<Link href="/connectors" />}>
+                  Go to connectors
+                </Button>
               </div>
-
-              <Callout variant="boundary" title="Missing a tool? It was filtered, not broken">
-                An agent only ever sees the tools this key is permitted to call — anything else is absent from
-                its tool list entirely, rather than failing when called. The one that catches people out:{" "}
-                <span className="font-mono">drive:read</span> is a separate permission, and{" "}
-                <span className="font-mono">sheets:read</span> never implies it. A key whose holder has only{" "}
-                <span className="font-mono">sheets:read</span> will not show{" "}
-                <span className="font-mono">drive_list_folder</span> or{" "}
-                <span className="font-mono">drive_get_file</span> at all. Grants are re-read on every call, so
-                fixing the role takes effect on the agent&apos;s next request — no need to reconnect it.
-              </Callout>
             </div>
           )}
           <DialogFooter>

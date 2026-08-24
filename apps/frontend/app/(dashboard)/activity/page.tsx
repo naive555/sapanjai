@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { ActivityDetail } from "@/components/activity-row";
+import { ActionToken, ActivityDetail } from "@/components/activity-row";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -50,21 +50,6 @@ const GATEWAY_ACTIONS = new Set(ACTION_GROUPS.find((g) => g.label === "mcp")!.ac
 
 const ALL_ACTIONS = "__all_actions__";
 const ALL_USERS = "__all_users__";
-
-// Audit actions are dotted paths — the namespace is context, the last segment
-// is what happened. Splitting them lets the eye scan the verbs down the
-// column instead of re-reading a shared prefix on every row.
-function ActionToken({ action }: { action: string }) {
-  const split = action.lastIndexOf(".");
-  if (split === -1) return <span className="font-mono text-[0.8125rem]">{action}</span>;
-
-  return (
-    <span className="font-mono text-[0.8125rem] whitespace-nowrap">
-      <span className="text-muted-foreground">{action.slice(0, split + 1)}</span>
-      <span className="text-foreground">{action.slice(split + 1)}</span>
-    </span>
-  );
-}
 
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
   return (
