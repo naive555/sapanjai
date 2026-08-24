@@ -39,7 +39,7 @@ const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; 
     label: "record",
     requiresOrg: true,
     items: [
-      { href: "/audit", label: "Activity" },
+      { href: "/activity", label: "Activity" },
       { href: "/subscription", label: "Subscription" },
     ],
   },

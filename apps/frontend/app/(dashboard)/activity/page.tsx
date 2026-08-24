@@ -3,27 +3,50 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { ActivityDetail } from "@/components/activity-row";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { getAuditLogs, listMembers } from "@/lib/api/endpoints";
 import { useActiveOrgId } from "@/lib/org/active-org";
+import { cn } from "@/lib/utils";
 
-// Recorded actions per docs/02-api-contract.md — role.created/role.assigned
-// are defined in the contract but not currently written by the backend;
-// kept in the filter list anyway since the contract documents them as valid
-// `action` query values.
-const KNOWN_ACTIONS = [
-  "user.login",
-  "user.register",
-  "org.created",
-  "org.member.invited",
-  "org.member.removed",
-  "role.created",
-  "role.assigned",
+// Recorded actions, grouped by namespace. docs/02-api-contract.md's summary
+// line (114) only lists the seven non-gateway actions — the five `mcp.*`
+// actions are documented further down that same file, in the MCP gateway
+// section, and were never folded back into the summary line. Fixing that
+// line is Phase 4 (a docs edit); this list is kept in sync with the actual
+// backend action set by hand until then.
+const ACTION_GROUPS: { label: string; actions: string[] }[] = [
+  { label: "user", actions: ["user.login", "user.register"] },
+  { label: "org", actions: ["org.created", "org.member.invited", "org.member.removed"] },
+  { label: "role", actions: ["role.created", "role.assigned"] },
+  { label: "connector", actions: ["connector.created", "connector.updated", "connector.deleted"] },
+  {
+    label: "mcp",
+    actions: [
+      "mcp.session.started",
+      "mcp.tool.called",
+      "mcp.tool.denied",
+      "mcp.ratelimit.hit",
+      "mcp.file.downloaded",
+    ],
+  },
 ];
+
+const GATEWAY_ACTIONS = new Set(ACTION_GROUPS.find((g) => g.label === "mcp")!.actions);
 
 const ALL_ACTIONS = "__all_actions__";
 const ALL_USERS = "__all_users__";
@@ -52,11 +75,12 @@ function Filter({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
-export default function AuditPage() {
+export default function ActivityPage() {
   const activeOrgId = useActiveOrgId();
   const [action, setAction] = useState(ALL_ACTIONS);
   const [userId, setUserId] = useState(ALL_USERS);
   const [limit, setLimit] = useState(50);
+  const [gatewayOnly, setGatewayOnly] = useState(false);
 
   const { data: members } = useQuery({
     queryKey: ["members", activeOrgId],
@@ -64,8 +88,13 @@ export default function AuditPage() {
     enabled: activeOrgId !== null,
   });
 
+  // The API only accepts a single `action` value, so "gateway only" can't be
+  // expressed server-side yet (that's repeatable-`action` filtering, Phase
+  // 4). For now: when it's on, fetch unfiltered and narrow the rendered rows
+  // to the five mcp.* actions client-side. Composing with the Action select
+  // is the other half of this — see the disabled prop below.
   const filters = {
-    action: action === ALL_ACTIONS ? undefined : action,
+    action: gatewayOnly || action === ALL_ACTIONS ? undefined : action,
     userId: userId === ALL_USERS ? undefined : userId,
     limit,
   };
@@ -76,29 +105,62 @@ export default function AuditPage() {
     enabled: activeOrgId !== null,
   });
 
+  // Overriding rather than ANDing: a specific action outside the mcp.*
+  // namespace combined with "gateway only" would otherwise silently render
+  // zero rows with no indication why. Disabling the select while the toggle
+  // is on makes the override visible instead of surprising, and its own
+  // selection is preserved so turning the toggle back off restores it.
+  const rows = gatewayOnly ? (logs?.filter((log) => GATEWAY_ACTIONS.has(log.action)) ?? []) : logs;
+
   function memberLabel(id: string | null): string {
     if (!id) return "—";
     return members?.find((m) => m.userId === id)?.email ?? id;
   }
 
-  const isFiltered = action !== ALL_ACTIONS || userId !== ALL_USERS;
+  const isFiltered = gatewayOnly || action !== ALL_ACTIONS || userId !== ALL_USERS;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="activity" description="Every call an agent made, and everything it was refused." />
 
       <div className="flex flex-wrap items-end gap-4">
+        <Filter label="Gateway">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={gatewayOnly}
+            className={cn(
+              "font-mono text-xs",
+              gatewayOnly && "border-wire/40 bg-wire/10 text-wire hover:bg-wire/15",
+            )}
+            onClick={() => setGatewayOnly((v) => !v)}
+          >
+            Gateway only
+          </Button>
+        </Filter>
+
         <Filter label="Action">
-          <Select value={action} onValueChange={(value) => setAction(value ?? ALL_ACTIONS)}>
+          <Select
+            value={action}
+            onValueChange={(value) => setAction(value ?? ALL_ACTIONS)}
+            disabled={gatewayOnly}
+          >
             <SelectTrigger className="w-56 font-mono text-xs">
               <SelectValue>{(value: string) => (value === ALL_ACTIONS ? "All actions" : value)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL_ACTIONS}>All actions</SelectItem>
-              {KNOWN_ACTIONS.map((a) => (
-                <SelectItem key={a} value={a} className="font-mono text-xs">
-                  {a}
-                </SelectItem>
+              {ACTION_GROUPS.map((group) => (
+                <SelectGroup key={group.label}>
+                  <SelectSeparator />
+                  <SelectLabel>{group.label}</SelectLabel>
+                  {group.actions.map((a) => (
+                    <SelectItem key={a} value={a} className="font-mono text-xs">
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
             </SelectContent>
           </Select>
@@ -141,20 +203,19 @@ export default function AuditPage() {
         </Filter>
       </div>
 
-      <DataTable columns={["When", "Action", "Actor", "Detail"]}>
+      <DataTable columns={["When", "Action", "Actor", { label: "Detail", className: "w-full" }]}>
         <TableBody>
           {isLoading ? (
             <TableMessage colSpan={4}>Loading…</TableMessage>
-          ) : logs?.length ? (
-            logs.map((log, index) => {
+          ) : rows?.length ? (
+            rows.map((log, index) => {
               const at = new Date(log.createdAt);
               const day = at.toISOString().slice(0, 10);
               // A log is read top-down, so repeat the date only when it
               // changes — the eye tracks the time column, not the date.
               const previousDay =
-                index > 0 ? new Date(logs[index - 1].createdAt).toISOString().slice(0, 10) : null;
+                index > 0 ? new Date(rows[index - 1].createdAt).toISOString().slice(0, 10) : null;
               const showDay = day !== previousDay;
-              const entries = Object.entries(log.metadata ?? {});
 
               return (
                 <TableRow key={log.id}>
@@ -170,15 +231,8 @@ export default function AuditPage() {
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {memberLabel(log.userId)}
                   </TableCell>
-                  <TableCell className="max-w-xs truncate font-mono text-xs text-muted-foreground">
-                    {entries.length
-                      ? entries.map(([key, value]) => (
-                          <span key={key} className="mr-3">
-                            <span className="text-muted-foreground/60">{key}=</span>
-                            {String(value)}
-                          </span>
-                        ))
-                      : "—"}
+                  <TableCell className="text-xs text-muted-foreground">
+                    <ActivityDetail action={log.action} metadata={log.metadata ?? {}} />
                   </TableCell>
                 </TableRow>
               );
