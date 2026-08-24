@@ -23,12 +23,12 @@ import { getAuditLogs, listMembers } from "@/lib/api/endpoints";
 import { useActiveOrgId } from "@/lib/org/active-org";
 import { cn } from "@/lib/utils";
 
-// Recorded actions, grouped by namespace. docs/02-api-contract.md's summary
-// line (114) only lists the seven non-gateway actions — the five `mcp.*`
-// actions are documented further down that same file, in the MCP gateway
-// section, and were never folded back into the summary line. Fixing that
-// line is Phase 4 (a docs edit); this list is kept in sync with the actual
-// backend action set by hand until then.
+// Recorded actions, grouped by namespace. Mirrors the "Recorded actions"
+// line in docs/02-api-contract.md's Audit logs section (now including the
+// five mcp.* actions and three connector.* actions, folded back into that
+// summary line as part of Phase 4) — kept in sync with the backend's
+// action set by hand, since there's no shared source of truth to codegen
+// this list from.
 const ACTION_GROUPS: { label: string; actions: string[] }[] = [
   { label: "user", actions: ["user.login", "user.register"] },
   { label: "org", actions: ["org.created", "org.member.invited", "org.member.removed"] },
@@ -46,7 +46,7 @@ const ACTION_GROUPS: { label: string; actions: string[] }[] = [
   },
 ];
 
-const GATEWAY_ACTIONS = new Set(ACTION_GROUPS.find((g) => g.label === "mcp")!.actions);
+const MCP_ACTIONS = ACTION_GROUPS.find((g) => g.label === "mcp")!.actions;
 
 const ALL_ACTIONS = "__all_actions__";
 const ALL_USERS = "__all_users__";
@@ -73,29 +73,25 @@ export default function ActivityPage() {
     enabled: activeOrgId !== null,
   });
 
-  // The API only accepts a single `action` value, so "gateway only" can't be
-  // expressed server-side yet (that's repeatable-`action` filtering, Phase
-  // 4). For now: when it's on, fetch unfiltered and narrow the rendered rows
-  // to the five mcp.* actions client-side. Composing with the Action select
-  // is the other half of this — see the disabled prop below.
+  // "Gateway only" now requests the five mcp.* actions directly — one call,
+  // filtered server-side via GET /audit-logs' repeatable `action` param
+  // (Phase 4). Overriding rather than ANDing with the Action select: a
+  // specific action outside the mcp.* namespace combined with "gateway
+  // only" would otherwise silently render zero rows with no indication why.
+  // Disabling the select while the toggle is on makes the override visible
+  // instead of surprising, and its own selection is preserved so turning
+  // the toggle back off restores it.
   const filters = {
-    action: gatewayOnly || action === ALL_ACTIONS ? undefined : action,
+    action: gatewayOnly ? MCP_ACTIONS : action === ALL_ACTIONS ? undefined : action,
     userId: userId === ALL_USERS ? undefined : userId,
     limit,
   };
 
-  const { data: logs, isLoading } = useQuery({
+  const { data: rows, isLoading } = useQuery({
     queryKey: ["audit", activeOrgId, filters],
     queryFn: () => getAuditLogs(filters),
     enabled: activeOrgId !== null,
   });
-
-  // Overriding rather than ANDing: a specific action outside the mcp.*
-  // namespace combined with "gateway only" would otherwise silently render
-  // zero rows with no indication why. Disabling the select while the toggle
-  // is on makes the override visible instead of surprising, and its own
-  // selection is preserved so turning the toggle back off restores it.
-  const rows = gatewayOnly ? (logs?.filter((log) => GATEWAY_ACTIONS.has(log.action)) ?? []) : logs;
 
   function memberLabel(id: string | null): string {
     if (!id) return "—";

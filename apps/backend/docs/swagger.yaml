@@ -390,9 +390,16 @@ paths:
         in: query
         name: userId
         type: string
-      - description: Filter by action
+      - collectionFormat: multi
+        description: Filter by action; repeatable (?action=a&action=b) to match any
         in: query
+        items:
+          type: string
         name: action
+        type: array
+      - description: Only logs at or after this RFC3339 timestamp
+        in: query
+        name: since
         type: string
       - description: Max results (1-100, default 50)
         in: query

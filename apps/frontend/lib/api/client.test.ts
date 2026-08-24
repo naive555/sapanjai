@@ -97,4 +97,25 @@ describe("apiRequest", () => {
     ).rejects.toThrow("Invalid email or password");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("serializes a string[] query value as a repeated param, and scalars as before", async () => {
+    let requestedUrl = "";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      requestedUrl = String(input);
+      return jsonResponse(200, []);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest("/audit-logs", {
+      query: { action: ["mcp.tool.called", "mcp.tool.denied"], limit: 50, userId: undefined },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestedUrl).toContain("/audit-logs");
+    const [, qs] = requestedUrl.split("?");
+    const params = new URLSearchParams(qs);
+    expect(params.getAll("action")).toEqual(["mcp.tool.called", "mcp.tool.denied"]);
+    expect(params.get("limit")).toBe("50");
+    expect(params.has("userId")).toBe(false);
+  });
 });

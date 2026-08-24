@@ -268,8 +268,14 @@ export interface AuditLogResponse {
   createdAt: string;
 }
 
+// action accepts either one value or several — a string[] serializes as a
+// repeated ?action= param (client.ts's buildPath), matching the backend's
+// repeatable-action filter (a single string still behaves exactly as
+// before). since is an RFC3339 lower bound; nothing calls it yet (that's
+// Phase 5's "last 24 hours" panel), but it's threaded through now since the
+// backend already accepts it and there's no reason to leave it out.
 export function getAuditLogs(
-  filters: { userId?: string; action?: string; limit?: number } = {},
+  filters: { userId?: string; action?: string | string[]; since?: string; limit?: number } = {},
 ) {
   return apiRequest<AuditLogResponse[]>("/audit-logs", { query: filters });
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -95,15 +96,33 @@ func (s *Service) Record(ctx context.Context, action string, userID, organizatio
 }
 
 // Query returns organizationID's audit logs newest-first, optionally
-// filtered by userID and/or action, capped at limit rows. Mirrors
-// AuditLogService.query.
-func (s *Service) Query(ctx context.Context, organizationID uuid.UUID, userID *uuid.UUID, action *string, limit int32) ([]db.AuditLog, error) {
+// filtered by userID and/or one-or-more actions and/or a since lower bound,
+// capped at limit rows. Mirrors AuditLogService.query.
+//
+// actions must be nil (not an empty, non-nil slice) when no action filter
+// applies — QueryAuditLogs binds it as a nullable text[] narg and relies on
+// a nil slice encoding as SQL NULL ("match everything") vs. a non-nil empty
+// slice encoding as an empty array (`action = ANY('{}')`, which matches
+// nothing). Since is expected already normalized to UTC by the caller (the
+// handler), since audit_logs.created_at is a naive `timestamp` column.
+func (s *Service) Query(ctx context.Context, organizationID uuid.UUID, userID *uuid.UUID, actions []string, since *time.Time, limit int32) ([]db.AuditLog, error) {
 	return s.q.QueryAuditLogs(ctx, db.QueryAuditLogsParams{
 		OrganizationID: toPgUUID(&organizationID),
 		UserID:         toPgUUID(userID),
-		Action:         action,
+		Actions:        actions,
+		Since:          toPgTimestamp(since),
 		Lim:            limit,
 	})
+}
+
+// toPgTimestamp converts an optional UTC time into the nullable pgtype
+// used for audit_logs.created_at (a `timestamp` column with no time zone).
+// Callers are responsible for the UTC normalization itself.
+func toPgTimestamp(t *time.Time) pgtype.Timestamp {
+	if t == nil {
+		return pgtype.Timestamp{}
+	}
+	return pgtype.Timestamp{Time: *t, Valid: true}
 }
 
 func toPgUUID(id *uuid.UUID) pgtype.UUID {

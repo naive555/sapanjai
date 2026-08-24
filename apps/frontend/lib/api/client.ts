@@ -21,7 +21,9 @@ export class ApiError extends Error {
 export interface RequestOptions {
   method?: string;
   body?: unknown;
-  query?: Record<string, string | number | undefined>;
+  // A string[] value serializes as a repeated query param (?action=a&action=b),
+  // for endpoints like GET /audit-logs whose `action` filter is repeatable.
+  query?: Record<string, string | number | string[] | undefined>;
   // True for the four public auth-flow calls (register/login/refresh/logout):
   // a 401 there is a terminal result (bad credentials, dead refresh token),
   // not a stale-access-token signal, so it must not trigger refresh+retry.
@@ -32,7 +34,12 @@ function buildPath(path: string, query?: RequestOptions["query"]): string {
   if (!query) return path;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) params.set(key, String(value));
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) params.append(key, v);
+    } else {
+      params.set(key, String(value));
+    }
   }
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path;

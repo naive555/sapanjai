@@ -56,6 +56,18 @@ type Querier interface {
 	ListPermissionsByRoleIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]Permission, error)
 	ListPlans(ctx context.Context) ([]Plan, error)
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
+	// actions is a nullable text[]: NULL (no ?action= given at all) matches
+	// every row, same as before repeatable action filtering was added. An
+	// empty (non-NULL) array must never reach this query — `action = ANY('{}')`
+	// is always false and would silently return zero rows instead of
+	// "unfiltered" — so callers must pass a nil slice, not an empty one, when
+	// no action filter applies; see auditlog.Service.Query.
+	//
+	// since is a nullable timestamp (audit_logs.created_at has no time zone),
+	// compared with >= so a since value equal to a row's created_at includes
+	// that row (inclusive lower bound). Callers must normalize any RFC3339
+	// input to UTC before binding it here, since the column stores naive
+	// UTC wall-clock values.
 	QueryAuditLogs(ctx context.Context, arg QueryAuditLogsParams) ([]AuditLog, error)
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)

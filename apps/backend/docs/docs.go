@@ -44,9 +44,19 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "Filter by action",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "Filter by action; repeatable (?action=a\u0026action=b) to match any",
                         "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only logs at or after this RFC3339 timestamp",
+                        "name": "since",
                         "in": "query"
                     },
                     {

@@ -109,9 +109,9 @@ Permission semantics: `*` grants everything; exact `resource:verb` match; `resou
 
 | Method/Path | Guard | Query | Behavior |
 | ----------- | ----- | ----- | -------- |
-| `GET /audit-logs` | org | `userId?`, `action?`, `limit?` (1–100, default 50) | Org's logs, newest first. |
+| `GET /audit-logs` | org | `userId?`, `action?` (repeatable — `?action=a&action=b` matches either; a single `action=x` behaves as before), `since?` (RFC3339 timestamp, inclusive lower bound on `createdAt`), `limit?` (1–100, default 50) | Org's logs, newest first. |
 
-Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below).
+Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below), plus `mcp.session.started`, `mcp.tool.called`, `mcp.tool.denied`, `mcp.ratelimit.hit`, `mcp.file.downloaded` (all five written, from the MCP gateway below).
 
 ### Subscription (`/subscription`)
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -175,6 +177,51 @@ func TestIntegration_RBAC(t *testing.T) {
 	})
 }
 
+// createGenericConnector creates a "generic" connector (the skeleton type
+// with no adapter, so this never makes an external call) as org's owner,
+// purely to produce a connector.created audit row — used by the audit-log
+// "since" and multi-action tests below as a third, distinct action
+// alongside org.created/org.member.invited. name becomes both the
+// connector's own name and the connector.created audit row's
+// metadata.name, so callers should pass a unique name and find their row
+// afterward with findByMetadataName rather than by connector id: the
+// audit row's own "id" is the audit_logs row id, not the connector's id,
+// and the connector's id never appears in the audit metadata.
+func createGenericConnector(t *testing.T, client *http.Client, baseURL string, org createdOrg, name string) {
+	t.Helper()
+
+	resp, body := doJSON(t, client, baseURL, http.MethodPost, "/connectors",
+		map[string]any{"name": name, "type": "generic", "config": map[string]any{"note": "test"}},
+		map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create connector %s: status = %d, want 200; body = %v", name, resp.StatusCode, body)
+	}
+}
+
+// findByMetadataName finds the audit row with the given action whose
+// metadata.name matches name (connector.created's metadata is
+// {"name":..., "type":...}), or nil. Use this instead of findByID to
+// locate a connector-triggered audit row: the row's own "id" is the
+// audit_logs row id, not the connector's id.
+func findByMetadataName(rows []map[string]any, action, name string) map[string]any {
+	for _, r := range rows {
+		if r["action"] != action {
+			continue
+		}
+		meta, ok := r["metadata"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if meta["name"] == name {
+			return r
+		}
+	}
+	return nil
+}
+
 func findByID(rows []map[string]any, id string) map[string]any {
 	for _, r := range rows {
 		if r["id"] == id {
@@ -301,6 +348,139 @@ func TestIntegration_AuditLogs(t *testing.T) {
 			if l["userId"] != org.Owner.UserID {
 				t.Errorf("userId = %v, want %q", l["userId"], org.Owner.UserID)
 			}
+		}
+	})
+
+	t.Run("since includes rows at/after the bound and excludes older ones", func(t *testing.T) {
+		// Boundary semantics: QueryAuditLogs compares with `created_at >=
+		// since`, so a since value equal to a row's own createdAt must
+		// still include that row (inclusive). Two connector.created rows
+		// are created here, strictly ordered in time (A, then B); org's
+		// setup (org.created, org.member.invited) happened even earlier,
+		// in the outer test function.
+		//
+		// createdAt is read back from each row's own audit-log entry (via
+		// findByMetadataName), not from the connector-creation response:
+		// the connector row and its audit row are separate INSERTs, each
+		// stamped by its own now(), so the connector's own createdAt is a
+		// few hundred microseconds off from the audit row's created_at and
+		// is not a safe boundary value here.
+		createGenericConnector(t, client, ts.URL, org, "since-marker-a")
+		_, afterA := doJSONList(t, client, ts.URL, "/audit-logs?action=connector.created", orgHeaders)
+		aRow := findByMetadataName(afterA, "connector.created", "since-marker-a")
+		if aRow == nil {
+			t.Fatalf("expected a connector.created row for since-marker-a, got %v", afterA)
+		}
+		aCreatedAt, _ := aRow["createdAt"].(string)
+
+		time.Sleep(5 * time.Millisecond) // guarantee a distinct, later created_at for B
+		createGenericConnector(t, client, ts.URL, org, "since-marker-b")
+		_, afterB := doJSONList(t, client, ts.URL, "/audit-logs?action=connector.created", orgHeaders)
+		bRow := findByMetadataName(afterB, "connector.created", "since-marker-b")
+		if bRow == nil {
+			t.Fatalf("expected a connector.created row for since-marker-b, got %v", afterB)
+		}
+		bCreatedAt, _ := bRow["createdAt"].(string)
+
+		// Inclusive lower bound: since = A's own createdAt includes A (and
+		// B, created after it), but excludes the org-setup rows, which are
+		// strictly older.
+		_, logsFromA := doJSONList(t, client, ts.URL, "/audit-logs?since="+url.QueryEscape(aCreatedAt), orgHeaders)
+		if findByMetadataName(logsFromA, "connector.created", "since-marker-a") == nil {
+			t.Fatalf("since=%s (A's own createdAt) should include A, got %v", aCreatedAt, logsFromA)
+		}
+		if findByMetadataName(logsFromA, "connector.created", "since-marker-b") == nil {
+			t.Fatalf("since=%s should include B (created after A), got %v", aCreatedAt, logsFromA)
+		}
+		for _, l := range logsFromA {
+			if l["action"] == "org.created" || l["action"] == "org.member.invited" {
+				t.Errorf("since=%s should exclude older org-setup rows, got %v in %v", aCreatedAt, l["action"], l)
+			}
+		}
+
+		// Strictly later bound: since = B's own createdAt still includes B
+		// (inclusive) but now excludes A (older than B).
+		_, logsFromB := doJSONList(t, client, ts.URL, "/audit-logs?since="+url.QueryEscape(bCreatedAt), orgHeaders)
+		if findByMetadataName(logsFromB, "connector.created", "since-marker-b") == nil {
+			t.Fatalf("since=%s (B's own createdAt) should include B, got %v", bCreatedAt, logsFromB)
+		}
+		if findByMetadataName(logsFromB, "connector.created", "since-marker-a") != nil {
+			t.Fatalf("since=%s should exclude A (strictly older than B), got %v", bCreatedAt, logsFromB)
+		}
+	})
+
+	t.Run("malformed since fails validation", func(t *testing.T) {
+		resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/audit-logs?since=not-a-timestamp", nil, orgHeaders)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422; body = %v", resp.StatusCode, body)
+		}
+		if body["message"] != "Validation failed" {
+			t.Fatalf("message = %v, want %q", body["message"], "Validation failed")
+		}
+	})
+
+	t.Run("multi-action returns the union and nothing else", func(t *testing.T) {
+		createGenericConnector(t, client, ts.URL, org, "multi-action-marker")
+
+		_, logs := doJSONList(t, client, ts.URL,
+			"/audit-logs?action=org.created&action=connector.created", orgHeaders)
+
+		var sawOrgCreated, sawConnectorCreated bool
+		for _, l := range logs {
+			switch l["action"] {
+			case "org.created":
+				sawOrgCreated = true
+			case "connector.created":
+				sawConnectorCreated = true
+			default:
+				t.Errorf("expected only org.created/connector.created, got %v in %v", l["action"], l)
+			}
+		}
+		if !sawOrgCreated || !sawConnectorCreated {
+			t.Fatalf("expected the union of both actions, got %v", logs)
+		}
+		if findByMetadataName(logs, "connector.created", "multi-action-marker") == nil {
+			t.Fatalf("expected the multi-action-marker connector.created row in the result, got %v", logs)
+		}
+		// org.member.invited is excluded from the requested union; the
+		// switch above already fails the test (via its default case) if
+		// any action outside {org.created, connector.created} appears.
+	})
+
+	t.Run("single action=x behaves exactly as before (back-compat)", func(t *testing.T) {
+		resp, logs := doJSONList(t, client, ts.URL, "/audit-logs?action=org.created", orgHeaders)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if len(logs) == 0 {
+			t.Fatal("expected at least one org.created log")
+		}
+		for _, l := range logs {
+			if l["action"] != "org.created" {
+				t.Errorf("unexpected action %v in a single-action filtered list", l["action"])
+			}
+		}
+	})
+
+	t.Run("no action filter still returns everything", func(t *testing.T) {
+		// Guards against the empty-array trap: if an absent ?action=
+		// param were ever bound as a non-nil empty slice instead of nil,
+		// QueryAuditLogs' `action = ANY($actions)` would match zero rows
+		// instead of "unfiltered". By this point the org has at least
+		// org.created, org.member.invited, and several connector.created
+		// rows from earlier subtests.
+		_, logs := doJSONList(t, client, ts.URL, "/audit-logs?limit=100", orgHeaders)
+		var sawOrgCreated, sawConnectorCreated bool
+		for _, l := range logs {
+			switch l["action"] {
+			case "org.created":
+				sawOrgCreated = true
+			case "connector.created":
+				sawConnectorCreated = true
+			}
+		}
+		if !sawOrgCreated || !sawConnectorCreated {
+			t.Fatalf("expected an unfiltered list to include both org.created and connector.created, got %v", logs)
 		}
 	})
 

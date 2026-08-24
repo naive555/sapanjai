@@ -37,23 +37,38 @@ const queryAuditLogs = `-- name: QueryAuditLogs :many
 SELECT id, organization_id, user_id, action, metadata, created_at FROM audit_logs
 WHERE organization_id = $1
   AND ($2::uuid IS NULL OR user_id = $2)
-  AND ($3::text IS NULL OR action = $3)
+  AND ($3::text[] IS NULL OR action = ANY($3::text[]))
+  AND ($4::timestamp IS NULL OR created_at >= $4::timestamp)
 ORDER BY created_at DESC
-LIMIT $4
+LIMIT $5
 `
 
 type QueryAuditLogsParams struct {
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	UserID         pgtype.UUID `json:"user_id"`
-	Action         *string     `json:"action"`
-	Lim            int32       `json:"lim"`
+	OrganizationID pgtype.UUID      `json:"organization_id"`
+	UserID         pgtype.UUID      `json:"user_id"`
+	Actions        []string         `json:"actions"`
+	Since          pgtype.Timestamp `json:"since"`
+	Lim            int32            `json:"lim"`
 }
 
+// actions is a nullable text[]: NULL (no ?action= given at all) matches
+// every row, same as before repeatable action filtering was added. An
+// empty (non-NULL) array must never reach this query — `action = ANY('{}')`
+// is always false and would silently return zero rows instead of
+// "unfiltered" — so callers must pass a nil slice, not an empty one, when
+// no action filter applies; see auditlog.Service.Query.
+//
+// since is a nullable timestamp (audit_logs.created_at has no time zone),
+// compared with >= so a since value equal to a row's created_at includes
+// that row (inclusive lower bound). Callers must normalize any RFC3339
+// input to UTC before binding it here, since the column stores naive
+// UTC wall-clock values.
 func (q *Queries) QueryAuditLogs(ctx context.Context, arg QueryAuditLogsParams) ([]AuditLog, error) {
 	rows, err := q.db.Query(ctx, queryAuditLogs,
 		arg.OrganizationID,
 		arg.UserID,
-		arg.Action,
+		arg.Actions,
+		arg.Since,
 		arg.Lim,
 	)
 	if err != nil {
