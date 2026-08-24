@@ -37,8 +37,18 @@ func TestBuildServer_DriveToolsHiddenForNonGoogleSheetsConnector(t *testing.T) {
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 	got := toolNames(t, cs)
-	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
-		t.Fatalf("tools/list = %v, want only sapanjai_describe_connector for a generic connector even with owner bypass", got)
+	// connector:read gates both connector-agnostic tools — sapanjai_describe_connector
+	// and sapanjai_whoami — neither of which is connector-type-restricted, so
+	// both remain visible for a generic connector even with owner bypass;
+	// no drive_* tool must join them.
+	want := map[string]bool{"sapanjai_describe_connector": true, "sapanjai_whoami": true}
+	if len(got) != 2 {
+		t.Fatalf("tools/list = %v, want only the 2 connector-agnostic tools for a generic connector even with owner bypass", got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected tool %q in tools/list", name)
+		}
 	}
 }
 

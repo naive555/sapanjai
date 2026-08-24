@@ -306,3 +306,44 @@ func TestRequireMCPKey_ScopesPassedThroughToResolver(t *testing.T) {
 		t.Errorf("scopes passed to resolve = %v, want [connector:read]", gotScopes)
 	}
 }
+
+// ---- key name on context (gateway-core step 3: sapanjai_whoami) ----
+
+func TestRequireMCPKey_HappyPath_KeyNameOnRequestContext(t *testing.T) {
+	row := validMCPKeyRow() // Name: "test-key"
+	store := &mockMCPKeyLookup{
+		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+	}
+	resolve, _ := newResolver(t, &fakePrincipal{userID: row.UserID})
+	c, _ := newTestContext(http.MethodPost, "/mcp/"+uuid.NewString(), map[string]string{
+		"Authorization": "Bearer sk_live_test-token",
+	})
+
+	var gotKeyName string
+	var sawKeyName bool
+	next := func(c echo.Context) error {
+		gotKeyName, sawKeyName = MCPKeyNameFromContext(c.Request().Context())
+		return c.NoContent(http.StatusOK)
+	}
+
+	err := RequireMCPKey(store, resolve, nil)(next)(c)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sawKeyName {
+		t.Fatal("key name not found on c.Request().Context() inside next")
+	}
+	if gotKeyName != row.Name {
+		t.Errorf("key name = %q, want %q", gotKeyName, row.Name)
+	}
+}
+
+func TestMCPKeyNameFromContext_AbsentWhenNeverAuthenticated(t *testing.T) {
+	name, ok := MCPKeyNameFromContext(context.Background())
+	if ok {
+		t.Errorf("ok = true for a context that never went through RequireMCPKey, want false")
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty string when absent", name)
+	}
+}

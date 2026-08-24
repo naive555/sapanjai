@@ -24,6 +24,19 @@ import (
 // survive into it.
 type mcpPrincipalCtxKey struct{}
 
+// mcpKeyNameCtxKey keys the authenticated PAT's display name on the
+// *request* context, same rationale as mcpPrincipalCtxKey: the SDK's server
+// callback takes a plain func(*http.Request) and never sees an
+// echo.Context, so this must ride c.Request().Context() to reach a
+// Register closure in internal/module/mcp.
+//
+// Deliberately not the key id, hash, or token — only the human-readable
+// name a Register closure needs to report "this session is using key X".
+// Principal's doc comment says Principal must never grow a credential
+// field; the same discipline applies to this context value: it carries
+// exactly one display string, never a second credential-adjacent field.
+type mcpKeyNameCtxKey struct{}
+
 // mcpKeyLookup is the subset of *database.Store RequireMCPKey depends on,
 // narrowed so unit tests can hand-mock it without the full db.Querier
 // surface.
@@ -87,6 +100,7 @@ func RequireMCPKey(store mcpKeyLookup, resolve MCPPrincipalResolver, log *slog.L
 			}
 
 			ctx := context.WithValue(c.Request().Context(), mcpPrincipalCtxKey{}, principal)
+			ctx = context.WithValue(ctx, mcpKeyNameCtxKey{}, row.Name)
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}
@@ -124,4 +138,14 @@ func mcpUnauthorized(c echo.Context, errParam string) error {
 func MCPPrincipalFromContext(ctx context.Context) (any, bool) {
 	p := ctx.Value(mcpPrincipalCtxKey{})
 	return p, p != nil
+}
+
+// MCPKeyNameFromContext returns the display name of the mcp_api_keys row
+// RequireMCPKey authenticated on ctx, and whether one was present. Absent
+// for any request that never went through RequireMCPKey — a unit test
+// building a request by hand, or a wiring bug — which callers must treat as
+// an empty string, never a panic.
+func MCPKeyNameFromContext(ctx context.Context) (string, bool) {
+	name, ok := ctx.Value(mcpKeyNameCtxKey{}).(string)
+	return name, ok
 }

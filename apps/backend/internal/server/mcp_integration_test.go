@@ -2,11 +2,13 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -387,9 +389,13 @@ func TestIntegration_MCP_ScopedKeyIncludingPermissionStillWorks(t *testing.T) {
 
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 
+	// connector:read now gates two connector-agnostic tools —
+	// sapanjai_describe_connector and sapanjai_whoami.
 	got := toolNames(t, cs)
-	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
-		t.Fatalf("tools/list = %v, want [sapanjai_describe_connector] when scopes include connector:read", got)
+	sort.Strings(got)
+	want := []string{"sapanjai_describe_connector", "sapanjai_whoami"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("tools/list = %v, want %v when scopes include connector:read", got, want)
 	}
 
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
@@ -417,9 +423,13 @@ func TestIntegration_MCP_HappyPath(t *testing.T) {
 		t.Error("initialize did not return a server name")
 	}
 
+	// connector:read now gates two connector-agnostic tools —
+	// sapanjai_describe_connector and sapanjai_whoami.
 	got := toolNames(t, cs)
-	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
-		t.Fatalf("tools/list = %v, want [sapanjai_describe_connector] for the owner", got)
+	sort.Strings(got)
+	wantTools := []string{"sapanjai_describe_connector", "sapanjai_whoami"}
+	if len(got) != len(wantTools) || got[0] != wantTools[0] || got[1] != wantTools[1] {
+		t.Fatalf("tools/list = %v, want %v for the owner", got, wantTools)
 	}
 
 	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
@@ -449,6 +459,83 @@ func TestIntegration_MCP_HappyPath(t *testing.T) {
 		}
 		if !sawToolCalled {
 			t.Error("no mcp.tool.called audit row found")
+		}
+	})
+}
+
+// ---- sapanjai_whoami (gateway-core step 3) ----
+
+// TestIntegration_MCP_Whoami_ScopedKeyReportsExactlyItsScopesAndKeyName
+// mints a key narrowed to a specific scope list via mint-time `scopes`
+// (step 1), calls sapanjai_whoami through it, and asserts the tool reports
+// exactly that scope list — the resolved permissions a scoped key actually
+// carries, not the creator's full owner bypass — plus the key's own display
+// name, plus a mcp.tool.called audit row (Service.enforce writes this for
+// every dispatched tools/call; no new audit code exists for this tool).
+func TestIntegration_MCP_Whoami_ScopedKeyReportsExactlyItsScopesAndKeyName(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "mcp-whoami")
+	connID := createTestConnector(t, client, ts.URL, org, "conn-whoami")
+	scopes := []string{"connector:read", "mcpkey:read"}
+	const keyName = "whoami-key"
+	_, apiKey := mintMCPKeyWithScopesAs(t, client, ts.URL, org.ID, org.Owner.AccessToken, keyName, scopes)
+
+	cs := connectMCP(t, ts.URL, connID, apiKey)
+
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_whoami"})
+	if err != nil {
+		t.Fatalf("tools/call: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("sapanjai_whoami errored: %v", res.Content)
+	}
+
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal structured content: %v", err)
+	}
+	var out struct {
+		OrganizationID string   `json:"organizationId"`
+		KeyName        string   `json:"keyName"`
+		Permissions    []string `json:"permissions"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if out.OrganizationID != org.ID {
+		t.Errorf("organizationId = %q, want %q", out.OrganizationID, org.ID)
+	}
+	if out.KeyName != keyName {
+		t.Errorf("keyName = %q, want %q", out.KeyName, keyName)
+	}
+	gotPerms := append([]string(nil), out.Permissions...)
+	wantPerms := append([]string(nil), scopes...)
+	sort.Strings(gotPerms)
+	sort.Strings(wantPerms)
+	if strings.Join(gotPerms, ",") != strings.Join(wantPerms, ",") {
+		t.Errorf("permissions = %v, want exactly %v", out.Permissions, scopes)
+	}
+
+	t.Run("mcp.tool.called audit row recorded", func(t *testing.T) {
+		_, rows := doJSONList(t, client, ts.URL, "/audit-logs?action=mcp.tool.called", map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		})
+		var found bool
+		for _, r := range rows {
+			meta, ok := r["metadata"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if meta["tool"] == "sapanjai_whoami" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("no mcp.tool.called audit row found for sapanjai_whoami")
 		}
 	})
 }
@@ -590,8 +677,8 @@ func TestIntegration_MCP_SheetsToolsVisibleWithSheetsRead(t *testing.T) {
 // connector-type gating end to end: even the owner, who bypasses RBAC
 // entirely, never sees the Sheets tools against a plain "generic"
 // connector — mirrors TestIntegration_MCP_HappyPath's existing assertion
-// that a generic connector's tools/list is exactly
-// [sapanjai_describe_connector], now stated as its own test so a future
+// that a generic connector's tools/list is exactly the two
+// connector-agnostic tools, now stated as its own test so a future
 // regression here is unambiguous about which invariant broke.
 func TestIntegration_MCP_SheetsToolsAbsentFromGenericConnector(t *testing.T) {
 	ts, _, _ := setupTestServer(t)
@@ -604,8 +691,10 @@ func TestIntegration_MCP_SheetsToolsAbsentFromGenericConnector(t *testing.T) {
 	cs := connectMCP(t, ts.URL, connID, apiKey)
 
 	got := toolNames(t, cs)
-	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
-		t.Fatalf("tools/list = %v, want only sapanjai_describe_connector against a generic connector", got)
+	sort.Strings(got)
+	want := []string{"sapanjai_describe_connector", "sapanjai_whoami"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("tools/list = %v, want only the two connector-agnostic tools against a generic connector", got)
 	}
 }
 

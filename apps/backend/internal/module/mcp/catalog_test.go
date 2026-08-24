@@ -12,16 +12,19 @@ import (
 // surfacing as an unexplained tools/list count somewhere else. Step 3
 // shipped sapanjai_describe_connector; step 6 added the two Google Sheets
 // read tools; step 7 added sheets_query_rows; step 8 added
-// sheets_read_range; step 9 adds drive_list_folder and drive_get_file.
+// sheets_read_range; step 9 added drive_list_folder and drive_get_file;
+// gateway-core step 3 adds sapanjai_whoami, directly after
+// sapanjai_describe_connector so the two connector-agnostic tools stay
+// grouped and tools/list order stays deterministic.
 func TestCatalog_HasExactlyTheStepNineTools(t *testing.T) {
 	cat := mcp.Catalog()
-	if len(cat) != 7 {
-		t.Fatalf("Catalog() has %d entries, want exactly 7 for step 9", len(cat))
+	if len(cat) != 8 {
+		t.Fatalf("Catalog() has %d entries, want exactly 8", len(cat))
 	}
 
 	wantNames := []string{
-		"sapanjai_describe_connector", "sheets_list_spreadsheets", "sheets_describe_spreadsheet", "sheets_query_rows",
-		"sheets_read_range", "drive_list_folder", "drive_get_file",
+		"sapanjai_describe_connector", "sapanjai_whoami", "sheets_list_spreadsheets", "sheets_describe_spreadsheet",
+		"sheets_query_rows", "sheets_read_range", "drive_list_folder", "drive_get_file",
 	}
 	for i, want := range wantNames {
 		if cat[i].Name != want {
@@ -36,7 +39,17 @@ func TestCatalog_HasExactlyTheStepNineTools(t *testing.T) {
 		t.Errorf("sapanjai_describe_connector ConnectorType = %q, want empty (every connector type)", cat[0].ConnectorType)
 	}
 
-	sheetsEntries := cat[1:5]
+	// sapanjai_whoami is gated on the same connector:read action as
+	// sapanjai_describe_connector — deliberately, so it is never invisible
+	// to a key that can see any tool at all (docs/08-gateway-core.md §6 Q1).
+	if cat[1].Permission != connector.PermissionRead {
+		t.Errorf("sapanjai_whoami permission = %q, want connector.PermissionRead (%q)", cat[1].Permission, connector.PermissionRead)
+	}
+	if cat[1].ConnectorType != "" {
+		t.Errorf("sapanjai_whoami ConnectorType = %q, want empty (every connector type)", cat[1].ConnectorType)
+	}
+
+	sheetsEntries := cat[2:6]
 	for _, e := range sheetsEntries {
 		if e.Permission != mcp.PermissionSheetsRead {
 			t.Errorf("%s permission = %q, want mcp.PermissionSheetsRead (%q)", e.Name, e.Permission, mcp.PermissionSheetsRead)
@@ -49,7 +62,7 @@ func TestCatalog_HasExactlyTheStepNineTools(t *testing.T) {
 	// drive_* tools are gated by drive:read specifically — never
 	// sheets:read, per docs/06-sheets-adapter.md §5 and the plan's explicit
 	// requirement that the two permissions stay independent.
-	driveEntries := cat[5:7]
+	driveEntries := cat[6:8]
 	for _, e := range driveEntries {
 		if e.Permission != mcp.PermissionDriveRead {
 			t.Errorf("%s permission = %q, want mcp.PermissionDriveRead (%q)", e.Name, e.Permission, mcp.PermissionDriveRead)
@@ -70,6 +83,11 @@ func TestPermissionFor(t *testing.T) {
 	}
 	if action != connector.PermissionRead {
 		t.Errorf("action = %q, want %q", action, connector.PermissionRead)
+	}
+
+	action, known = mcp.PermissionFor("sapanjai_whoami")
+	if !known || action != connector.PermissionRead {
+		t.Errorf("sapanjai_whoami: known=%v action=%q, want known=true action=%q", known, action, connector.PermissionRead)
 	}
 
 	action, known = mcp.PermissionFor("sheets_list_spreadsheets")

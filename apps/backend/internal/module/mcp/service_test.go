@@ -73,14 +73,17 @@ func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
 	svc := mcp.NewService(nil, nil, nil, nil, nil)
 	conn := testConnector()
 
+	// connector:read gates two connector-agnostic tools now —
+	// sapanjai_describe_connector and sapanjai_whoami — so every case that
+	// grants it sees both.
 	cases := []struct {
 		name  string
 		p     *rbac.Principal
 		wantN int
 	}{
-		{"owner sees the tool via bypass", &rbac.Principal{Role: "owner"}, 1},
-		{"exact connector:read grant", &rbac.Principal{Actions: []string{"connector:read"}}, 1},
-		{"connector:* wildcard", &rbac.Principal{Actions: []string{"connector:*"}}, 1},
+		{"owner sees both tools via bypass", &rbac.Principal{Role: "owner"}, 2},
+		{"exact connector:read grant", &rbac.Principal{Actions: []string{"connector:read"}}, 2},
+		{"connector:* wildcard", &rbac.Principal{Actions: []string{"connector:*"}}, 2},
 		{"unrelated grant sees nothing", &rbac.Principal{Actions: []string{"mcpkey:read"}}, 0},
 		{"no grant at all sees nothing", &rbac.Principal{}, 0},
 	}

@@ -66,7 +66,11 @@ func NewHandler(service *Service, log *slog.Logger) *Handler {
 // connector on the request context. A missing one is a wiring bug; returning
 // a server with no tools fails safe rather than panicking the process.
 func (h *Handler) getServer(r *http.Request) *gomcp.Server {
-	req := RequestInfo{BaseURL: baseURLFromRequest(r)}
+	// keyName is absent (empty string) for a hand-built request in a unit
+	// test, or a wiring bug — RequestInfo.KeyName documents that as the
+	// contract, not a panic.
+	keyName, _ := appmw.MCPKeyNameFromContext(r.Context())
+	req := RequestInfo{BaseURL: baseURLFromRequest(r), KeyName: keyName}
 	p, ok := principalFromContext(r.Context())
 	if !ok {
 		return h.service.BuildServer(&rbac.Principal{}, db.Connector{}, req)

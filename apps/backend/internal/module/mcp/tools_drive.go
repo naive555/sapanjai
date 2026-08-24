@@ -17,6 +17,7 @@ import (
 	"github.com/sapanjai/backend/internal/adapter/googlesheets"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/module/connector"
+	"github.com/sapanjai/backend/internal/module/rbac"
 )
 
 // PermissionDriveRead gates every drive_* read tool. Explicitly its own
@@ -72,7 +73,7 @@ type driveListFolderOutput struct {
 	HasMore       bool                     `json:"has_more" jsonschema:"true if more files remain — call again with next_page_token"`
 }
 
-func registerDriveListFolder(s *gomcp.Server, svc *Service, conn db.Connector, _ RequestInfo) {
+func registerDriveListFolder(s *gomcp.Server, svc *Service, _ *rbac.Principal, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "drive_list_folder",
 		Description: driveListFolderDescription,
@@ -182,7 +183,7 @@ type driveGetFileOutput struct {
 	DownloadURLExpiresAt string `json:"download_url_expires_at,omitempty" jsonschema:"RFC3339 timestamp download_url stops working at, at most 15 minutes after this call"`
 }
 
-func registerDriveGetFile(s *gomcp.Server, svc *Service, conn db.Connector, req RequestInfo) {
+func registerDriveGetFile(s *gomcp.Server, svc *Service, _ *rbac.Principal, conn db.Connector, req RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "drive_get_file",
 		Description: driveGetFileDescription,

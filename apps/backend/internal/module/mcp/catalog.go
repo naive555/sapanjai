@@ -7,6 +7,7 @@ import (
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/module/connector"
+	"github.com/sapanjai/backend/internal/module/rbac"
 )
 
 // Entry binds one MCP tool to one controlplane RBAC action — the single
@@ -24,15 +25,16 @@ type Entry struct {
 	// every type. A tool whose handler could only ever fail against the
 	// wrong type is better left unadvertised than advertised and broken.
 	ConnectorType connector.Type
-	// Register adds the tool to s. conn is closed over rather than read from
-	// any model-supplied argument, so no tool input can redirect a call to
-	// another connector.
-	Register func(s *gomcp.Server, svc *Service, conn db.Connector, req RequestInfo)
+	// Register adds the tool to s. conn and p are both closed over rather
+	// than read from any model-supplied argument, so no tool input can
+	// redirect a call to another connector or another caller's permissions.
+	Register func(s *gomcp.Server, svc *Service, p *rbac.Principal, conn db.Connector, req RequestInfo)
 }
 
 // RequestInfo carries the parts of the inbound HTTP request a Register
-// closure needs but cannot reach through svc/conn — today just the origin
-// drive_get_file builds absolute download URLs against.
+// closure needs but cannot reach through svc/conn — the origin
+// drive_get_file builds absolute download URLs against, and the PAT's
+// display name sapanjai_whoami reports.
 //
 // Passed explicitly rather than read off the handler's ctx: SDK context
 // propagation from the inbound request through to a tools/call dispatch
@@ -44,6 +46,12 @@ type RequestInfo struct {
 	// build a server directly, which makes SignFileLink emit a root-relative
 	// URL never served to a real client.
 	BaseURL string
+	// KeyName is the display name of the mcp_api_keys row the caller
+	// authenticated with (middleware.MCPKeyNameFromContext), never the key
+	// id, hash, or token. Empty when absent — a unit test building a server
+	// directly, or a wiring bug — which must render as an empty keyName,
+	// never a panic.
+	KeyName string
 }
 
 // appliesTo reports whether e should even be considered for conn, before
@@ -63,6 +71,7 @@ var catalog = []Entry{
 		Description: describeConnectorDescription,
 		Register:    registerDescribeConnector,
 	},
+	whoamiEntry,
 	sheetsListSpreadsheetsEntry,
 	sheetsDescribeSpreadsheetEntry,
 	sheetsQueryRowsEntry,
@@ -111,7 +120,7 @@ type describeConnectorOutput struct {
 	Status string `json:"status" jsonschema:"the connector's last known health status: active, inactive, or error"`
 }
 
-func registerDescribeConnector(s *gomcp.Server, _ *Service, conn db.Connector, _ RequestInfo) {
+func registerDescribeConnector(s *gomcp.Server, _ *Service, _ *rbac.Principal, conn db.Connector, _ RequestInfo) {
 	gomcp.AddTool(s, &gomcp.Tool{
 		Name:        "sapanjai_describe_connector",
 		Description: describeConnectorDescription,

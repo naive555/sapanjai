@@ -67,8 +67,18 @@ func TestBuildServer_SheetsToolsHiddenForNonGoogleSheetsConnector(t *testing.T) 
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 	got := toolNames(t, cs)
-	if len(got) != 1 || got[0] != "sapanjai_describe_connector" {
-		t.Fatalf("tools/list = %v, want only sapanjai_describe_connector for a generic connector even with owner bypass", got)
+	// connector:read gates both connector-agnostic tools — sapanjai_describe_connector
+	// and sapanjai_whoami — neither of which is connector-type-restricted, so
+	// both remain visible for a generic connector even with owner bypass;
+	// no sheets_* tool must join them.
+	want := map[string]bool{"sapanjai_describe_connector": true, "sapanjai_whoami": true}
+	if len(got) != 2 {
+		t.Fatalf("tools/list = %v, want only the 2 connector-agnostic tools for a generic connector even with owner bypass", got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected tool %q in tools/list", name)
+		}
 	}
 }
 
@@ -109,12 +119,13 @@ func TestBuildServer_SheetsToolsInvisibleWithoutSheetsRead(t *testing.T) {
 		wantOtherTools int // tools unrelated to sheets:read that this principal is still entitled to see
 	}{
 		{"no grant at all", &rbac.Principal{}, 0},
-		// connector:read grants sapanjai_describe_connector (Permission
-		// connector:read, ConnectorType "" so it applies to every
+		// connector:read grants both connector-agnostic tools
+		// (sapanjai_describe_connector and sapanjai_whoami, Permission
+		// connector:read, ConnectorType "" so both apply to every
 		// connector) but must never also unlock the sheets:read-gated
 		// tools — a different action must not leak into a different
 		// permission's tools.
-		{"unrelated grant", &rbac.Principal{Actions: []string{"connector:read"}}, 1},
+		{"unrelated grant", &rbac.Principal{Actions: []string{"connector:read"}}, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

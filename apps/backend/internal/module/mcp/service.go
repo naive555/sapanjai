@@ -141,7 +141,7 @@ func (s *Service) BuildServer(p *rbac.Principal, conn db.Connector, req RequestI
 			continue
 		}
 		if p.Allows(e.Permission) {
-			e.Register(srv, s, conn, req)
+			e.Register(srv, s, p, conn, req)
 			granted = append(granted, e.Name)
 			continue
 		}
