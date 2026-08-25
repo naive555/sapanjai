@@ -7,18 +7,12 @@ import { ArrowLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { GoogleSheetsForm } from "@/components/connectors/google-sheets-form";
+import { ConnectorStatus } from "@/components/connector-status";
 import { PageHeader } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
 import { getConnector, updateConnector } from "@/lib/api/endpoints";
 import { useActiveOrgId } from "@/lib/org/active-org";
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "active") return <Badge variant="secondary">Active</Badge>;
-  if (status === "error") return <Badge variant="destructive">Error</Badge>;
-  return <Badge variant="outline">Inactive</Badge>;
-}
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "never";
@@ -91,7 +85,7 @@ export default function GoogleSheetsConnectorPage() {
         <>
           <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3">
             <span className="font-medium">{connector.name}</span>
-            <StatusBadge status={connector.status} />
+            <ConnectorStatus status={connector.status} />
             <span className="text-xs text-muted-foreground">
               Last health check: {formatDate(connector.lastHealthCheckAt)}
             </span>

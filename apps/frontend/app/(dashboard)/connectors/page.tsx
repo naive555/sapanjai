@@ -16,10 +16,10 @@ import {
   toGoogleSheetsConfig,
   type GoogleSheetsFieldValues,
 } from "@/components/connectors/google-sheets-form";
+import { ConnectorStatus } from "@/components/connector-status";
 import { CopyableId } from "@/components/copyable-id";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -102,12 +102,6 @@ const createDefaults: CreateConnectorValues = {
   driveFolderIdsText: "",
   headerRowsText: "",
 };
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "active") return <Badge variant="secondary">Active</Badge>;
-  if (status === "error") return <Badge variant="destructive">Error</Badge>;
-  return <Badge variant="outline">Inactive</Badge>;
-}
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "—";
@@ -368,7 +362,7 @@ export default function ConnectorsPage() {
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{typeLabel(connector.type)}</TableCell>
                   <TableCell>
-                    <StatusBadge status={connector.status} />
+                    <ConnectorStatus status={connector.status} />
                   </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {formatDate(connector.lastHealthCheckAt)}

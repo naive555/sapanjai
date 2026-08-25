@@ -9,11 +9,11 @@ import { toast } from "sonner";
 import { ActionToken, ActivityDetail } from "@/components/activity-row";
 import { Callout } from "@/components/callout";
 import { ConnectorSpan } from "@/components/connector-span";
+import { ConnectorStatus } from "@/components/connector-status";
 import { CopyableCode } from "@/components/copyable-code";
 import { CopyableId } from "@/components/copyable-id";
 import { DataTable } from "@/components/data-table";
 import { PageHeader, TableMessage } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { ApiError } from "@/lib/api/client";
@@ -34,12 +34,6 @@ import { cn } from "@/lib/utils";
 // only" toggle on /activity already uses for the same reason.
 const AUDIT_FETCH_LIMIT = 100;
 const RECENT_ACTIVITY_ROWS = 15;
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "active") return <Badge variant="secondary">Active</Badge>;
-  if (status === "error") return <Badge variant="destructive">Error</Badge>;
-  return <Badge variant="outline">Inactive</Badge>;
-}
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "never";
@@ -241,7 +235,7 @@ export function ConnectorDetailClient({
           <section className="space-y-3 border-t pt-4">
             <h2 className="font-heading text-base font-medium">Health</h2>
             <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3">
-              <StatusBadge status={connector.status} />
+              <ConnectorStatus status={connector.status} />
               <span className="text-xs text-muted-foreground">
                 Last health check: {formatDate(connector.lastHealthCheckAt)}
               </span>
