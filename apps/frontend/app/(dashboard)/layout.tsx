@@ -18,7 +18,11 @@ import { cn } from "@/lib/utils";
 // level setup that isn't scoped to an organization at all. requiresOrg still
 // drives the disabled/greyed-out state below — the RequireAuth/RequireOrg
 // split survives as behaviour, it just isn't the user-facing vocabulary.
-const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; label: string }[] }[] = [
+const NAV_GROUPS: {
+  label: string;
+  requiresOrg: boolean;
+  items: { href: string; label: string }[];
+}[] = [
   // The landing page leads the nav with no eyebrow of its own: a group
   // label reading "overview" directly above an item reading "Overview" is
   // the same word twice. It still carries requiresOrg, so it greys out
@@ -27,6 +31,11 @@ const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; 
     label: "",
     requiresOrg: true,
     items: [{ href: "/overview", label: "Overview" }],
+  },
+  {
+    label: "account",
+    requiresOrg: false,
+    items: [{ href: "/organizations", label: "Organizations" }],
   },
   {
     label: "connection",
@@ -52,11 +61,6 @@ const NAV_GROUPS: { label: string; requiresOrg: boolean; items: { href: string; 
       { href: "/subscription", label: "Subscription" },
     ],
   },
-  {
-    label: "account",
-    requiresOrg: false,
-    items: [{ href: "/organizations", label: "Organizations" }],
-  },
 ];
 
 function NavLinks({ className }: { className?: string }) {
@@ -68,7 +72,9 @@ function NavLinks({ className }: { className?: string }) {
       {NAV_GROUPS.map((group) => (
         <div key={group.label || group.items[0].href} className={className}>
           {group.label && (
-            <div className="label-eyebrow mb-2 hidden px-2.5 md:block">{group.label}</div>
+            <div className="label-eyebrow mb-2 hidden px-2.5 md:block">
+              {group.label}
+            </div>
           )}
           <div className="flex gap-1 md:flex-col">
             {group.items.map((item) => {
@@ -83,7 +89,10 @@ function NavLinks({ className }: { className?: string }) {
                     className="flex cursor-not-allowed items-center gap-2 rounded-md px-2.5 py-1.5 text-sm
                       whitespace-nowrap text-muted-foreground/45"
                   >
-                    <span aria-hidden className="h-px w-2 [border-top:1px_dashed_currentColor]" />
+                    <span
+                      aria-hidden
+                      className="h-px w-2 [border-top:1px_dashed_currentColor]"
+                    />
                     {item.label}
                   </span>
                 );
@@ -104,7 +113,10 @@ function NavLinks({ className }: { className?: string }) {
                 >
                   <span
                     aria-hidden
-                    className={cn("h-3.5 w-px shrink-0", active ? "bg-signal" : "bg-transparent")}
+                    className={cn(
+                      "h-3.5 w-px shrink-0",
+                      active ? "bg-signal" : "bg-transparent",
+                    )}
                   />
                   {item.label}
                 </Link>
@@ -117,7 +129,11 @@ function NavLinks({ className }: { className?: string }) {
   );
 }
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const { status, user, logoutSession } = useSession();
   const router = useRouter();
 
@@ -158,7 +174,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <ScopeChain email={user?.email ?? ""} />
           <div className="flex shrink-0 items-center gap-1">
             <ThemeToggle />
-            <Button variant="ghost" size="sm" onClick={() => void handleLogout()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleLogout()}
+            >
               Log out
             </Button>
           </div>
@@ -168,7 +188,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <NavLinks className="contents" />
         </nav>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-7 sm:px-6 sm:py-9">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-7 sm:px-6 sm:py-9">
+          {children}
+        </main>
       </div>
     </div>
   );
