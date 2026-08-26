@@ -147,9 +147,48 @@ image works in any environment.
 1. Add the Postgres and Redis plugins.
 2. Create `api`, `worker`, `web` with the settings above.
 3. Deploy `api` — the pre-deploy command applies migrations.
-4. Seed the default plans once: `railway run --service api /app/seed`. Without
-   this, `GET /plans` returns an empty list and the plan picker is blank.
+4. Seed the default plans once — see "Running migrate and seed by hand" below.
+   Without this, `GET /plans` returns an empty list and the plan picker is blank.
 5. Deploy `worker` and `web`.
+
+## Running migrate and seed by hand
+
+The runtime image is `gcr.io/distroless/static-debian12:nonroot`, which has no
+shell. Railway's **Console tab cannot attach to it** ("this container doesn't
+include a shell"), and it never will — that is the same property that forces
+the dedicated `cmd/healthcheck` binary instead of a `curl` HEALTHCHECK. Don't
+try to get a shell in there; use one of these instead.
+
+**Migrations: the Pre-Deploy Command.** `/app/migrate up` needs no shell —
+Railway execs commands directly in exec form rather than wrapping them in
+`sh -c`, so a bare binary path is exactly right. This runs on every deploy and
+is the only migration path you should need.
+
+**One-offs (seeding, or a manual `migrate` run): from your machine, against the
+database's public URL.** Copy `DATABASE_PUBLIC_URL` from the Postgres service's
+Variables tab — the internal `*.railway.internal` address is not reachable from
+outside Railway — then:
+
+```
+cd apps/backend
+DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/seed
+DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/migrate up    # if ever needed
+```
+
+Both commands call the same `config.Load` as the API, so they validate the
+*whole* env contract, not just `DATABASE_URL`. That is fine: `loadDotEnv` uses
+`godotenv.Load`, which does **not** overwrite variables already set, so the
+explicit `DATABASE_URL` above wins while `JWT_*_SECRET` and
+`CONNECTOR_MASTER_KEY` come from your local `.env`.
+
+`railway run` does *not* help here — it injects Railway's variables into a
+command running on **your machine**, so `railway run /app/seed` would look for
+`/app/seed` locally and fail.
+
+**If you genuinely need a console**, swap the runner base to
+`gcr.io/distroless/static-debian12:debug-nonroot`, which bundles a busybox
+shell at `/busybox/sh`. That puts a shell back into the production image, so
+treat it as a temporary debugging build rather than the default.
 
 ## Verifying
 
