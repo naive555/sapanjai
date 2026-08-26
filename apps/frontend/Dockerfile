@@ -22,6 +22,7 @@ RUN pnpm install --frozen-lockfile
 FROM node:${NODE_VERSION}-alpine AS builder
 WORKDIR /app
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -35,6 +36,11 @@ FROM node:${NODE_VERSION}-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+# Next.js phones home by default. Beyond the privacy default, the outbound
+# calls matter operationally: Railway's Serverless sleeps a service after ~10
+# minutes with no OUTBOUND traffic, so background telemetry can keep an idle
+# frontend awake and billing. Set in the builder stage too, for `next build`.
+ENV NEXT_TELEMETRY_DISABLED=1
 # Without an explicit HOSTNAME, the standalone server binds to the
 # container's assigned network IP instead of all interfaces — external
 # port-forwarding still works (Docker routes to whatever's listening), but

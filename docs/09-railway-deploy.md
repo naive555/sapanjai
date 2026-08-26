@@ -97,8 +97,29 @@ produce about one run per interval rather than N.
 | Healthcheck Path    | `/`                                           |
 | Public Domain       | yes                                           |
 
+| Serverless          | on, pre-launch (see below)                    |
+
 `/` returns 200 (the root page redirects client-side after resolving session
 status), so it is a valid probe.
+
+**Serverless (app sleeping).** Settings → Deploy → Serverless → *Enable
+Serverless*, per service. Railway stops the service after ~10 minutes with no
+outbound traffic and wakes it on inbound traffic — from the internet or from
+another service over the private network. For a dashboard with no users yet
+this is most of the frontend's cost, so leave it on until launch. Two caveats:
+the first request after a sleep "may return a 502 Bad Gateway", and Next.js
+telemetry makes outbound calls that can reset the idle timer — which is why
+`NEXT_TELEMETRY_DISABLED=1` is baked into `apps/frontend/Dockerfile` rather
+than left to a service variable.
+
+The deploy healthcheck does *not* keep it awake — Railway "does not monitor the
+healthcheck endpoint after the deployment has gone live"; it only gates the
+deploy.
+
+**Never enable Serverless on `worker`.** It wakes on *inbound* traffic and a
+job scheduler receives none, so it would sleep between ticks and silently stop
+running jobs. Be wary on `api` too once MCP clients connect: a 502 on a cold
+tool call is a bad failure mode.
 
 ## Environment variables
 
@@ -128,10 +149,15 @@ unreadable — see the envelope-encryption ground rule in CLAUDE.md.
 
 **`web`:**
 
-| Variable      | Value                                  |
-| ------------- | -------------------------------------- |
-| `BACKEND_URL` | `http://<api>.railway.internal:3000`    |
-| `GATEWAY_URL` | the `api` service's public HTTPS URL    |
+| Variable                  | Value                                                    |
+| ------------------------- | -------------------------------------------------------- |
+| `BACKEND_URL`             | `http://${{sapanjai-api.RAILWAY_PRIVATE_DOMAIN}}:3000`    |
+| `GATEWAY_URL`             | `https://${{sapanjai-api.RAILWAY_PUBLIC_DOMAIN}}`         |
+
+Use Railway's cross-service references (`${{ServiceName.VAR}}`) rather than
+pasting literal hostnames, so neither breaks if a domain changes. The `:3000`
+is why `PORT` is pinned on `api` — without it Railway assigns a port that moves
+between deploys.
 
 These are different on purpose. `BACKEND_URL` is *dialled* server-side by the
 proxy at `app/api/[...path]/route.ts`, so it uses private networking — Go binds
