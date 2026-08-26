@@ -235,3 +235,35 @@ Worker logs should show `worker started jobs=1` followed by
 (pushes the backend image to ghcr on CI success against `main`) are unchanged
 by any of this. Note `release.yml` publishes only the **backend** image — there
 is no frontend image in ghcr, so `web` must build from source on Railway.
+
+## Troubleshooting
+
+### `fetch failed` / `ECONNREFUSED` in the web logs
+
+```
+⨯ [TypeError: fetch failed] {
+  [cause]: AggregateError:
+    code: 'ECONNREFUSED',
+    [errors]: [ [Error], [Error] ]
+  }
+}
+```
+
+`BACKEND_URL` is unset on the web service, and the proxy fell back to its
+hardcoded `http://localhost:3000` (see `backendUrl()` in
+`app/api/[...path]/route.ts`). Railway assigns `PORT=8080` by default, so the
+app listens on 8080 and nothing answers on 3000 inside the container.
+
+The **two** entries in `[errors]` are the giveaway: `localhost` resolves to both
+`::1` and `127.0.0.1` and both refuse. A wrong `*.railway.internal` host fails
+with a single error or a DNS failure instead — so two errors means localhost,
+i.e. a missing variable rather than a wrong one.
+
+Note this passes the deploy healthcheck: `/` returns 200 whether or not the
+backend is reachable, so the deployment goes green and the fault only appears
+once a page actually calls the API.
+
+Locally the same misconfiguration returns **404**, not 500 — with `PORT` at its
+default 3000 the fallback loops back into the Next.js server itself, which has
+no `/health` route. Reproduce the Railway behaviour with
+`docker run -e PORT=8080 ...`.
