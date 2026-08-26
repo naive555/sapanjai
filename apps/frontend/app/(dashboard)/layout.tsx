@@ -28,14 +28,14 @@ const NAV_GROUPS: {
   // the same word twice. It still carries requiresOrg, so it greys out
   // exactly like every other org-scoped route when nothing is selected.
   {
-    label: "",
-    requiresOrg: true,
-    items: [{ href: "/overview", label: "Overview" }],
-  },
-  {
     label: "account",
     requiresOrg: false,
     items: [{ href: "/organizations", label: "Organizations" }],
+  },
+  {
+    label: "dashboard",
+    requiresOrg: true,
+    items: [{ href: "/overview", label: "Overview" }],
   },
   {
     label: "connection",
