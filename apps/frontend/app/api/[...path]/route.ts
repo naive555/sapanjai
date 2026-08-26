@@ -11,20 +11,95 @@ function backendUrl(): string {
   return process.env.BACKEND_URL ?? "http://localhost:3000";
 }
 
+interface ProxyFailure {
+  method: string;
+  path: string;
+  targetHost: string;
+  code: string;
+  durationMs: number;
+}
+
+// Emits exactly one line of JSON. Railway parses a single-line JSON object
+// into a queryable record (`message` required, `level` optional, every other
+// field filterable as `@field:value`); anything multi-line becomes one record
+// per line instead, which is why an uncaught fetch failure arrives as a dozen
+// interleaved fragments of Next's error dump.
+//
+// The fields are an explicit allowlist, never a spread of the request. This
+// handler forwards the caller's Authorization header, and unlike the backend
+// — where internal/shared/logger/redact.go scrubs sensitive keys centrally —
+// nothing here would catch a mistake. Never log headers, bodies, or the query
+// string; `path` is the pathname only, and the target is reduced to its host.
+function logProxyFailure(f: ProxyFailure): void {
+  console.log(
+    JSON.stringify({
+      level: "error",
+      message: "proxy request failed",
+      method: f.method,
+      path: f.path,
+      targetHost: f.targetHost,
+      code: f.code,
+      durationMs: f.durationMs,
+    }),
+  );
+}
+
+// undici reports the useful part on `cause` — for a refused connection that is
+// an AggregateError carrying `code: "ECONNREFUSED"`, for a bad hostname an
+// Error with `code: "ENOTFOUND"`. Which one it is distinguishes a wrong
+// BACKEND_URL from an unset one, so it is worth pulling out.
+function errorCode(err: unknown): string {
+  const cause = (err as { cause?: unknown } | null)?.cause;
+  const code =
+    (cause as { code?: unknown } | null)?.code ?? (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "UNKNOWN";
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "invalid-backend-url";
+  }
+}
+
 async function proxy(request: NextRequest, path: string[]): Promise<Response> {
-  const target = `${backendUrl()}/${path.join("/")}${request.nextUrl.search}`;
+  const base = backendUrl();
+  const target = `${base}/${path.join("/")}${request.nextUrl.search}`;
 
   const headers = new Headers(request.headers);
   headers.delete("host");
   headers.delete("content-length");
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  const startedAt = Date.now();
 
-  const res = await fetch(target, {
-    method: request.method,
-    headers,
-    body: hasBody ? await request.arrayBuffer() : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(target, {
+      method: request.method,
+      headers,
+      body: hasBody ? await request.arrayBuffer() : undefined,
+    });
+  } catch (err) {
+    // The backend being unreachable is a gateway fault, not an application
+    // bug: without this catch Next surfaces it as a 500 with a stack page,
+    // which reads as "the dashboard is broken" instead of "the API is down".
+    // Body shape matches the backend's httpx.ErrorResponse so lib/api/client
+    // reports it through the same ApiError path as any other failure.
+    logProxyFailure({
+      method: request.method,
+      path: request.nextUrl.pathname,
+      targetHost: hostOf(base),
+      code: errorCode(err),
+      durationMs: Date.now() - startedAt,
+    });
+
+    return new Response(JSON.stringify({ message: "Backend unreachable" }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  }
 
   const responseHeaders = new Headers(res.headers);
   responseHeaders.delete("content-encoding");
