@@ -36,4 +36,11 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/app/healthcheck"]
 
-ENTRYPOINT ["/app/api"]
+# CMD, not ENTRYPOINT: the worker, migrate and seed binaries share this image
+# and are selected by overriding the container command. An exec-form ENTRYPOINT
+# would make those overrides *append* as arguments to /app/api instead of
+# replacing it — the API would silently start in the worker's place — and
+# platforms that expose only a "start command" (Railway, Fly, Cloud Run) offer
+# no way to reset the entrypoint. compose.yaml and k8s/ override this the same
+# way.
+CMD ["/app/api"]

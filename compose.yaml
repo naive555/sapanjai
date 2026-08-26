@@ -60,7 +60,9 @@ services:
     build:
       context: ./apps/backend
     container_name: sapanjai-worker
-    entrypoint: ["/app/worker"]
+    # Overrides the image CMD (/app/api) to run the worker binary that ships
+    # in the same image.
+    command: ["/app/worker"]
     env_file:
       - .env
     environment:

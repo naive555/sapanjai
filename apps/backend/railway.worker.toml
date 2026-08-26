@@ -1,0 +1,31 @@
+# Railway config-as-code for the **worker** service (cmd/worker).
+#
+# Railway service settings this file assumes:
+#   Root Directory   apps/backend
+#   Config file path /apps/backend/railway.worker.toml
+#                    (required — without it Railway picks up railway.toml,
+#                    the API's config, and this service starts a second API)
+#
+# Same image as the API; only the command differs. That works because the
+# backend Dockerfile ends in CMD, not ENTRYPOINT — an exec-form ENTRYPOINT
+# would make startCommand *append* to /app/api instead of replacing it.
+#
+# Required variables: the same set as the API service — config.Load validates
+# all of them in the worker process too, not just the API. Add the optional
+# worker-only ones as needed: WORKER_JOB_TIMEOUT, SESSION_CLEANUP_INTERVAL,
+# SESSION_CLEANUP_RETENTION, SESSION_CLEANUP_BATCH_SIZE.
+
+[build]
+builder = "DOCKERFILE"
+watchPatterns = ["/apps/backend/**"]
+
+[deploy]
+startCommand = "/app/worker"
+# No preDeployCommand: the API service runs the migrations. Two services
+# racing `migrate up` on the same database buys nothing and can deadlock.
+#
+# No healthcheckPath either: Railway probes the port it assigns via PORT, but
+# the worker's ops server listens on WORKER_PORT (default 3001) and the service
+# has no public domain. Give it no domain and leave the healthcheck off.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
