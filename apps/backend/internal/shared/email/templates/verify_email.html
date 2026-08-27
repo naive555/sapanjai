@@ -1,0 +1,21 @@
+<!--
+  Verify-email body. Wrapped in the shared header/footer from layout.html;
+  the DisplayName greeting degrades to "Hi there," when it's empty (most
+  registrations, since it's an optional field) rather than leaving a dangling
+  comma or a template artifact.
+-->
+{{- template "email_header" . }}
+<p style="margin:0 0 16px 0;">{{if .DisplayName}}Hi {{.DisplayName}},{{else}}Hi there,{{end}}</p>
+<p style="margin:0 0 24px 0;">Thanks for signing up for Sapanjai. Confirm your email address to finish setting up your account.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+<tr>
+<td align="center" bgcolor="#4f46e5" style="border-radius:6px;">
+<a href="{{.VerifyURL}}" style="display:inline-block;padding:12px 28px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">Verify email address</a>
+</td>
+</tr>
+</table>
+<p style="margin:0 0 24px 0;color:#6b7280;font-size:13px;">If the button above doesn't work, copy and paste this link into your browser:<br>
+<a href="{{.VerifyURL}}" style="color:#4f46e5;word-break:break-all;">{{.VerifyURL}}</a></p>
+<p style="margin:0 0 16px 0;">This link expires in {{.ExpiresIn}}.</p>
+<p style="margin:0;color:#6b7280;font-size:13px;">If you didn't create a Sapanjai account, you can safely ignore this email.</p>
+{{template "email_footer" .}}

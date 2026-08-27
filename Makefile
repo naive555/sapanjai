@@ -58,7 +58,12 @@ test:
 
 ## Lint the backend (golangci-lint if installed, else go vet)
 lint:
-	cd apps/backend && (command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || go vet ./...)
+	@cd apps/backend && if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found, falling back to go vet (CI runs golangci-lint v2.12.2)"; \
+		go vet ./...; \
+	fi
 
 ## Tidy go.mod/go.sum
 tidy:

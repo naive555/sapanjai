@@ -1,0 +1,12 @@
+{{if .DisplayName}}Hi {{.DisplayName}},{{else}}Hi there,{{end}}
+
+Thanks for signing up for Sapanjai. Confirm your email address to finish
+setting up your account by opening this link:
+
+{{.VerifyURL}}
+
+This link expires in {{.ExpiresIn}}.
+
+If you didn't create a Sapanjai account, you can safely ignore this email.
+
+-- Sapanjai

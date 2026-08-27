@@ -23,6 +23,14 @@ const minSecretLen = 32
 // statement.
 const maxCleanupBatchSize = 10_000
 
+// maxEmailBatchSize and maxEmailAttempts bound EMAIL_DISPATCH_BATCH_SIZE and
+// EMAIL_MAX_ATTEMPTS for the same reason maxCleanupBatchSize exists: a
+// fat-fingered value should fail at boot, not at 3am against the outbox.
+const (
+	maxEmailBatchSize = 500
+	maxEmailAttempts  = 20
+)
+
 type Config struct {
 	AppName  string
 	AppEnv   string
@@ -61,6 +69,39 @@ type Config struct {
 	// before a tools/call is dispatched. See
 	// docs/07-sheets-adapter-decisions.md step 4.
 	MCPRateLimitPerMin int
+
+	// ResendAPIKey authenticates the transactional-mail sender. Optional and
+	// empty by default: with no key the worker falls back to
+	// email.LogSender, so a developer never needs a Resend account. Only the
+	// worker process sends mail — the API only ever enqueues — so this needs
+	// to be set on the worker service and nowhere else.
+	ResendAPIKey string
+
+	// EmailFrom is the sending identity ("Name <addr@domain>"). In production
+	// its domain must be verified in Resend or every send 403s.
+	EmailFrom string
+
+	// AppPublicURL is the browser-facing frontend origin that verification
+	// and password-reset links are built from. Deliberately NOT BACKEND_URL:
+	// that address is dialled server-side by the Next.js proxy and is
+	// frequently unreachable from a mail client (compose's "http://api:3000",
+	// Railway's private domain). Stored without a trailing slash.
+	AppPublicURL string
+
+	// EmailDispatchInterval is how often the outbox drain job runs, and
+	// therefore also its Redis lock TTL (internal/worker).
+	EmailDispatchInterval time.Duration
+
+	// EmailDispatchBatchSize is how many outbox rows one run claims.
+	EmailDispatchBatchSize int
+
+	// EmailMaxAttempts is how many sends a row gets before it is marked
+	// 'failed' and stops being retried.
+	EmailMaxAttempts int
+
+	// EmailOutboxRetention is how long 'sent'/'failed' rows are kept before
+	// the dispatch job prunes them.
+	EmailOutboxRetention time.Duration
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -134,6 +175,8 @@ func Load() (*Config, error) {
 		{"WORKER_JOB_TIMEOUT", "5m", &cfg.WorkerJobTimeout},
 		{"SESSION_CLEANUP_INTERVAL", "1h", &cfg.SessionCleanupInterval},
 		{"SESSION_CLEANUP_RETENTION", "720h", &cfg.SessionCleanupRetention},
+		{"EMAIL_DISPATCH_INTERVAL", "15s", &cfg.EmailDispatchInterval},
+		{"EMAIL_OUTBOX_RETENTION", "168h", &cfg.EmailOutboxRetention},
 	} {
 		parsed, err := time.ParseDuration(getEnv(d.key, d.fallback))
 		switch {
@@ -166,11 +209,44 @@ func Load() (*Config, error) {
 		cfg.MCPRateLimitPerMin = mcpRateLimit
 	}
 
+	cfg.ResendAPIKey = os.Getenv("RESEND_API_KEY")
+	cfg.EmailFrom = getEnv("EMAIL_FROM", "Sapanjai <noreply@localhost>")
+
+	// Trailing slashes are stripped so link-building can always safely do
+	// AppPublicURL + "/verify-email?token=..." without risking "//verify-email".
+	cfg.AppPublicURL = strings.TrimRight(getEnv("APP_PUBLIC_URL", "http://localhost:4000"), "/")
+
+	emailBatchSize, err := strconv.Atoi(getEnv("EMAIL_DISPATCH_BATCH_SIZE", "20"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("EMAIL_DISPATCH_BATCH_SIZE is not a valid integer: %v", err))
+	case emailBatchSize < 1 || emailBatchSize > maxEmailBatchSize:
+		problems = append(problems, fmt.Sprintf("EMAIL_DISPATCH_BATCH_SIZE must be between 1 and %d", maxEmailBatchSize))
+	default:
+		cfg.EmailDispatchBatchSize = emailBatchSize
+	}
+
+	emailMaxAttempts, err := strconv.Atoi(getEnv("EMAIL_MAX_ATTEMPTS", "5"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("EMAIL_MAX_ATTEMPTS is not a valid integer: %v", err))
+	case emailMaxAttempts < 1 || emailMaxAttempts > maxEmailAttempts:
+		problems = append(problems, fmt.Sprintf("EMAIL_MAX_ATTEMPTS must be between 1 and %d", maxEmailAttempts))
+	default:
+		cfg.EmailMaxAttempts = emailMaxAttempts
+	}
+
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 
 	return cfg, nil
+}
+
+// EmailEnabled reports whether a real Resend key is configured. When false
+// the worker wires up email.LogSender instead of email.ResendSender.
+func (c *Config) EmailEnabled() bool {
+	return c.ResendAPIKey != ""
 }
 
 func getEnv(key, fallback string) string {

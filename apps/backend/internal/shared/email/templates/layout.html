@@ -1,0 +1,48 @@
+<!--
+  Shared chrome for every HTML mail: doctype/head, the centred 600px wrapper
+  table, and the footer. Split into two defined blocks -- "email_header"
+  and "email_footer" -- rather than one that wraps a generic "content" slot,
+  because verify_email.html and password_reset.html would otherwise both
+  need to define a template literally named "content" in the same parsed
+  set, and the second definition silently wins for both mails.
+
+  Table-based layout with inline styles only: no <style> block, no external
+  stylesheet, no flexbox/grid. Outlook's Word rendering engine and Gmail's
+  clipped-CSS sanitiser both mangle or drop anything else.
+-->
+{{define "email_header"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Sapanjai</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7;">
+<tr>
+<td align="center" style="padding:32px 16px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;">
+<tr>
+<td style="padding:28px 40px 8px 40px;font-family:Helvetica,Arial,sans-serif;">
+<span style="font-size:16px;font-weight:bold;color:#111827;">Sapanjai</span>
+</td>
+</tr>
+<tr>
+<td style="padding:8px 40px 32px 40px;font-family:Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">
+{{end}}
+{{define "email_footer"}}
+</td>
+</tr>
+<tr>
+<td style="padding:20px 40px 32px 40px;font-family:Helvetica,Arial,sans-serif;color:#9ca3af;font-size:12px;line-height:1.5;border-top:1px solid #e5e7eb;">
+Sapanjai &mdash; this is an automated message, please don't reply to it.
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>
+{{end}}
