@@ -33,6 +33,21 @@ type Connector struct {
 	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
+type EmailOutbox struct {
+	ID            uuid.UUID        `json:"id"`
+	ToAddress     string           `json:"to_address"`
+	Subject       string           `json:"subject"`
+	BodyHtml      *string          `json:"body_html"`
+	BodyText      *string          `json:"body_text"`
+	Status        string           `json:"status"`
+	Attempts      int32            `json:"attempts"`
+	LastError     *string          `json:"last_error"`
+	NextAttemptAt time.Time        `json:"next_attempt_at"`
+	SentAt        pgtype.Timestamp `json:"sent_at"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
 type McpApiKey struct {
 	ID             uuid.UUID        `json:"id"`
 	OrganizationID uuid.UUID        `json:"organization_id"`

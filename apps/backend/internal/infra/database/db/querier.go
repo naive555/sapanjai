@@ -12,6 +12,13 @@ import (
 
 type Querier interface {
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
+	// Claims a batch by taking out a lease: attempts is incremented and
+	// next_attempt_at is pushed forward in the same statement, so a run that dies
+	// mid-send leaves rows that become claimable again on their own when the
+	// lease lapses -- no 'sending' status and no reaper job. FOR UPDATE SKIP
+	// LOCKED keeps two dispatchers off the same row even though the worker's
+	// Redis lock already serialises runs.
+	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
@@ -32,8 +39,10 @@ type Querier interface {
 	DeleteExpiredSessions(ctx context.Context, arg DeleteExpiredSessionsParams) (int64, error)
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
+	EnqueueEmail(ctx context.Context, arg EnqueueEmailParams) (EmailOutbox, error)
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
+	GetEmailByID(ctx context.Context, id uuid.UUID) (EmailOutbox, error)
 	// Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
 	// key_hash carries a unique index (migration 00008), so this is a single
 	// indexed read — no Redis cache in front of it, per Decision 1.
@@ -56,6 +65,14 @@ type Querier interface {
 	ListPermissionsByRoleIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]Permission, error)
 	ListPlans(ctx context.Context) ([]Plan, error)
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
+	// Terminal: the attempt budget is spent. Bodies are dropped for the same
+	// reason as MarkEmailSent -- an undelivered token is no less live.
+	MarkEmailFailed(ctx context.Context, arg MarkEmailFailedParams) error
+	// Nulls both bodies in the same statement that flips the status: a delivered
+	// verification body holds a live single-use token, and the row is kept for its
+	// audit value (recipient, subject, attempts), not for its content.
+	MarkEmailSent(ctx context.Context, id uuid.UUID) error
+	PruneEmailOutbox(ctx context.Context, arg PruneEmailOutboxParams) (int64, error)
 	// actions is a nullable text[]: NULL (no ?action= given at all) matches
 	// every row, same as before repeatable action filtering was added. An
 	// empty (non-NULL) array must never reach this query — `action = ANY('{}')`
@@ -69,6 +86,9 @@ type Querier interface {
 	// input to UTC before binding it here, since the column stores naive
 	// UTC wall-clock values.
 	QueryAuditLogs(ctx context.Context, arg QueryAuditLogsParams) ([]AuditLog, error)
+	// A retryable failure: record why and push the next attempt out by the
+	// caller's backoff. Status stays 'pending' so the row is claimed again.
+	RescheduleEmail(ctx context.Context, arg RescheduleEmailParams) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
