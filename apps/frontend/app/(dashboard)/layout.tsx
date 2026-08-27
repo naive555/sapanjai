@@ -9,6 +9,7 @@ import { FullPageSkeleton } from "@/components/full-page-skeleton";
 import { ScopeChain } from "@/components/scope-chain";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { VerificationBanner } from "@/components/verification-banner";
 import { useSession } from "@/lib/auth/use-session";
 import { useActiveOrgId } from "@/lib/org/active-org";
 import { cn } from "@/lib/utils";
@@ -187,6 +188,8 @@ export default function DashboardLayout({
         <nav className="flex gap-1 overflow-x-auto border-b px-3 py-2 md:hidden">
           <NavLinks className="contents" />
         </nav>
+
+        <VerificationBanner />
 
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-7 sm:px-6 sm:py-9">
           {children}

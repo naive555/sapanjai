@@ -72,7 +72,12 @@ export default function LoginPage() {
           </Field>
 
           <Field data-invalid={!!errors.password}>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <div className="flex items-center justify-between">
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Link href="/forgot-password" className="text-signal text-sm underline-offset-4 hover:underline">
+                Forgot password?
+              </Link>
+            </div>
             <Controller
               control={control}
               name="password"

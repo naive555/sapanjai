@@ -27,6 +27,43 @@ export function logout(input: { refreshToken: string }) {
   return apiRequest<SuccessResponse>("/auth/logout", { method: "POST", body: input, noRetry: true });
 }
 
+export interface MeResponse {
+  id: string;
+  email: string;
+  displayName: string | null;
+  isVerified: boolean;
+  createdAt: string;
+}
+
+// Authenticated — normal 401-retry-after-refresh semantics apply, unlike the
+// four calls above.
+export function me() {
+  return apiRequest<MeResponse>("/auth/me");
+}
+
+// Public, single-use token in the body — a 401 here can't mean "stale access
+// token" (there's no bearer token in play at all), so noRetry.
+export function verifyEmail(input: { token: string }) {
+  return apiRequest<SuccessResponse>("/auth/verify-email", { method: "POST", body: input, noRetry: true });
+}
+
+// Authenticated, no body — resends a link for the caller's own account.
+export function resendVerification() {
+  return apiRequest<SuccessResponse>("/auth/resend-verification", { method: "POST" });
+}
+
+// Public, always 200-shaped for enumeration safety (docs/02-api-contract.md)
+// — the UI still has to swallow a network/5xx failure itself to preserve
+// that shape end-to-end. noRetry: unauthenticated, same reasoning as above.
+export function forgotPassword(input: { email: string }) {
+  return apiRequest<SuccessResponse>("/auth/forgot-password", { method: "POST", body: input, noRetry: true });
+}
+
+// Public, single-use token in the body — noRetry, same reasoning as verifyEmail.
+export function resetPassword(input: { token: string; password: string }) {
+  return apiRequest<SuccessResponse>("/auth/reset-password", { method: "POST", body: input, noRetry: true });
+}
+
 // ---- Organizations ----
 
 export interface OrgResponse {
