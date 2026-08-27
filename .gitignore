@@ -1,6 +1,9 @@
-# Env — the .example templates alongside these are the tracked ones
+# Env — the .example templates alongside these are the tracked ones.
+# The negation needs the **/ so it matches .env.example at the repo root and
+# in any app dir; a bare `!.env.example.*` only covers suffixed variants like
+# .env.example.local, which is not what the line above is for.
 .env*
-!.env.example.*
+!**/.env.example
 
 # Node / Next.js
 node_modules/
