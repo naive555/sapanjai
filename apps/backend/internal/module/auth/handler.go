@@ -62,7 +62,10 @@ func NewHandler(service *Service, token *TokenService, store sessionStore, black
 // Register mounts the /auth routes on the given group. verify-email stays
 // public (see the email-verification plan §1: the frontend page is the GET
 // target, and it POSTs the token here); resend-verification and me require
-// a valid access token.
+// a valid access token. forgot-password and reset-password are public too,
+// for the same reason as verify-email plus one more: forgot-password's
+// entire security property is that its response cannot depend on whether
+// the caller is authenticated as anyone in particular.
 func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/register", h.register)
 	g.POST("/login", h.login)
@@ -71,6 +74,8 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/verify-email", h.verifyEmail)
 	g.POST("/resend-verification", h.resendVerification, guards.RequireAuth())
 	g.GET("/me", h.me, guards.RequireAuth())
+	g.POST("/forgot-password", h.forgotPassword)
+	g.POST("/reset-password", h.resetPassword)
 }
 
 // register creates a new user and returns a fresh access/refresh token pair.
@@ -318,4 +323,63 @@ func (h *Handler) me(c echo.Context) error {
 		IsVerified:  user.IsVerified,
 		CreatedAt:   user.CreatedAt,
 	})
+}
+
+// forgotPassword always returns 200 { success: true }, whether or not req.Email
+// belongs to an account and whether or not the per-email resend cooldown is
+// currently active — see Service.RequestPasswordReset's doc comment for why
+// that uniformity is the entire security property this route provides.
+// Public.
+// @Summary  Request a password-reset email
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body      ForgotPasswordRequest  true  "Account email"
+// @Success  200   {object}  SuccessResponse
+// @Failure  422   {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /auth/forgot-password [post]
+func (h *Handler) forgotPassword(c echo.Context) error {
+	var req ForgotPasswordRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	if err := h.service.RequestPasswordReset(c.Request().Context(), req.Email); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
+}
+
+// resetPassword consumes a single-use password-reset token and sets a new
+// password for the user it names, revoking every one of their sessions in
+// the process. Public. Hashing (and the shared 72-byte truncation) happens
+// here rather than in the service, mirroring register's split — see
+// truncatePassword's doc comment for why skipping it would make a long
+// password behave differently here than at registration.
+// @Summary  Reset a password using a reset token
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body      ResetPasswordRequest  true  "Reset token and new password"
+// @Success  200   {object}  SuccessResponse
+// @Failure  400   {object}  httpx.ErrorResponse  "INVALID_RESET_TOKEN"
+// @Failure  422   {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /auth/reset-password [post]
+func (h *Handler) resetPassword(c echo.Context) error {
+	var req ResetPasswordRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	hash, err := bcrypt.GenerateFromPassword(truncatePassword(req.Password), bcryptCost)
+	if err != nil {
+		return err
+	}
+
+	if err := h.service.ResetPassword(c.Request().Context(), req.Token, string(hash)); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
 }

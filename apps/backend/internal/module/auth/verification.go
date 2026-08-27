@@ -18,11 +18,11 @@ import (
 	"github.com/sapanjai/backend/internal/shared/email"
 )
 
-// verifyTokenRandomBytes is how much crypto/rand output backs a raw
-// verification token, matching the entropy budget mcpkey uses for PATs
-// (docs/07-sheets-adapter-decisions.md §1) — comfortably enough that
-// brute-forcing a guess is infeasible.
-const verifyTokenRandomBytes = 32
+// tokenRandomBytes is how much crypto/rand output backs a raw
+// verification or password-reset token, matching the entropy budget
+// mcpkey uses for PATs (docs/07-sheets-adapter-decisions.md §1) —
+// comfortably enough that brute-forcing a guess is infeasible.
+const tokenRandomBytes = 32
 
 // emailQueue is the narrow slice of db.Querier that SendVerificationEmail
 // needs to enqueue the outbox row through. It is satisfied both by a
@@ -36,18 +36,29 @@ type emailQueue interface {
 }
 
 // verificationTokens is the subset of *redis.Email the service needs,
-// narrowed for the same reason as loginLimiter.
+// narrowed for the same reason as loginLimiter. It covers both token
+// namespaces this package mints (email verification and password reset,
+// internal/module/auth/password_reset.go) rather than splitting into two
+// near-identical interfaces — both are backed by the same *redis.Email
+// value at the single call site (server.go), and the two token kinds share
+// nothing but a Redis client, so a second interface would only double the
+// mock without narrowing anything real.
 type verificationTokens interface {
 	SetVerifyToken(ctx context.Context, tokenHash string, userID uuid.UUID) error
 	ConsumeVerifyToken(ctx context.Context, tokenHash string) (uuid.UUID, bool, error)
 	MarkVerifyResent(ctx context.Context, userID uuid.UUID) (bool, error)
+
+	SetResetToken(ctx context.Context, tokenHash string, userID uuid.UUID) error
+	ConsumeResetToken(ctx context.Context, tokenHash string) (uuid.UUID, bool, error)
+	MarkResetRequested(ctx context.Context, email string) (bool, error)
 }
 
 // verificationRenderer is the subset of *email.Renderer the service needs
-// to build a verification mail, narrowed for the same reason as the other
-// interfaces in this file.
+// to build a verification or password-reset mail, narrowed for the same
+// reason as the other interfaces in this file.
 type verificationRenderer interface {
 	VerifyEmail(to string, data email.VerifyEmailData) (email.Message, error)
+	PasswordReset(to string, data email.PasswordResetData) (email.Message, error)
 }
 
 // SendVerificationEmail generates a fresh verification token, stores its
@@ -67,12 +78,12 @@ type verificationRenderer interface {
 // in 24h regardless. Two-store atomicity is not attempted — see the
 // email-verification plan §8.
 func (s *Service) SendVerificationEmail(ctx context.Context, q emailQueue, userID uuid.UUID, to string, displayName *string) error {
-	rawToken, err := generateVerifyToken()
+	rawToken, err := generateToken()
 	if err != nil {
 		return err
 	}
 
-	if err := s.mail.SetVerifyToken(ctx, hashVerifyToken(rawToken), userID); err != nil {
+	if err := s.mail.SetVerifyToken(ctx, hashToken(rawToken), userID); err != nil {
 		return err
 	}
 
@@ -109,7 +120,7 @@ func (s *Service) SendVerificationEmail(ctx context.Context, q emailQueue, userI
 // (GETDEL already consumed it), so this returns nil without writing a
 // second audit row.
 func (s *Service) VerifyEmail(ctx context.Context, token string) error {
-	userID, found, err := s.mail.ConsumeVerifyToken(ctx, hashVerifyToken(token))
+	userID, found, err := s.mail.ConsumeVerifyToken(ctx, hashToken(token))
 	if err != nil {
 		return err
 	}
@@ -167,22 +178,24 @@ func (s *Service) ResendVerificationEmail(ctx context.Context, userID uuid.UUID)
 	return s.SendVerificationEmail(ctx, s.store, userID, user.Email, user.DisplayName)
 }
 
-// generateVerifyToken returns a fresh base64url-encoded raw token backed by
-// verifyTokenRandomBytes of crypto/rand output.
-func generateVerifyToken() (string, error) {
-	buf := make([]byte, verifyTokenRandomBytes)
+// generateToken returns a fresh base64url-encoded raw token backed by
+// tokenRandomBytes of crypto/rand output. Shared by both token kinds this
+// package mints (email verification, password reset) — the entropy budget
+// and encoding are the same regardless of what the token is redeemed for.
+func generateToken() (string, error) {
+	buf := make([]byte, tokenRandomBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// hashVerifyToken returns the hex-encoded SHA-256 digest of a raw
-// verification token — the form actually stored as a Redis key, per
+// hashToken returns the hex-encoded SHA-256 digest of a raw verification or
+// password-reset token — the form actually stored as a Redis key, per
 // CLAUDE.md's Redis key conventions and the mcp_api_keys precedent
 // (docs/07-sheets-adapter-decisions.md §1): not because Redis is
 // untrusted, but so a KEYS/MONITOR/RDB dump yields nothing usable.
-func hashVerifyToken(rawToken string) string {
+func hashToken(rawToken string) string {
 	sum := sha256.Sum256([]byte(rawToken))
 	return hex.EncodeToString(sum[:])
 }

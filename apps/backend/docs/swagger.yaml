@@ -22,6 +22,13 @@ definitions:
       userId:
         type: string
     type: object
+  internal_module_auth.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
   internal_module_auth.LoginRequest:
     properties:
       email:
@@ -70,6 +77,17 @@ definitions:
     required:
     - email
     - password
+    type: object
+  internal_module_auth.ResetPasswordRequest:
+    properties:
+      password:
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - password
+    - token
     type: object
   internal_module_auth.SuccessResponse:
     properties:
@@ -456,6 +474,31 @@ paths:
       summary: Query audit logs
       tags:
       - audit-logs
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Account email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.SuccessResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      summary: Request a password-reset email
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:
@@ -614,6 +657,35 @@ paths:
       security:
       - BearerAuth: []
       summary: Resend the verification email
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.SuccessResponse'
+        "400":
+          description: INVALID_RESET_TOKEN
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      summary: Reset a password using a reset token
       tags:
       - auth
   /auth/verify-email:

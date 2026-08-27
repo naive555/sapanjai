@@ -113,6 +113,10 @@ type mockVerificationTokens struct {
 	setVerifyToken     func(ctx context.Context, tokenHash string, userID uuid.UUID) error
 	consumeVerifyToken func(ctx context.Context, tokenHash string) (uuid.UUID, bool, error)
 	markVerifyResent   func(ctx context.Context, userID uuid.UUID) (bool, error)
+
+	setResetToken      func(ctx context.Context, tokenHash string, userID uuid.UUID) error
+	consumeResetToken  func(ctx context.Context, tokenHash string) (uuid.UUID, bool, error)
+	markResetRequested func(ctx context.Context, email string) (bool, error)
 }
 
 func (m *mockVerificationTokens) SetVerifyToken(ctx context.Context, tokenHash string, userID uuid.UUID) error {
@@ -127,13 +131,26 @@ func (m *mockVerificationTokens) MarkVerifyResent(ctx context.Context, userID uu
 	return m.markVerifyResent(ctx, userID)
 }
 
+func (m *mockVerificationTokens) SetResetToken(ctx context.Context, tokenHash string, userID uuid.UUID) error {
+	return m.setResetToken(ctx, tokenHash, userID)
+}
+
+func (m *mockVerificationTokens) ConsumeResetToken(ctx context.Context, tokenHash string) (uuid.UUID, bool, error) {
+	return m.consumeResetToken(ctx, tokenHash)
+}
+
+func (m *mockVerificationTokens) MarkResetRequested(ctx context.Context, email string) (bool, error) {
+	return m.markResetRequested(ctx, email)
+}
+
 var _ verificationTokens = (*mockVerificationTokens)(nil)
 
 // newMockMail returns a mockVerificationTokens with harmless defaults —
-// SetVerifyToken succeeds, ConsumeVerifyToken reports "not found", and
-// MarkVerifyResent reports "cooldown not active" — so tests that don't care
-// about verification at all (Login, RotateSession) never need to wire one
-// up by hand.
+// SetVerifyToken/SetResetToken succeed, ConsumeVerifyToken/ConsumeResetToken
+// report "not found", and MarkVerifyResent/MarkResetRequested report
+// "cooldown not active" — so tests that don't care about verification or
+// password reset at all (Login, RotateSession) never need to wire one up by
+// hand.
 func newMockMail() *mockVerificationTokens {
 	return &mockVerificationTokens{
 		setVerifyToken: func(ctx context.Context, tokenHash string, userID uuid.UUID) error {
@@ -145,28 +162,45 @@ func newMockMail() *mockVerificationTokens {
 		markVerifyResent: func(ctx context.Context, userID uuid.UUID) (bool, error) {
 			return true, nil
 		},
+		setResetToken: func(ctx context.Context, tokenHash string, userID uuid.UUID) error {
+			return nil
+		},
+		consumeResetToken: func(ctx context.Context, tokenHash string) (uuid.UUID, bool, error) {
+			return uuid.Nil, false, nil
+		},
+		markResetRequested: func(ctx context.Context, email string) (bool, error) {
+			return true, nil
+		},
 	}
 }
 
 // ---- hand-mocked verificationRenderer ----
 
 type mockRenderer struct {
-	verifyEmail func(to string, data email.VerifyEmailData) (email.Message, error)
+	verifyEmail   func(to string, data email.VerifyEmailData) (email.Message, error)
+	passwordReset func(to string, data email.PasswordResetData) (email.Message, error)
 }
 
 func (m *mockRenderer) VerifyEmail(to string, data email.VerifyEmailData) (email.Message, error) {
 	return m.verifyEmail(to, data)
 }
 
+func (m *mockRenderer) PasswordReset(to string, data email.PasswordResetData) (email.Message, error) {
+	return m.passwordReset(to, data)
+}
+
 var _ verificationRenderer = (*mockRenderer)(nil)
 
 // newMockRenderer returns a mockRenderer that renders a fixed, harmless
-// message — enough for tests that only care that *an* email was enqueued,
-// not its exact contents.
+// message for either mail kind — enough for tests that only care that *an*
+// email was enqueued, not its exact contents.
 func newMockRenderer() *mockRenderer {
 	return &mockRenderer{
 		verifyEmail: func(to string, data email.VerifyEmailData) (email.Message, error) {
 			return email.Message{To: to, Subject: email.SubjectVerifyEmail, HTML: "<html>" + data.VerifyURL + "</html>", Text: data.VerifyURL}, nil
+		},
+		passwordReset: func(to string, data email.PasswordResetData) (email.Message, error) {
+			return email.Message{To: to, Subject: email.SubjectPasswordReset, HTML: "<html>" + data.ResetURL + "</html>", Text: data.ResetURL}, nil
 		},
 	}
 }

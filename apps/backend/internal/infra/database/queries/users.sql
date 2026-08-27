@@ -11,3 +11,6 @@ RETURNING *;
 
 -- name: MarkUserVerified :exec
 UPDATE users SET is_verified = true, updated_at = now() WHERE id = $1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1;

@@ -54,6 +54,13 @@ const (
 	InvalidVerificationToken  = "INVALID_VERIFICATION_TOKEN"
 	VerificationResendTooSoon = "VERIFICATION_RESEND_TOO_SOON"
 
+	// InvalidResetToken is deliberately the only password-reset error
+	// code: there is no RESET_TOO_SOON, because the cooldown on
+	// POST /auth/forgot-password must not be observable — the route
+	// always returns 200 regardless. See RequestPasswordReset's doc
+	// comment.
+	InvalidResetToken = "INVALID_RESET_TOKEN"
+
 	// RateLimited is the rate-limit exhaustion code. The MCP file-download
 	// route returns it; a tools/call denial does not, since mcp.RateLimited
 	// builds a CallToolResult carrying the concrete retry-after instead of
@@ -93,6 +100,8 @@ var Map = map[string]mapping{
 	AlreadyVerified:           {409, "Email already verified"},
 	InvalidVerificationToken:  {400, "Invalid or expired verification token"},
 	VerificationResendTooSoon: {429, "Verification email already sent, try again in a few minutes"},
+
+	InvalidResetToken: {400, "Invalid or expired password reset token"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

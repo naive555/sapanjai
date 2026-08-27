@@ -59,7 +59,14 @@ Service error map (service throws code → HTTP response):
 | `ALREADY_VERIFIED`      | 409    | Email already verified                           |
 | `INVALID_VERIFICATION_TOKEN` | 400 | Invalid or expired verification token          |
 | `VERIFICATION_RESEND_TOO_SOON` | 429 | Verification email already sent, try again in a few minutes |
+| `INVALID_RESET_TOKEN`   | 400    | Invalid or expired password reset token          |
 | (unknown)               | 500    | Internal server error                            |
+
+There is deliberately no `RESET_TOO_SOON` code: `POST /auth/forgot-password`
+always returns `200 { success: true }`, whether or not the address belongs to
+an account and whether or not its 15-minute resend cooldown is currently
+active — a distinguishable response for "cooldown active" would itself be the
+enumeration oracle the uniform response exists to close.
 
 `RATE_LIMITED` has exactly one definition (`apperror.Map`, for a future REST
 caller) but no REST route emits it today — the MCP gateway's rate limiter
@@ -87,10 +94,12 @@ Global: unknown route → 404 `Route not found`; body validation failure → 422
 | `POST /auth/verify-email` | public | `{ token }` | `{ success: true }` — consumes a single-use, Redis-backed verification token (24h TTL) and marks the owning user verified. `POST`, not `GET`: the frontend page at `/verify-email?token=...` is the GET target and POSTs the token here, so a link-scanner prefetching the page never burns it. `400 INVALID_VERIFICATION_TOKEN` for an unknown, expired, or already-consumed token — indistinguishable from a token naming a user that no longer exists. Idempotent for an already-verified user with a still-live token: returns success with no second audit write. |
 | `POST /auth/resend-verification` | auth | — | `{ success: true }` — re-sends the verification email for the caller, subject to a 5-minute cooldown (`404 USER_NOT_FOUND`, `409 ALREADY_VERIFIED`, `429 VERIFICATION_RESEND_TOO_SOON`). |
 | `GET /auth/me` | auth | — | `{ id, email, displayName, isVerified, createdAt }` — the caller's own profile, read fresh from the database on every call. `isVerified` is deliberately **not** carried in the JWT claims (see below): a claim would go stale for up to `JWT_ACCESS_EXPIRES_IN` after verifying. |
+| `POST /auth/forgot-password` | public | `{ email: email }` | **Always** `{ success: true }` — never distinguishes an unknown address, a known one, or one whose 15-minute resend cooldown (keyed by email, not user id — the address isn't known to belong to a user until after the cooldown check) is currently active. On a known, non-cooldown address it generates a single-use, Redis-backed password-reset token (1h TTL) and enqueues the reset email. |
+| `POST /auth/reset-password` | public | `{ token, password: min 8 }` | `{ success: true }` — consumes the single-use reset token (`400 INVALID_RESET_TOKEN` for an unknown, expired, or already-consumed token, indistinguishable from a token naming a user that no longer exists) and, in one transaction, updates the password, marks the user verified (reaching the link proves mailbox control — same call the plan makes for `POST /auth/verify-email`), and **revokes every session for that user**. Already-issued access tokens are unaffected and remain valid until their own (short) expiry; only refresh sessions die immediately. |
 
 JWT claims — access: `{ sub: userId, email }`, HS256, exp = `JWT_ACCESS_EXPIRES_IN` (default 15m). Refresh: `{ sub: userId }`, separate secret, no embedded exp in source (session row `expires_at` = now + `JWT_REFRESH_EXPIRES_IN` seconds, default 604800).
 
-Registration enqueues a verification email in the same transaction as the user insert (`internal/infra/database/queries/email_outbox.sql`'s `EnqueueEmail`, drained by the worker's `email-dispatch` job — see the Background worker bullet in CLAUDE.md) — a user row can never exist without its verification email queued, and vice versa. Verification tokens and their 5-minute resend cooldown live only in Redis (`verify:email:<sha256hex(token)>`, `verify:resend:<userId>`), never in Postgres — see CLAUDE.md's Redis key conventions.
+Registration enqueues a verification email in the same transaction as the user insert (`internal/infra/database/queries/email_outbox.sql`'s `EnqueueEmail`, drained by the worker's `email-dispatch` job — see the Background worker bullet in CLAUDE.md) — a user row can never exist without its verification email queued, and vice versa. Verification tokens and their 5-minute resend cooldown live only in Redis (`verify:email:<sha256hex(token)>`, `verify:resend:<userId>`), never in Postgres — see CLAUDE.md's Redis key conventions. Password-reset tokens and their 15-minute resend cooldown follow the same pattern in a second key namespace (`reset:password:<sha256hex(token)>`, `reset:request:<email>` — keyed by email rather than user id, since `forgot-password` runs before the address is known to belong to a user).
 
 ### Organizations (`/organizations`)
 
@@ -119,7 +128,7 @@ Permission semantics: `*` grants everything; exact `resource:verb` match; `resou
 | ----------- | ----- | ----- | -------- |
 | `GET /audit-logs` | org | `userId?`, `action?` (repeatable — `?action=a&action=b` matches either; a single `action=x` behaves as before), `since?` (RFC3339 timestamp, inclusive lower bound on `createdAt`), `limit?` (1–100, default 50) | Org's logs, newest first. |
 
-Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below), plus `mcp.session.started`, `mcp.tool.called`, `mcp.tool.denied`, `mcp.ratelimit.hit`, `mcp.file.downloaded` (all five written, from the MCP gateway below), plus `user.email_verified` (written by `POST /auth/verify-email`, from the Auth section above).
+Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below), plus `mcp.session.started`, `mcp.tool.called`, `mcp.tool.denied`, `mcp.ratelimit.hit`, `mcp.file.downloaded` (all five written, from the MCP gateway below), plus `user.email_verified` (written by `POST /auth/verify-email`, from the Auth section above), plus `user.password_reset_requested` and `user.password_reset` (written by `POST /auth/forgot-password` and `POST /auth/reset-password` respectively, from the Auth section above).
 
 ### Subscription (`/subscription`)
 

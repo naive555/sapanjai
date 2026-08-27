@@ -59,3 +59,14 @@ type MeResponse struct {
 	IsVerified  bool      `json:"isVerified"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
+
+// ForgotPasswordRequest is the POST /auth/forgot-password body.
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// ResetPasswordRequest is the POST /auth/reset-password body.
+type ResetPasswordRequest struct {
+	Token    string `json:"token" validate:"required"`
+	Password string `json:"password" validate:"required,min=8"`
+}

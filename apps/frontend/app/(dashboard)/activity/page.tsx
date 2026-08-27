@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 // action set by hand, since there's no shared source of truth to codegen
 // this list from.
 const ACTION_GROUPS: { label: string; actions: string[] }[] = [
-  { label: "user", actions: ["user.login", "user.register", "user.email_verified"] },
+  { label: "user", actions: ["user.login", "user.register", "user.email_verified", "user.password_reset_requested", "user.password_reset"] },
   { label: "org", actions: ["org.created", "org.member.invited", "org.member.removed"] },
   { label: "role", actions: ["role.created", "role.assigned"] },
   { label: "connector", actions: ["connector.created", "connector.updated", "connector.deleted"] },

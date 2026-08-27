@@ -133,3 +133,100 @@ func TestEmail_MarkVerifyResent_IndependentPerUser(t *testing.T) {
 		t.Fatalf("user B MarkVerifyResent: ok=%v err=%v", okB, err)
 	}
 }
+
+func TestEmail_SetAndConsumeResetToken(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+	tokenHash := uniqueTokenHash("reset")
+	userID := uuid.New()
+
+	if err := e.SetResetToken(ctx, tokenHash, userID); err != nil {
+		t.Fatalf("SetResetToken: %v", err)
+	}
+
+	got, found, err := e.ConsumeResetToken(ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("ConsumeResetToken: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true for a freshly set token")
+	}
+	if got != userID {
+		t.Fatalf("userID = %v, want %v", got, userID)
+	}
+}
+
+func TestEmail_ConsumeResetToken_SingleUse(t *testing.T) {
+	// GETDEL semantics: a second consume of the same token, after the first
+	// already succeeded, must report not-found — never the same userID
+	// twice.
+	e := newTestEmail(t)
+	ctx := context.Background()
+	tokenHash := uniqueTokenHash("reset-single-use")
+	userID := uuid.New()
+
+	if err := e.SetResetToken(ctx, tokenHash, userID); err != nil {
+		t.Fatalf("SetResetToken: %v", err)
+	}
+
+	if _, found, err := e.ConsumeResetToken(ctx, tokenHash); err != nil || !found {
+		t.Fatalf("first ConsumeResetToken: found=%v err=%v", found, err)
+	}
+
+	got, found, err := e.ConsumeResetToken(ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("second ConsumeResetToken: %v", err)
+	}
+	if found {
+		t.Fatalf("second ConsumeResetToken found = true (userID %v), want false — token must be single-use", got)
+	}
+}
+
+func TestEmail_ConsumeResetToken_UnknownToken(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+
+	_, found, err := e.ConsumeResetToken(ctx, uniqueTokenHash("reset-never-set"))
+	if err != nil {
+		t.Fatalf("ConsumeResetToken: %v", err)
+	}
+	if found {
+		t.Fatal("found = true for a token that was never set")
+	}
+}
+
+func TestEmail_MarkResetRequested_CooldownBlocksSecondCall(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+	email := uniqueTokenHash("reset-cooldown") + "@example.com"
+
+	first, err := e.MarkResetRequested(ctx, email)
+	if err != nil {
+		t.Fatalf("first MarkResetRequested: %v", err)
+	}
+	if !first {
+		t.Fatal("first MarkResetRequested = false, want true (no prior cooldown)")
+	}
+
+	second, err := e.MarkResetRequested(ctx, email)
+	if err != nil {
+		t.Fatalf("second MarkResetRequested: %v", err)
+	}
+	if second {
+		t.Fatal("second MarkResetRequested = true, want false while the cooldown is active")
+	}
+}
+
+func TestEmail_MarkResetRequested_IndependentPerEmail(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+
+	okA, err := e.MarkResetRequested(ctx, uniqueTokenHash("reset-a")+"@example.com")
+	if err != nil || !okA {
+		t.Fatalf("email A MarkResetRequested: ok=%v err=%v", okA, err)
+	}
+	okB, err := e.MarkResetRequested(ctx, uniqueTokenHash("reset-b")+"@example.com")
+	if err != nil || !okB {
+		t.Fatalf("email B MarkResetRequested: ok=%v err=%v", okB, err)
+	}
+}

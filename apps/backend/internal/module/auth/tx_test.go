@@ -15,23 +15,48 @@ import (
 )
 
 // fakeDBTX is a minimal db.DBTX good enough to back a real *db.Queries in a
-// unit test, so Register's WithTx body (q.CreateUser then, via
-// SendVerificationEmail, q.EnqueueEmail) can be exercised without a real
-// Postgres connection — the only way to observe that both calls land on the
-// SAME *db.Queries (i.e. would commit in the same transaction) without
-// standing up an integration test.
+// unit test, so a service method's WithTx body can be exercised without a
+// real Postgres connection — the only way to observe that its statements
+// land on the SAME *db.Queries (i.e. would commit in the same transaction)
+// without standing up an integration test. It backs both Register's
+// transaction (q.CreateUser then, via SendVerificationEmail,
+// q.EnqueueEmail — both :one, via QueryRow) and ResetPassword's
+// (q.UpdateUserPassword, q.MarkUserVerified, q.RevokeAllUserSessions — all
+// three :exec, via Exec).
 //
-// It recognizes exactly the two INSERT statements Register's transaction
-// issues, by a substring of their SQL, and fabricates a plausible RETURNING
-// row from the bound params. Anything else is a test bug — it errors loudly
-// rather than returning a zero value.
+// It recognizes exactly the statements those two transactions issue, by a
+// substring of their SQL, and either fabricates a plausible RETURNING row
+// from the bound params (QueryRow) or records the call and reports success
+// (Exec). Anything else is a test bug — it errors loudly rather than
+// returning a zero value.
 type fakeDBTX struct {
-	createUserCalls   []db.CreateUserParams
-	enqueueEmailCalls []db.EnqueueEmailParams
+	createUserCalls          []db.CreateUserParams
+	enqueueEmailCalls        []db.EnqueueEmailParams
+	updateUserPasswordCalls  []db.UpdateUserPasswordParams
+	markUserVerifiedCalls    []uuid.UUID
+	revokeAllUserSessionsIDs []uuid.UUID
 }
 
 func (f *fakeDBTX) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, fmt.Errorf("fakeDBTX: Exec not supported: %s", sql)
+	switch {
+	case strings.Contains(sql, "UPDATE users SET password_hash"):
+		f.updateUserPasswordCalls = append(f.updateUserPasswordCalls, db.UpdateUserPasswordParams{
+			ID:           args[0].(uuid.UUID),
+			PasswordHash: args[1].(string),
+		})
+		return pgconn.CommandTag{}, nil
+
+	case strings.Contains(sql, "UPDATE users SET is_verified"):
+		f.markUserVerifiedCalls = append(f.markUserVerifiedCalls, args[0].(uuid.UUID))
+		return pgconn.CommandTag{}, nil
+
+	case strings.Contains(sql, "UPDATE sessions SET is_revoked = true") && strings.Contains(sql, "user_id"):
+		f.revokeAllUserSessionsIDs = append(f.revokeAllUserSessionsIDs, args[0].(uuid.UUID))
+		return pgconn.CommandTag{}, nil
+
+	default:
+		return pgconn.CommandTag{}, fmt.Errorf("fakeDBTX: Exec not supported: %s", sql)
+	}
 }
 
 func (f *fakeDBTX) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {

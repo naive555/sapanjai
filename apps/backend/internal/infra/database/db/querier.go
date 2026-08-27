@@ -109,6 +109,7 @@ type Querier interface {
 	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpsertOrgSubscription(ctx context.Context, arg UpsertOrgSubscriptionParams) error
 	UpsertPlan(ctx context.Context, arg UpsertPlanParams) error
 }
