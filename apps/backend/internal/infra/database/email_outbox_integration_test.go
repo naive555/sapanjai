@@ -26,6 +26,12 @@ import (
 // row left behind by another test would be claimed by this one. The same
 // DATABASE_URL already has migrations run against it by every other
 // integration test in this package, so it is understood to be disposable.
+//
+// For the same reason, these tests cannot pass while a worker process is
+// running against the same database: emaildispatch claims whatever is due and
+// marks it sent, so it will steal rows out from under a test between the
+// enqueue and the claim. Confirmed by running `make worker` alongside them.
+// Stop the worker before running the suite.
 func setupOutbox(t *testing.T) (*database.Store, *pgxpool.Pool, context.Context) {
 	t.Helper()
 

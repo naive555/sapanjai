@@ -18,7 +18,9 @@ import (
 	"github.com/sapanjai/backend/internal/config"
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/job/emaildispatch"
 	"github.com/sapanjai/backend/internal/job/sessioncleanup"
+	"github.com/sapanjai/backend/internal/shared/email"
 	applogger "github.com/sapanjai/backend/internal/shared/logger"
 	"github.com/sapanjai/backend/internal/worker"
 )
@@ -54,6 +56,20 @@ func main() {
 
 	store := database.NewStore(pool)
 
+	// The API only ever enqueues mail (email_outbox); this is the only
+	// process that actually sends it, so this is the only place the choice
+	// between a real provider and the log-only fallback is made. Never log
+	// cfg.ResendAPIKey itself — pass it straight to the sender and nowhere
+	// else.
+	var sender email.Sender
+	if cfg.EmailEnabled() {
+		sender = email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
+		log.Info("email sender: resend", "from", cfg.EmailFrom)
+	} else {
+		sender = email.NewLogSender(log, cfg.AppEnv)
+		log.Info("email sender: log (no RESEND_API_KEY configured)", "from", cfg.EmailFrom)
+	}
+
 	w := worker.New(worker.NewRedisLock(rdb), log, cfg.WorkerJobTimeout)
 	// Register future jobs here — one line each.
 	w.Register(sessioncleanup.New(
@@ -61,6 +77,13 @@ func main() {
 		cfg.SessionCleanupInterval,
 		cfg.SessionCleanupRetention,
 		cfg.SessionCleanupBatchSize,
+	))
+	w.Register(emaildispatch.New(
+		store, sender, log,
+		cfg.EmailDispatchInterval,
+		cfg.EmailDispatchBatchSize,
+		cfg.EmailMaxAttempts,
+		cfg.EmailOutboxRetention,
 	))
 
 	health := &http.Server{

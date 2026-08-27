@@ -15,9 +15,18 @@ type Querier interface {
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies
 	// mid-send leaves rows that become claimable again on their own when the
-	// lease lapses -- no 'sending' status and no reaper job. FOR UPDATE SKIP
-	// LOCKED keeps two dispatchers off the same row even though the worker's
-	// Redis lock already serialises runs.
+	// lease lapses -- no 'sending' status and no reaper job.
+	//
+	// The due set MUST be a CTE, not an `IN (SELECT ... LIMIT n FOR UPDATE SKIP
+	// LOCKED)` subquery. That subquery form is only correct when the planner
+	// materialises it; if it instead picks a re-evaluated SubPlan, every
+	// re-evaluation SKIPs the rows the previous one locked and returns a
+	// different set, so the UPDATE touches far more than batch_size rows. Which
+	// plan you get depends on table statistics and concurrent activity, so the
+	// subquery form passes on an idle table and fails under load -- verified
+	// against this table: it claimed 5 rows for a batch_size of 2. A CTE
+	// containing FOR UPDATE has side effects and is always materialised, so the
+	// lock-and-limit happens exactly once.
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)

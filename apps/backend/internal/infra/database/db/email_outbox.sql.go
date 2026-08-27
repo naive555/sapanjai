@@ -12,18 +12,20 @@ import (
 )
 
 const claimPendingEmails = `-- name: ClaimPendingEmails :many
-UPDATE email_outbox SET
-    attempts = attempts + 1,
-    next_attempt_at = now() + ($1::int * INTERVAL '1 second'),
-    updated_at = now()
-WHERE id IN (
+WITH due AS (
     SELECT id FROM email_outbox
     WHERE status = 'pending' AND next_attempt_at <= now()
     ORDER BY next_attempt_at
     LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, to_address, subject, body_html, body_text, status, attempts, last_error, next_attempt_at, sent_at, created_at, updated_at
+UPDATE email_outbox SET
+    attempts = attempts + 1,
+    next_attempt_at = now() + ($1::int * INTERVAL '1 second'),
+    updated_at = now()
+FROM due
+WHERE email_outbox.id = due.id
+RETURNING email_outbox.id, email_outbox.to_address, email_outbox.subject, email_outbox.body_html, email_outbox.body_text, email_outbox.status, email_outbox.attempts, email_outbox.last_error, email_outbox.next_attempt_at, email_outbox.sent_at, email_outbox.created_at, email_outbox.updated_at
 `
 
 type ClaimPendingEmailsParams struct {
@@ -34,9 +36,18 @@ type ClaimPendingEmailsParams struct {
 // Claims a batch by taking out a lease: attempts is incremented and
 // next_attempt_at is pushed forward in the same statement, so a run that dies
 // mid-send leaves rows that become claimable again on their own when the
-// lease lapses -- no 'sending' status and no reaper job. FOR UPDATE SKIP
-// LOCKED keeps two dispatchers off the same row even though the worker's
-// Redis lock already serialises runs.
+// lease lapses -- no 'sending' status and no reaper job.
+//
+// The due set MUST be a CTE, not an `IN (SELECT ... LIMIT n FOR UPDATE SKIP
+// LOCKED)` subquery. That subquery form is only correct when the planner
+// materialises it; if it instead picks a re-evaluated SubPlan, every
+// re-evaluation SKIPs the rows the previous one locked and returns a
+// different set, so the UPDATE touches far more than batch_size rows. Which
+// plan you get depends on table statistics and concurrent activity, so the
+// subquery form passes on an idle table and fails under load -- verified
+// against this table: it claimed 5 rows for a batch_size of 2. A CTE
+// containing FOR UPDATE has side effects and is always materialised, so the
+// lock-and-limit happens exactly once.
 func (q *Queries) ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error) {
 	rows, err := q.db.Query(ctx, claimPendingEmails, arg.LeaseSeconds, arg.BatchSize)
 	if err != nil {
