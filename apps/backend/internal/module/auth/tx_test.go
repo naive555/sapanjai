@@ -2,152 +2,87 @@ package auth
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
 )
 
-// fakeDBTX is a minimal db.DBTX good enough to back a real *db.Queries in a
-// unit test, so a service method's WithTx body can be exercised without a
-// real Postgres connection — the only way to observe that its statements
-// land on the SAME *db.Queries (i.e. would commit in the same transaction)
-// without standing up an integration test. It backs both Register's
-// transaction (q.CreateUser then, via SendVerificationEmail,
-// q.EnqueueEmail — both :one, via QueryRow) and ResetPassword's
-// (q.UpdateUserPassword, q.MarkUserVerified, q.RevokeAllUserSessions — all
-// three :exec, via Exec).
+// mockTxQuerier stands in for the db.Querier a service method's WithTx body
+// receives, so the body can be exercised without a real Postgres
+// connection. It embeds db.Querier (left nil) and overrides only the
+// statements the transactions under test actually issue: Register's
+// (CreateUser, then EnqueueEmail via SendVerificationEmail) and
+// ResetPassword's (UpdateUserPassword, MarkUserVerified,
+// RevokeAllUserSessions).
 //
-// It recognizes exactly the statements those two transactions issue, by a
-// substring of their SQL, and either fabricates a plausible RETURNING row
-// from the bound params (QueryRow) or records the call and reports success
-// (Exec). Anything else is a test bug — it errors loudly rather than
-// returning a zero value.
-type fakeDBTX struct {
+// Embedding rather than implementing the full generated surface keeps this
+// to the methods that matter, and preserves the loud-failure property: any
+// other query reached from inside a transaction body hits the nil embedded
+// interface and panics, naming the method, instead of silently returning a
+// zero value.
+//
+// Note what these mocks can and cannot show. They establish that the
+// statements all run against the same transaction-scoped querier — not that
+// the transaction rolls back when one of them fails. That property is
+// covered against real Postgres in
+// internal/server/register_rollback_integration_test.go.
+type mockTxQuerier struct {
+	db.Querier
+
 	createUserCalls          []db.CreateUserParams
 	enqueueEmailCalls        []db.EnqueueEmailParams
 	updateUserPasswordCalls  []db.UpdateUserPasswordParams
 	markUserVerifiedCalls    []uuid.UUID
 	revokeAllUserSessionsIDs []uuid.UUID
+
+	createUserResult db.User
+	createUserErr    error
+	enqueueEmailErr  error
 }
 
-func (f *fakeDBTX) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	switch {
-	case strings.Contains(sql, "UPDATE users SET password_hash"):
-		f.updateUserPasswordCalls = append(f.updateUserPasswordCalls, db.UpdateUserPasswordParams{
-			ID:           args[0].(uuid.UUID),
-			PasswordHash: args[1].(string),
-		})
-		return pgconn.CommandTag{}, nil
-
-	case strings.Contains(sql, "UPDATE users SET is_verified"):
-		f.markUserVerifiedCalls = append(f.markUserVerifiedCalls, args[0].(uuid.UUID))
-		return pgconn.CommandTag{}, nil
-
-	case strings.Contains(sql, "UPDATE sessions SET is_revoked = true") && strings.Contains(sql, "user_id"):
-		f.revokeAllUserSessionsIDs = append(f.revokeAllUserSessionsIDs, args[0].(uuid.UUID))
-		return pgconn.CommandTag{}, nil
-
-	default:
-		return pgconn.CommandTag{}, fmt.Errorf("fakeDBTX: Exec not supported: %s", sql)
+func (m *mockTxQuerier) CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error) {
+	m.createUserCalls = append(m.createUserCalls, arg)
+	if m.createUserErr != nil {
+		return db.User{}, m.createUserErr
 	}
+	user := m.createUserResult
+	if user.ID == uuid.Nil {
+		user = db.User{ID: uuid.New(), Email: arg.Email, PasswordHash: arg.PasswordHash, DisplayName: arg.DisplayName}
+	}
+	return user, nil
 }
 
-func (f *fakeDBTX) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return nil, fmt.Errorf("fakeDBTX: Query not supported: %s", sql)
+func (m *mockTxQuerier) EnqueueEmail(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error) {
+	m.enqueueEmailCalls = append(m.enqueueEmailCalls, arg)
+	if m.enqueueEmailErr != nil {
+		return db.EmailOutbox{}, m.enqueueEmailErr
+	}
+	return db.EmailOutbox{ID: uuid.New(), ToAddress: arg.ToAddress, Subject: arg.Subject}, nil
 }
 
-func (f *fakeDBTX) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	switch {
-	case strings.Contains(sql, "INSERT INTO users"):
-		arg := db.CreateUserParams{
-			Email:        args[0].(string),
-			PasswordHash: args[1].(string),
-			DisplayName:  args[2].(*string),
-		}
-		f.createUserCalls = append(f.createUserCalls, arg)
-		now := time.Now().UTC()
-		return fakeRow{values: []any{
-			uuid.New(), arg.Email, arg.PasswordHash, arg.DisplayName, false, now, now,
-		}}
-
-	case strings.Contains(sql, "INSERT INTO email_outbox"):
-		arg := db.EnqueueEmailParams{
-			ToAddress: args[0].(string),
-			Subject:   args[1].(string),
-			BodyHtml:  args[2].(*string),
-			BodyText:  args[3].(*string),
-		}
-		f.enqueueEmailCalls = append(f.enqueueEmailCalls, arg)
-		now := time.Now().UTC()
-		return fakeRow{values: []any{
-			uuid.New(), arg.ToAddress, arg.Subject, arg.BodyHtml, arg.BodyText,
-			"pending", int32(0), (*string)(nil), now, pgtype.Timestamp{}, now, now,
-		}}
-
-	default:
-		return fakeRow{err: fmt.Errorf("fakeDBTX: unsupported query: %s", sql)}
-	}
-}
-
-// fakeRow is a pgx.Row backed by a fixed slice of already-typed values,
-// scanned positionally into dest.
-type fakeRow struct {
-	values []any
-	err    error
-}
-
-func (r fakeRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
-	}
-	if len(dest) != len(r.values) {
-		return fmt.Errorf("fakeRow: Scan got %d dest, have %d values", len(dest), len(r.values))
-	}
-	for i, d := range dest {
-		if err := scanInto(d, r.values[i]); err != nil {
-			return fmt.Errorf("fakeRow: column %d: %w", i, err)
-		}
-	}
+func (m *mockTxQuerier) UpdateUserPassword(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+	m.updateUserPasswordCalls = append(m.updateUserPasswordCalls, arg)
 	return nil
 }
 
-func scanInto(dest, value any) error {
-	switch v := dest.(type) {
-	case *uuid.UUID:
-		*v = value.(uuid.UUID)
-	case *string:
-		*v = value.(string)
-	case **string:
-		*v = value.(*string)
-	case *bool:
-		*v = value.(bool)
-	case *time.Time:
-		*v = value.(time.Time)
-	case *int32:
-		*v = value.(int32)
-	case *pgtype.Timestamp:
-		*v = value.(pgtype.Timestamp)
-	default:
-		return fmt.Errorf("unsupported dest type %T", dest)
-	}
+func (m *mockTxQuerier) MarkUserVerified(ctx context.Context, id uuid.UUID) error {
+	m.markUserVerifiedCalls = append(m.markUserVerifiedCalls, id)
 	return nil
 }
 
-// withFakeTx returns an authStore.WithTx implementation that runs fn
-// against a *db.Queries backed by a fresh fakeDBTX, and hands the fakeDBTX
-// back to the caller (via the out pointer) so the test can assert on what
-// was inserted.
-func withFakeTx(out **fakeDBTX) func(ctx context.Context, fn func(q *db.Queries) error) error {
-	return func(ctx context.Context, fn func(q *db.Queries) error) error {
-		dbtx := &fakeDBTX{}
-		*out = dbtx
-		return fn(db.New(dbtx))
+func (m *mockTxQuerier) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error {
+	m.revokeAllUserSessionsIDs = append(m.revokeAllUserSessionsIDs, userID)
+	return nil
+}
+
+// withMockTx returns an authStore.WithTx implementation that runs fn
+// against a fresh mockTxQuerier and hands it back through out, so the test
+// can assert on what the transaction body did.
+func withMockTx(out **mockTxQuerier) func(ctx context.Context, fn func(q db.Querier) error) error {
+	return func(ctx context.Context, fn func(q db.Querier) error) error {
+		q := &mockTxQuerier{}
+		*out = q
+		return fn(q)
 	}
 }

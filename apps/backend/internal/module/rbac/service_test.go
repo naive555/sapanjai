@@ -32,7 +32,7 @@ type mockRBACStore struct {
 	getMembership                  func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error)
 	assignMemberRole               func(ctx context.Context, arg db.AssignMemberRoleParams) error
 	listPermissionActionsByUserOrg func(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error)
-	withTx                         func(ctx context.Context, fn func(q *db.Queries) error) error
+	withTx                         func(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 func (m *mockRBACStore) CreateRole(ctx context.Context, arg db.CreateRoleParams) (db.Role, error) {
@@ -56,7 +56,7 @@ func (m *mockRBACStore) AssignMemberRole(ctx context.Context, arg db.AssignMembe
 func (m *mockRBACStore) ListPermissionActionsByUserOrg(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error) {
 	return m.listPermissionActionsByUserOrg(ctx, arg)
 }
-func (m *mockRBACStore) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+func (m *mockRBACStore) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
 	return m.withTx(ctx, fn)
 }
 
@@ -378,7 +378,7 @@ func TestUpdatePermissions_HappyPathDelegatesToWithTx(t *testing.T) {
 		getRoleByID: func(ctx context.Context, id uuid.UUID) (db.Role, error) {
 			return db.Role{ID: roleID, OrganizationID: orgID}, nil
 		},
-		withTx: func(ctx context.Context, fn func(q *db.Queries) error) error {
+		withTx: func(ctx context.Context, fn func(q db.Querier) error) error {
 			withTxCalled = true
 			return nil
 		},

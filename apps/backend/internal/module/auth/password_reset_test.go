@@ -137,7 +137,7 @@ func TestService_ResetPassword_ReplayedToken(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: id, Email: "user@example.com"}, nil
 		},
-		withTx: withFakeTx(new(*fakeDBTX)),
+		withTx: withMockTx(new(*mockTxQuerier)),
 	}
 	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
 
@@ -178,12 +178,12 @@ func TestService_ResetPassword_HappyPath(t *testing.T) {
 	mail.consumeResetToken = func(ctx context.Context, tokenHash string) (uuid.UUID, bool, error) {
 		return userID, true, nil
 	}
-	var tx *fakeDBTX
+	var tx *mockTxQuerier
 	store := &mockAuthStore{
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: id, Email: "user@example.com", IsVerified: false}, nil
 		},
-		withTx: withFakeTx(&tx),
+		withTx: withMockTx(&tx),
 	}
 	spy := &spyQuerier{}
 	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)

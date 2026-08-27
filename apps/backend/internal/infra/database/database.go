@@ -41,11 +41,16 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{Pool: pool, Queries: db.New(pool)}
 }
 
-// WithTx runs fn inside a transaction, passing a *db.Queries bound to the
+// WithTx runs fn inside a transaction, passing a db.Querier bound to the
 // transaction. Commits on nil error, otherwise rolls back. Used for
 // multi-step writes such as refresh-token rotation (Phase 2) and org create +
 // owner membership (Phase 3).
-func (s *Store) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+//
+// fn receives the generated db.Querier interface rather than the concrete
+// *db.Queries so a unit test can substitute a mock for the transaction body
+// (embed db.Querier and override only the methods under test) without
+// faking the pgx layer underneath and matching statements by SQL text.
+func (s *Store) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

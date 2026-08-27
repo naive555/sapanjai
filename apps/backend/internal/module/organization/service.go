@@ -38,7 +38,7 @@ type orgStore interface {
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]db.ListMembershipsByUserRow, error)
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]db.ListOrganizationMembersRow, error)
 	GetUserByEmail(ctx context.Context, email string) (db.User, error)
-	WithTx(ctx context.Context, fn func(q *db.Queries) error) error
+	WithTx(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 // limitEnforcer is the subset of *subscription.Service the invite flow
@@ -66,7 +66,7 @@ func NewService(store orgStore, audit *auditlog.Service, limits limitEnforcer) *
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, name, slug string) (db.Organization, error) {
 	var org db.Organization
 
-	err := s.store.WithTx(ctx, func(q *db.Queries) error {
+	err := s.store.WithTx(ctx, func(q db.Querier) error {
 		_, err := q.GetOrganizationBySlug(ctx, slug)
 		if err == nil {
 			return apperror.New(apperror.SlugTaken)

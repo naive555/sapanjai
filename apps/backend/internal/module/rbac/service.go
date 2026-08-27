@@ -29,7 +29,7 @@ type rbacStore interface {
 	GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error)
 	AssignMemberRole(ctx context.Context, arg db.AssignMemberRoleParams) error
 	ListPermissionActionsByUserOrg(ctx context.Context, arg db.ListPermissionActionsByUserOrgParams) ([]string, error)
-	WithTx(ctx context.Context, fn func(q *db.Queries) error) error
+	WithTx(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 // RoleWithPermissions pairs a role row with its (possibly empty, non-nil)
@@ -59,7 +59,7 @@ func NewService(store rbacStore) *Service {
 func (s *Service) CreateRole(ctx context.Context, organizationID uuid.UUID, name string, description *string, permissions []string) (db.Role, error) {
 	var role db.Role
 
-	err := s.store.WithTx(ctx, func(q *db.Queries) error {
+	err := s.store.WithTx(ctx, func(q db.Querier) error {
 		var err error
 		role, err = q.CreateRole(ctx, db.CreateRoleParams{
 			OrganizationID: organizationID,
@@ -134,7 +134,7 @@ func (s *Service) UpdatePermissions(ctx context.Context, roleID, organizationID 
 		return apperror.New(apperror.Forbidden)
 	}
 
-	return s.store.WithTx(ctx, func(q *db.Queries) error {
+	return s.store.WithTx(ctx, func(q db.Querier) error {
 		return setPermissions(ctx, q, roleID, permissions)
 	})
 }
@@ -221,7 +221,7 @@ func (s *Service) HasPermission(ctx context.Context, userID, organizationID uuid
 // action in the input violates the permissions table's (role_id, action)
 // unique constraint and surfaces as a 500, matching the source's plain
 // insert (intentional bug-for-bug parity; see Phase 4 plan decision #3).
-func setPermissions(ctx context.Context, q *db.Queries, roleID uuid.UUID, actions []string) error {
+func setPermissions(ctx context.Context, q db.Querier, roleID uuid.UUID, actions []string) error {
 	if err := q.DeletePermissionsByRole(ctx, roleID); err != nil {
 		return err
 	}

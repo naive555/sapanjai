@@ -124,7 +124,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPasswordHash stri
 		return err
 	}
 
-	err = s.store.WithTx(ctx, func(q *db.Queries) error {
+	err = s.store.WithTx(ctx, func(q db.Querier) error {
 		if err := q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
 			ID:           user.ID,
 			PasswordHash: newPasswordHash,

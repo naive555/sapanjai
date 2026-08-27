@@ -31,7 +31,7 @@ type mockAuthStore struct {
 	revokeSessionByID        func(ctx context.Context, id uuid.UUID) error
 	revokeSessionFamily      func(ctx context.Context, family uuid.UUID) error
 	revokeAllUserSessions    func(ctx context.Context, userID uuid.UUID) error
-	withTx                   func(ctx context.Context, fn func(q *db.Queries) error) error
+	withTx                   func(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 func (m *mockAuthStore) GetUserByEmail(ctx context.Context, email string) (db.User, error) {
@@ -74,7 +74,7 @@ func (m *mockAuthStore) RevokeAllUserSessions(ctx context.Context, userID uuid.U
 	return m.revokeAllUserSessions(ctx, userID)
 }
 
-func (m *mockAuthStore) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+func (m *mockAuthStore) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
 	return m.withTx(ctx, fn)
 }
 
@@ -254,12 +254,12 @@ func TestService_Register_EmailTaken(t *testing.T) {
 }
 
 func TestService_Register_HappyPath(t *testing.T) {
-	var tx *fakeDBTX
+	var tx *mockTxQuerier
 	store := &mockAuthStore{
 		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
 			return db.User{}, pgx.ErrNoRows
 		},
-		withTx: withFakeTx(&tx),
+		withTx: withMockTx(&tx),
 	}
 	mail := newMockMail()
 	var setTokenUserID uuid.UUID

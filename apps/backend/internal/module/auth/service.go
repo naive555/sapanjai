@@ -49,7 +49,7 @@ type authStore interface {
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
-	WithTx(ctx context.Context, fn func(q *db.Queries) error) error
+	WithTx(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 // loginLimiter is the subset of *redis.Auth the service needs for login
@@ -105,7 +105,7 @@ func (s *Service) Register(ctx context.Context, email, passwordHash string, disp
 	}
 
 	var user db.User
-	err = s.store.WithTx(ctx, func(q *db.Queries) error {
+	err = s.store.WithTx(ctx, func(q db.Querier) error {
 		created, err := q.CreateUser(ctx, db.CreateUserParams{
 			Email:        email,
 			PasswordHash: passwordHash,
@@ -206,7 +206,7 @@ func (s *Service) RotateSession(ctx context.Context, oldRefreshToken, newRefresh
 		return uuid.Nil, apperror.New(apperror.RefreshTokenExpired)
 	}
 
-	err = s.store.WithTx(ctx, func(q *db.Queries) error {
+	err = s.store.WithTx(ctx, func(q db.Querier) error {
 		if err := q.RevokeSessionByID(ctx, session.ID); err != nil {
 			return err
 		}

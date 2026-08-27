@@ -27,7 +27,7 @@ type mockOrgStore struct {
 	listMembershipsByUser   func(ctx context.Context, userID uuid.UUID) ([]db.ListMembershipsByUserRow, error)
 	listOrganizationMembers func(ctx context.Context, organizationID uuid.UUID) ([]db.ListOrganizationMembersRow, error)
 	getUserByEmail          func(ctx context.Context, email string) (db.User, error)
-	withTx                  func(ctx context.Context, fn func(q *db.Queries) error) error
+	withTx                  func(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 func (m *mockOrgStore) GetOrganizationBySlug(ctx context.Context, slug string) (db.Organization, error) {
@@ -57,7 +57,7 @@ func (m *mockOrgStore) ListOrganizationMembers(ctx context.Context, organization
 func (m *mockOrgStore) GetUserByEmail(ctx context.Context, email string) (db.User, error) {
 	return m.getUserByEmail(ctx, email)
 }
-func (m *mockOrgStore) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+func (m *mockOrgStore) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
 	return m.withTx(ctx, fn)
 }
 
