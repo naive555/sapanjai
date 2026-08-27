@@ -474,7 +474,17 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | `JWT_ACCESS_EXPIRES_IN` | 15m | duration string |
 | `JWT_REFRESH_EXPIRES_IN` | 604800 | **seconds** (integer) |
 | `MCP_RATE_LIMIT_PER_MIN` | 60 | per-connector upstream-API token-bucket capacity, tokens/minute (`mcp:ratelimit:<connectorId>`) — see the MCP gateway section above |
+| `APP_PUBLIC_URL` | http://localhost:4000 | browser-facing **frontend** origin that verification/reset links are built against; trailing slash trimmed |
 | `LOG_LEVEL` | info | fatal/error/warn/info/debug/trace |
 | `NODE_ENV` → rename `APP_ENV` | development | dev enables pretty logging |
 
-Redis key conventions: `blacklist:<accessToken>` (EX = 900), `login:attempts:<email>` (EX = 900, INCR on failure).
+This table covers the API process. Worker-only variables — `WORKER_PORT`,
+`WORKER_JOB_TIMEOUT`, `SESSION_CLEANUP_*`, and the transactional-mail set
+(`RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_DISPATCH_INTERVAL`,
+`EMAIL_DISPATCH_BATCH_SIZE`, `EMAIL_MAX_ATTEMPTS`, `EMAIL_OUTBOX_RETENTION`) —
+are not part of the API contract and live in CLAUDE.md § Environment and
+[`10-transactional-email.md`](10-transactional-email.md). `APP_PUBLIC_URL` is
+listed above because the **API** reads it, to build the links it renders into
+queued mail.
+
+Redis key conventions: `blacklist:<accessToken>` (EX = 900), `login:attempts:<email>` (EX = 900, INCR on failure), `verify:email:<sha256hex(token)>` (EX = 86400, value = userId, `GETDEL`-consumed), `verify:resend:<userId>` (`SET EX 300 NX`), `reset:password:<sha256hex(token)>` (EX = 3600, value = userId, `GETDEL`-consumed), `reset:request:<email>` (`SET EX 900 NX`). Tokens are hashed before they become a key, so a `KEYS`/`MONITOR`/RDB dump yields nothing redeemable.

@@ -63,6 +63,14 @@ services:
     # Overrides the image CMD (/app/api) to run the worker binary that ships
     # in the same image.
     command: ["/app/worker"]
+    # Note: env_file below hands the same .env to both api and worker, so
+    # RESEND_API_KEY reaches the api container too. That is a local-dev
+    # convenience, not the deployed shape — only cmd/worker ever constructs
+    # an email.Sender, and on Railway the key is set on the worker service
+    # alone (docs/09-railway-deploy.md). Don't take compose as evidence the
+    # API is supposed to have it.
+    # APP_PUBLIC_URL needs no override here: web publishes on host port 4000,
+    # which is exactly the .env default the mail links are built against.
     env_file:
       - .env
     environment:

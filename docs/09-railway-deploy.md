@@ -137,11 +137,33 @@ processes, not just the API):**
 | `JWT_REFRESH_SECRET`   | ≥ 32 chars                         |
 | `CONNECTOR_MASTER_KEY` | `openssl rand -base64 32`          |
 | `PORT`                 | `3000` (api only)                  |
+| `APP_PUBLIC_URL`       | `https://${{sapanjai-web.RAILWAY_PUBLIC_DOMAIN}}` |
+
+`APP_PUBLIC_URL` is the origin verification and password-reset links are built
+against, so it must point at **`web`**, not `api` — a link pointing at the API
+lands on a route that does not exist. Left at its `http://localhost:4000`
+default, every email sent from a deployment ships a dead link.
+
+**`worker` only** — the transactional-mail sender. Deliberately *not* set on
+`api`: the API renders and enqueues and never talks to Resend, so the key has no
+reason to sit on the internet-facing service (see
+[`10-transactional-email.md`](10-transactional-email.md)).
+
+| Variable         | Value                                        |
+| ---------------- | -------------------------------------------- |
+| `RESEND_API_KEY` | from the Resend dashboard                    |
+| `EMAIL_FROM`     | `Name <addr@your-verified-domain>`           |
+
+`EMAIL_FROM` must be on a domain verified in Resend or every send 403s, burns
+all `EMAIL_MAX_ATTEMPTS`, and lands as `status='failed'`. With `RESEND_API_KEY`
+unset, a deployed worker does not silently succeed — it logs recipient+subject
+only and records `no RESEND_API_KEY configured` in `email_outbox.last_error`.
 
 Optional, with defaults: `APP_ENV`, `LOG_LEVEL`, `JWT_ACCESS_EXPIRES_IN`,
 `JWT_REFRESH_EXPIRES_IN`, `MCP_RATE_LIMIT_PER_MIN`,
 `CONNECTOR_MASTER_KEY_PREVIOUS`, and the worker's `WORKER_JOB_TIMEOUT` /
-`SESSION_CLEANUP_*`. See CLAUDE.md § Environment.
+`SESSION_CLEANUP_*` / `EMAIL_DISPATCH_INTERVAL` / `EMAIL_DISPATCH_BATCH_SIZE` /
+`EMAIL_MAX_ATTEMPTS` / `EMAIL_OUTBOX_RETENTION`. See CLAUDE.md § Environment.
 
 Rotating `CONNECTOR_MASTER_KEY` without moving the old value into
 `CONNECTOR_MASTER_KEY_PREVIOUS` makes every stored connector config
