@@ -1,6 +1,36 @@
 # Email verification + password reset — transactional email via Resend
 
-> **Status: planned 2026-08-27. Not started.**
+> **Status: complete (planned 2026-08-27, finished 2026-08-27).** All 5 phases
+> shipped.
+>
+> - [x] Phase 1 — Email infrastructure: Resend sender + templates (`ee6e039`),
+>   outbox table and lease-based claiming (`a9cb097`), worker dispatch job
+>   (`14656be`), lease/prune bounded by the job timeout (`427df51`)
+> - [x] Phase 2 — Verification: Redis tokens, `verify-email`/`resend-verification`/`me`,
+>   transactional register (`530f851`)
+> - [x] Phase 3 — Password reset: enumeration-safe `forgot-password`/`reset-password`
+>   (`d71e5a5`), plus the `WithTx`/`db.Querier` refactor it needed (`ec0f53b`)
+> - [x] Phase 4 — Frontend: three auth pages, verification banner, `me` endpoint
+>   wiring (`1930a0a`)
+> - [x] Phase 5 — Docs, ops (`550f25e`)
+>
+> **Deviations from the plan as written, all deliberate:**
+>
+> - The claim lease is `WORKER_JOB_TIMEOUT + EMAIL_DISPATCH_INTERVAL` (floored
+>   at 60s), not one interval — no run outlives the job timeout, so that plus a
+>   margin is the shortest always-safe lease.
+> - §6's amber verification banner ships as `Callout variant="note"`: the design
+>   system has no amber token, and `boundary` is reserved for RBAC security
+>   boundaries by its own doc comment. Owner confirmed `note`.
+> - The two `useSearchParams` pages need `Suspense` boundaries the plan didn't
+>   anticipate, or the production build fails.
+>
+> **Not done — owner-blocked, not forgotten:** §7's live smoke test. It needs a
+> sending domain verified in the Resend dashboard and a real `RESEND_API_KEY`;
+> everything else runs against `LogSender`. Set `RESEND_API_KEY` + `EMAIL_FROM`
+> on the **worker service only**, register with a real address, then confirm the
+> mail arrives, the link works, `email_outbox` shows `sent` with null bodies, and
+> the API log carries no token.
 >
 > **Read first:** `CLAUDE.md`, `docs/02-api-contract.md` (§Auth, §Error responses),
 > `apps/backend/internal/module/auth/`, `apps/backend/internal/worker/job.go`,
