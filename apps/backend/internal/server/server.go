@@ -31,6 +31,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/rbac"
 	"github.com/sapanjai/backend/internal/module/subscription"
 	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/email"
 	"github.com/sapanjai/backend/internal/shared/envelope"
 	"github.com/sapanjai/backend/internal/shared/httpx"
 	"github.com/sapanjai/backend/internal/shared/logger"
@@ -61,15 +62,27 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 
 	store := database.NewStore(pool)
 	redisAuth := appredis.NewAuth(rdb)
+	redisEmail := appredis.NewEmail(rdb)
 	tokenSvc := auth.NewTokenService(cfg)
 	auditSvc := auditlog.NewService(store, log)
 
-	authSvc := auth.NewService(store, redisAuth, auditSvc)
-	authHandler := auth.NewHandler(authSvc, tokenSvc, store, redisAuth, cfg.JWTRefreshExpiresIn)
-	authHandler.Register(e.Group("/auth"))
+	// The API only ever enqueues verification mail (email_outbox); it never
+	// talks to Resend itself (internal/job/emaildispatch, run by the
+	// worker, is the only sender) — see CLAUDE.md's Background worker
+	// bullet. NewRenderer parses the embedded templates once at boot so a
+	// malformed template fails startup rather than the first registration.
+	renderer, err := email.NewRenderer()
+	if err != nil {
+		return nil, fmt.Errorf("email renderer: %w", err)
+	}
 
 	rbacSvc := rbac.NewService(store)
 	guards := appmw.NewGuards(tokenSvc, redisAuth, store, rbacSvc)
+
+	authSvc := auth.NewService(store, redisAuth, auditSvc, redisEmail, renderer, cfg.AppPublicURL)
+	authHandler := auth.NewHandler(authSvc, tokenSvc, store, redisAuth, cfg.JWTRefreshExpiresIn)
+	authHandler.Register(e.Group("/auth"), guards)
+
 	subSvc := subscription.NewService(store)
 	orgSvc := organization.NewService(store, auditSvc, subSvc)
 	orgHandler := organization.NewHandler(orgSvc)

@@ -22,13 +22,14 @@ import (
 // written"). The three Connector* actions below them are outside that
 // parity set — added with the connector module, and all three are written.
 const (
-	ActionUserLogin        = "user.login"
-	ActionUserRegister     = "user.register"
-	ActionOrgCreated       = "org.created"
-	ActionOrgMemberInvited = "org.member.invited"
-	ActionOrgMemberRemoved = "org.member.removed"
-	ActionRoleCreated      = "role.created"
-	ActionRoleAssigned     = "role.assigned"
+	ActionUserLogin         = "user.login"
+	ActionUserRegister      = "user.register"
+	ActionUserEmailVerified = "user.email_verified"
+	ActionOrgCreated        = "org.created"
+	ActionOrgMemberInvited  = "org.member.invited"
+	ActionOrgMemberRemoved  = "org.member.removed"
+	ActionRoleCreated       = "role.created"
+	ActionRoleAssigned      = "role.assigned"
 
 	ActionConnectorCreated = "connector.created"
 	ActionConnectorUpdated = "connector.updated"

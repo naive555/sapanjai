@@ -50,6 +50,10 @@ const (
 	MCPKeyNotFound  = "MCP_KEY_NOT_FOUND"
 	MCPKeyNameTaken = "MCP_KEY_NAME_TAKEN"
 
+	AlreadyVerified           = "ALREADY_VERIFIED"
+	InvalidVerificationToken  = "INVALID_VERIFICATION_TOKEN"
+	VerificationResendTooSoon = "VERIFICATION_RESEND_TOO_SOON"
+
 	// RateLimited is the rate-limit exhaustion code. The MCP file-download
 	// route returns it; a tools/call denial does not, since mcp.RateLimited
 	// builds a CallToolResult carrying the concrete retry-after instead of
@@ -85,6 +89,10 @@ var Map = map[string]mapping{
 	MCPKeyNameTaken: {409, "MCP key name already taken"},
 
 	RateLimited: {429, "Rate limit exceeded, try again later"},
+
+	AlreadyVerified:           {409, "Email already verified"},
+	InvalidVerificationToken:  {400, "Invalid or expired verification token"},
+	VerificationResendTooSoon: {429, "Verification email already sent, try again in a few minutes"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

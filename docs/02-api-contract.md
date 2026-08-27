@@ -56,6 +56,9 @@ Service error map (service throws code → HTTP response):
 | `MCP_KEY_NOT_FOUND`     | 404    | MCP key not found                                |
 | `MCP_KEY_NAME_TAKEN`    | 409    | MCP key name already taken                       |
 | `RATE_LIMITED`          | 429    | Rate limit exceeded, try again later             |
+| `ALREADY_VERIFIED`      | 409    | Email already verified                           |
+| `INVALID_VERIFICATION_TOKEN` | 400 | Invalid or expired verification token          |
+| `VERIFICATION_RESEND_TOO_SOON` | 429 | Verification email already sent, try again in a few minutes |
 | (unknown)               | 500    | Internal server error                            |
 
 `RATE_LIMITED` has exactly one definition (`apperror.Map`, for a future REST
@@ -81,8 +84,13 @@ Global: unknown route → 404 `Route not found`; body validation failure → 422
 | `POST /auth/login`    | public | `{ email: email, password }` | `{ accessToken, refreshToken }` |
 | `POST /auth/refresh`  | public | `{ refreshToken }` | `{ accessToken, refreshToken }` (rotated; access token claims: `sub` only) |
 | `POST /auth/logout`   | public (reads Authorization if present) | `{ refreshToken }` | `{ success: true }` — blacklists access token 15 min, revokes ALL user sessions |
+| `POST /auth/verify-email` | public | `{ token }` | `{ success: true }` — consumes a single-use, Redis-backed verification token (24h TTL) and marks the owning user verified. `POST`, not `GET`: the frontend page at `/verify-email?token=...` is the GET target and POSTs the token here, so a link-scanner prefetching the page never burns it. `400 INVALID_VERIFICATION_TOKEN` for an unknown, expired, or already-consumed token — indistinguishable from a token naming a user that no longer exists. Idempotent for an already-verified user with a still-live token: returns success with no second audit write. |
+| `POST /auth/resend-verification` | auth | — | `{ success: true }` — re-sends the verification email for the caller, subject to a 5-minute cooldown (`404 USER_NOT_FOUND`, `409 ALREADY_VERIFIED`, `429 VERIFICATION_RESEND_TOO_SOON`). |
+| `GET /auth/me` | auth | — | `{ id, email, displayName, isVerified, createdAt }` — the caller's own profile, read fresh from the database on every call. `isVerified` is deliberately **not** carried in the JWT claims (see below): a claim would go stale for up to `JWT_ACCESS_EXPIRES_IN` after verifying. |
 
 JWT claims — access: `{ sub: userId, email }`, HS256, exp = `JWT_ACCESS_EXPIRES_IN` (default 15m). Refresh: `{ sub: userId }`, separate secret, no embedded exp in source (session row `expires_at` = now + `JWT_REFRESH_EXPIRES_IN` seconds, default 604800).
+
+Registration enqueues a verification email in the same transaction as the user insert (`internal/infra/database/queries/email_outbox.sql`'s `EnqueueEmail`, drained by the worker's `email-dispatch` job — see the Background worker bullet in CLAUDE.md) — a user row can never exist without its verification email queued, and vice versa. Verification tokens and their 5-minute resend cooldown live only in Redis (`verify:email:<sha256hex(token)>`, `verify:resend:<userId>`), never in Postgres — see CLAUDE.md's Redis key conventions.
 
 ### Organizations (`/organizations`)
 
@@ -111,7 +119,7 @@ Permission semantics: `*` grants everything; exact `resource:verb` match; `resou
 | ----------- | ----- | ----- | -------- |
 | `GET /audit-logs` | org | `userId?`, `action?` (repeatable — `?action=a&action=b` matches either; a single `action=x` behaves as before), `since?` (RFC3339 timestamp, inclusive lower bound on `createdAt`), `limit?` (1–100, default 50) | Org's logs, newest first. |
 
-Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below), plus `mcp.session.started`, `mcp.tool.called`, `mcp.tool.denied`, `mcp.ratelimit.hit`, `mcp.file.downloaded` (all five written, from the MCP gateway below).
+Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invited`, `org.member.removed`, `role.created`, `role.assigned` (last three defined but only the first four are currently written), plus `connector.created`, `connector.updated`, `connector.deleted` (all three written, from the Connectors module below), plus `mcp.session.started`, `mcp.tool.called`, `mcp.tool.denied`, `mcp.ratelimit.hit`, `mcp.file.downloaded` (all five written, from the MCP gateway below), plus `user.email_verified` (written by `POST /auth/verify-email`, from the Auth section above).
 
 ### Subscription (`/subscription`)
 

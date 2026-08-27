@@ -37,6 +37,19 @@ definitions:
       success:
         type: boolean
     type: object
+  internal_module_auth.MeResponse:
+    properties:
+      createdAt:
+        type: string
+      displayName:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      isVerified:
+        type: boolean
+    type: object
   internal_module_auth.RefreshRequest:
     properties:
       refreshToken:
@@ -58,12 +71,24 @@ definitions:
     - email
     - password
     type: object
+  internal_module_auth.SuccessResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
   internal_module_auth.TokenResponse:
     properties:
       accessToken:
         type: string
       refreshToken:
         type: string
+    type: object
+  internal_module_auth.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    required:
+    - token
     type: object
   internal_module_connector.ConnectorResponse:
     properties:
@@ -493,6 +518,20 @@ paths:
       summary: Log out
       tags:
       - auth
+  /auth/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.MeResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the authenticated caller's profile
+      tags:
+      - auth
   /auth/refresh:
     post:
       consumes:
@@ -549,6 +588,61 @@ paths:
           schema:
             $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       summary: Register a new user
+      tags:
+      - auth
+  /auth/resend-verification:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.SuccessResponse'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: ALREADY_VERIFIED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: VERIFICATION_RESEND_TOO_SOON
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Resend the verification email
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Verification token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_auth.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_auth.SuccessResponse'
+        "400":
+          description: INVALID_VERIFICATION_TOKEN
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      summary: Verify an email address
       tags:
       - auth
   /connectors:

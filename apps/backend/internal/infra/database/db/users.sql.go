@@ -75,3 +75,12 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	)
 	return i, err
 }
+
+const markUserVerified = `-- name: MarkUserVerified :exec
+UPDATE users SET is_verified = true, updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkUserVerified(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markUserVerified, id)
+	return err
+}

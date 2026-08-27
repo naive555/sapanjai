@@ -81,6 +81,7 @@ type Querier interface {
 	// verification body holds a live single-use token, and the row is kept for its
 	// audit value (recipient, subject, attempts), not for its content.
 	MarkEmailSent(ctx context.Context, id uuid.UUID) error
+	MarkUserVerified(ctx context.Context, id uuid.UUID) error
 	PruneEmailOutbox(ctx context.Context, arg PruneEmailOutboxParams) (int64, error)
 	// actions is a nullable text[]: NULL (no ?action= given at all) matches
 	// every row, same as before repeatable action filtering was added. An

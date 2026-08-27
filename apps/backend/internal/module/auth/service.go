@@ -14,13 +14,16 @@ import (
 	"github.com/sapanjai/backend/internal/infra/redis"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/email"
 )
 
 // Compile-time checks that the concrete infra types satisfy the narrow
 // interfaces this service depends on.
 var (
-	_ authStore    = (*database.Store)(nil)
-	_ loginLimiter = (*redis.Auth)(nil)
+	_ authStore            = (*database.Store)(nil)
+	_ loginLimiter         = (*redis.Auth)(nil)
+	_ verificationTokens   = (*redis.Email)(nil)
+	_ verificationRenderer = (*email.Renderer)(nil)
 )
 
 // maxLoginAttempts mirrors MAX_LOGIN_ATTEMPTS in the source app's
@@ -37,7 +40,10 @@ const bcryptCost = 12
 // and provides WithTx).
 type authStore interface {
 	GetUserByEmail(ctx context.Context, email string) (db.User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error)
 	CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error)
+	MarkUserVerified(ctx context.Context, id uuid.UUID) error
+	EnqueueEmail(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (db.Session, error)
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
@@ -60,17 +66,35 @@ type Service struct {
 	store   authStore
 	limiter loginLimiter
 	audit   *auditlog.Service
+
+	// mail, render, and appURL back email verification (verification.go):
+	// mail is the Redis token/cooldown helper, render turns template data
+	// into a ready-to-send email.Message, and appURL is the browser-facing
+	// frontend origin (config.Config.AppPublicURL) verification links point
+	// at.
+	mail   verificationTokens
+	render verificationRenderer
+	appURL string
 }
 
 // NewService builds an auth Service.
-func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service) *Service {
-	return &Service{store: store, limiter: limiter, audit: audit}
+func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, mail verificationTokens, render verificationRenderer, appURL string) *Service {
+	return &Service{store: store, limiter: limiter, audit: audit, mail: mail, render: render, appURL: appURL}
 }
 
-// Register creates a new user. passwordHash is the already-bcrypt-hashed
-// password (hashing happens in the handler alongside the 72-byte
-// truncation shared with Login). Returns apperror.EmailTaken if the email
-// is already registered.
+// Register creates a new user and enqueues its verification email.
+// passwordHash is the already-bcrypt-hashed password (hashing happens in
+// the handler alongside the 72-byte truncation shared with Login). Returns
+// apperror.EmailTaken if the email is already registered.
+//
+// CreateUser and the verification email's outbox insert run inside one
+// transaction (store.WithTx) so a user row can never exist without its
+// verification email queued, and vice versa — the whole point of the
+// outbox pattern (see the email-verification plan §2). The GetUserByEmail
+// pre-check and the audit write stay outside the transaction: the
+// pre-check is read-only and has nothing to roll back, and audit writes
+// are best-effort and must never roll back a registration that otherwise
+// succeeded.
 func (s *Service) Register(ctx context.Context, email, passwordHash string, displayName *string) (db.User, error) {
 	_, err := s.store.GetUserByEmail(ctx, email)
 	if err == nil {
@@ -80,10 +104,19 @@ func (s *Service) Register(ctx context.Context, email, passwordHash string, disp
 		return db.User{}, err
 	}
 
-	user, err := s.store.CreateUser(ctx, db.CreateUserParams{
-		Email:        email,
-		PasswordHash: passwordHash,
-		DisplayName:  displayName,
+	var user db.User
+	err = s.store.WithTx(ctx, func(q *db.Queries) error {
+		created, err := q.CreateUser(ctx, db.CreateUserParams{
+			Email:        email,
+			PasswordHash: passwordHash,
+			DisplayName:  displayName,
+		})
+		if err != nil {
+			return err
+		}
+		user = created
+
+		return s.SendVerificationEmail(ctx, q, user.ID, user.Email, user.DisplayName)
 	})
 	if err != nil {
 		return db.User{}, err

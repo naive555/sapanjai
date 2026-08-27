@@ -15,6 +15,7 @@ import (
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/infra/redis"
+	appmw "github.com/sapanjai/backend/internal/middleware"
 	"github.com/sapanjai/backend/internal/shared/httpx"
 )
 
@@ -24,9 +25,12 @@ const blacklistTTL = 15 * time.Minute
 
 // sessionStore is the subset of *database.Store the handler needs directly:
 // logout looks up the session by refresh token itself (not through Service)
-// since an unknown/expired refresh token must still return a 200 success.
+// since an unknown/expired refresh token must still return a 200 success;
+// me reads the caller's own row directly rather than through Service, since
+// it is a plain read with no business rule attached.
 type sessionStore interface {
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (db.Session, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error)
 }
 
 // blacklister is the subset of *redis.Auth the handler needs for logout.
@@ -55,12 +59,18 @@ func NewHandler(service *Service, token *TokenService, store sessionStore, black
 	return &Handler{service: service, token: token, store: store, blacklist: blacklist, refreshTTL: refreshTTL}
 }
 
-// Register mounts the four /auth routes on the given group.
-func (h *Handler) Register(g *echo.Group) {
+// Register mounts the /auth routes on the given group. verify-email stays
+// public (see the email-verification plan §1: the frontend page is the GET
+// target, and it POSTs the token here); resend-verification and me require
+// a valid access token.
+func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/register", h.register)
 	g.POST("/login", h.login)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", h.logout)
+	g.POST("/verify-email", h.verifyEmail)
+	g.POST("/resend-verification", h.resendVerification, guards.RequireAuth())
+	g.GET("/me", h.me, guards.RequireAuth())
 }
 
 // register creates a new user and returns a fresh access/refresh token pair.
@@ -232,4 +242,80 @@ func (h *Handler) issueTokenPair(c echo.Context, userID uuid.UUID, email string)
 // headers.authorization?.replace("Bearer ", "") in the source app.
 func bearerToken(c echo.Context) string {
 	return strings.TrimPrefix(c.Request().Header.Get(echo.HeaderAuthorization), "Bearer ")
+}
+
+// verifyEmail consumes a single-use verification token and marks its owning
+// user verified. Public: the frontend page at /verify-email?token=... is
+// the GET target and POSTs the token here, so link-scanners that prefetch
+// the page never burn the token.
+// @Summary  Verify an email address
+// @Tags     auth
+// @Accept   json
+// @Produce  json
+// @Param    body  body      VerifyEmailRequest  true  "Verification token"
+// @Success  200   {object}  SuccessResponse
+// @Failure  400   {object}  httpx.ErrorResponse  "INVALID_VERIFICATION_TOKEN"
+// @Failure  422   {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /auth/verify-email [post]
+func (h *Handler) verifyEmail(c echo.Context) error {
+	var req VerifyEmailRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	if err := h.service.VerifyEmail(c.Request().Context(), req.Token); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
+}
+
+// resendVerification re-sends the verification email for the authenticated
+// caller, subject to a 5-minute cooldown.
+// @Summary  Resend the verification email
+// @Tags     auth
+// @Produce  json
+// @Security BearerAuth
+// @Success  200  {object}  SuccessResponse
+// @Failure  404  {object}  httpx.ErrorResponse  "USER_NOT_FOUND"
+// @Failure  409  {object}  httpx.ErrorResponse  "ALREADY_VERIFIED"
+// @Failure  429  {object}  httpx.ErrorResponse  "VERIFICATION_RESEND_TOO_SOON"
+// @Router   /auth/resend-verification [post]
+func (h *Handler) resendVerification(c echo.Context) error {
+	userID := appmw.UserID(c)
+
+	if err := h.service.ResendVerificationEmail(c.Request().Context(), userID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
+}
+
+// me returns the authenticated caller's own profile. IsVerified is read
+// fresh from the database rather than carried in the access token: the
+// contract pins access-token claims at { sub, email } deliberately, since a
+// claim would go stale for up to JWT_ACCESS_EXPIRES_IN after verifying and
+// the frontend's verification banner would linger past the moment it stops
+// being true.
+// @Summary  Get the authenticated caller's profile
+// @Tags     auth
+// @Produce  json
+// @Security BearerAuth
+// @Success  200  {object}  MeResponse
+// @Router   /auth/me [get]
+func (h *Handler) me(c echo.Context) error {
+	userID := appmw.UserID(c)
+
+	user, err := h.store.GetUserByID(c.Request().Context(), userID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, MeResponse{
+		ID:          user.ID,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		IsVerified:  user.IsVerified,
+		CreatedAt:   user.CreatedAt,
+	})
 }

@@ -1,5 +1,11 @@
 package auth
 
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
 // RegisterRequest is the POST /auth/register body, mirroring
 // AuthModel.registerBody in the source app.
 type RegisterRequest struct {
@@ -30,4 +36,26 @@ type TokenResponse struct {
 // LogoutResponse is the response body for POST /auth/logout.
 type LogoutResponse struct {
 	Success bool `json:"success"`
+}
+
+// VerifyEmailRequest is the POST /auth/verify-email body.
+type VerifyEmailRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+
+// SuccessResponse is the response body for POST /auth/verify-email and
+// POST /auth/resend-verification.
+type SuccessResponse struct {
+	Success bool `json:"success"`
+}
+
+// MeResponse is the response body for GET /auth/me. IsVerified is read
+// fresh from the database on every call rather than carried in the access
+// token — see the handler's doc comment.
+type MeResponse struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName *string   `json:"displayName"`
+	IsVerified  bool      `json:"isVerified"`
+	CreatedAt   time.Time `json:"createdAt"`
 }

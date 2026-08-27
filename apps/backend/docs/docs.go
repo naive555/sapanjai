@@ -193,6 +193,30 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Get the authenticated caller's profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_auth.MeResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/refresh": {
             "post": {
                 "consumes": [
@@ -270,6 +294,93 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "EMAIL_TAKEN",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/resend-verification": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Resend the verification email",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_auth.SuccessResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "USER_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "ALREADY_VERIFIED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "VERIFICATION_RESEND_TOO_SOON",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Verify an email address",
+                "parameters": [
+                    {
+                        "description": "Verification token",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_auth.VerifyEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_auth.SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_VERIFICATION_TOKEN",
                         "schema": {
                             "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
                         }
@@ -1553,6 +1664,26 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_module_auth.MeResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isVerified": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_module_auth.RefreshRequest": {
             "type": "object",
             "required": [
@@ -1584,6 +1715,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_module_auth.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_module_auth.TokenResponse": {
             "type": "object",
             "properties": {
@@ -1591,6 +1730,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_auth.VerifyEmailRequest": {
+            "type": "object",
+            "required": [
+                "token"
+            ],
+            "properties": {
+                "token": {
                     "type": "string"
                 }
             }

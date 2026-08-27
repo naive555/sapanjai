@@ -1,0 +1,135 @@
+package redis_test
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/google/uuid"
+
+	appredis "github.com/sapanjai/backend/internal/infra/redis"
+)
+
+// newTestEmail skips unless REDIS_URL is set (matches
+// internal/server's setupTestServer / ratelimit_test.go's newTestLimiter
+// convention) and returns an Email helper backed by the real Redis
+// instance plus a fresh, uuid-suffixed token hash so concurrent test runs
+// never collide on a key.
+func newTestEmail(t *testing.T) *appredis.Email {
+	t.Helper()
+
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		t.Skip("REDIS_URL not set; skipping redis email test")
+	}
+
+	ctx := context.Background()
+	client, err := appredis.New(ctx, redisURL)
+	if err != nil {
+		t.Fatalf("appredis.New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	return appredis.NewEmail(client)
+}
+
+func uniqueTokenHash(prefix string) string {
+	return prefix + "-" + uuid.NewString()
+}
+
+func TestEmail_SetAndConsumeVerifyToken(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+	tokenHash := uniqueTokenHash("verify")
+	userID := uuid.New()
+
+	if err := e.SetVerifyToken(ctx, tokenHash, userID); err != nil {
+		t.Fatalf("SetVerifyToken: %v", err)
+	}
+
+	got, found, err := e.ConsumeVerifyToken(ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("ConsumeVerifyToken: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true for a freshly set token")
+	}
+	if got != userID {
+		t.Fatalf("userID = %v, want %v", got, userID)
+	}
+}
+
+func TestEmail_ConsumeVerifyToken_SingleUse(t *testing.T) {
+	// GETDEL semantics: a second consume of the same token, after the first
+	// already succeeded, must report not-found — never the same userID
+	// twice.
+	e := newTestEmail(t)
+	ctx := context.Background()
+	tokenHash := uniqueTokenHash("verify-single-use")
+	userID := uuid.New()
+
+	if err := e.SetVerifyToken(ctx, tokenHash, userID); err != nil {
+		t.Fatalf("SetVerifyToken: %v", err)
+	}
+
+	if _, found, err := e.ConsumeVerifyToken(ctx, tokenHash); err != nil || !found {
+		t.Fatalf("first ConsumeVerifyToken: found=%v err=%v", found, err)
+	}
+
+	got, found, err := e.ConsumeVerifyToken(ctx, tokenHash)
+	if err != nil {
+		t.Fatalf("second ConsumeVerifyToken: %v", err)
+	}
+	if found {
+		t.Fatalf("second ConsumeVerifyToken found = true (userID %v), want false — token must be single-use", got)
+	}
+}
+
+func TestEmail_ConsumeVerifyToken_UnknownToken(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+
+	_, found, err := e.ConsumeVerifyToken(ctx, uniqueTokenHash("never-set"))
+	if err != nil {
+		t.Fatalf("ConsumeVerifyToken: %v", err)
+	}
+	if found {
+		t.Fatal("found = true for a token that was never set")
+	}
+}
+
+func TestEmail_MarkVerifyResent_CooldownBlocksSecondCall(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	first, err := e.MarkVerifyResent(ctx, userID)
+	if err != nil {
+		t.Fatalf("first MarkVerifyResent: %v", err)
+	}
+	if !first {
+		t.Fatal("first MarkVerifyResent = false, want true (no prior cooldown)")
+	}
+
+	second, err := e.MarkVerifyResent(ctx, userID)
+	if err != nil {
+		t.Fatalf("second MarkVerifyResent: %v", err)
+	}
+	if second {
+		t.Fatal("second MarkVerifyResent = true, want false while the cooldown is active")
+	}
+}
+
+func TestEmail_MarkVerifyResent_IndependentPerUser(t *testing.T) {
+	e := newTestEmail(t)
+	ctx := context.Background()
+
+	okA, err := e.MarkVerifyResent(ctx, uuid.New())
+	if err != nil || !okA {
+		t.Fatalf("user A MarkVerifyResent: ok=%v err=%v", okA, err)
+	}
+	okB, err := e.MarkVerifyResent(ctx, uuid.New())
+	if err != nil || !okB {
+		t.Fatalf("user B MarkVerifyResent: ok=%v err=%v", okB, err)
+	}
+}
