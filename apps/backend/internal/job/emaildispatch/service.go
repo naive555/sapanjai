@@ -49,17 +49,22 @@ const (
 	// job lock already serialises runs, and a redundant DELETE costs nothing.
 	pruneInterval = time.Hour
 
-	// pruneBatchSize caps one retention sweep so a large backlog cannot hold
-	// the job lock for the whole interval; the rest goes next hour.
-	pruneBatchSize = 1000
+	// pruneBatchSize caps a single DELETE; maxPruneBatches caps how many of
+	// them one sweep may issue. The sweep loops until a batch comes back
+	// short, because capping the whole HOUR at one batch put the retention
+	// ceiling at 1000 deletions/hour against a dispatch ceiling of ~4800/hour
+	// — email_outbox grew without bound at any sustained volume. The batch
+	// cap still stops a pathological backlog holding the job lock all
+	// interval; whatever is left drains next hour.
+	pruneBatchSize  = 1000
+	maxPruneBatches = 20
 
 	// maxLastErrorLen caps what is written to email_outbox.last_error. An
 	// upstream that returns a whole HTML error page should not bloat the row.
 	maxLastErrorLen = 500
 
-	// minLeaseSeconds floors the claim lease. The lease must comfortably
-	// outlast one send; on a very short dispatch interval, 2x the interval
-	// would not.
+	// minLeaseSeconds floors the claim lease, for deployments configured with
+	// a very short worker job timeout.
 	minLeaseSeconds = 60
 )
 
@@ -87,6 +92,7 @@ type Job struct {
 	sender      email.Sender
 	log         *slog.Logger
 	interval    time.Duration
+	jobTimeout  time.Duration
 	batchSize   int32
 	maxAttempts int32
 	retention   time.Duration
@@ -101,12 +107,13 @@ type Job struct {
 }
 
 // New builds the dispatch job.
-func New(store dispatchStore, sender email.Sender, log *slog.Logger, interval time.Duration, batchSize, maxAttempts int, retention time.Duration) *Job {
+func New(store dispatchStore, sender email.Sender, log *slog.Logger, interval, jobTimeout time.Duration, batchSize, maxAttempts int, retention time.Duration) *Job {
 	return &Job{
 		store:       store,
 		sender:      sender,
 		log:         log,
 		interval:    interval,
+		jobTimeout:  jobTimeout,
 		batchSize:   int32(batchSize),
 		maxAttempts: int32(maxAttempts),
 		retention:   retention,
@@ -228,6 +235,12 @@ func (j *Job) sendRow(ctx context.Context, row db.EmailOutbox) bool {
 // markFailed records a terminal failure: the attempt budget is spent, or the
 // row could never have been sent in the first place.
 func (j *Job) markFailed(ctx context.Context, id uuid.UUID, sendErr error) {
+	// Detached from the caller's ctx: this write records the outcome of a
+	// send that already happened. If ctx was cancelled during that send (the
+	// worker's per-run timeout), reusing it here would drop last_error
+	// silently and leave the row looking untouched.
+	ctx = context.WithoutCancel(ctx)
+
 	msg := truncateError(sendErr.Error())
 	if err := j.store.MarkEmailFailed(ctx, db.MarkEmailFailedParams{LastError: &msg, ID: id}); err != nil {
 		j.log.WarnContext(ctx, "failed to mark email failed", "id", id, "error", err)
@@ -237,6 +250,7 @@ func (j *Job) markFailed(ctx context.Context, id uuid.UUID, sendErr error) {
 // reschedule records a retryable failure and pushes the row's next attempt
 // out by the backoff its (post-claim) attempt count has earned.
 func (j *Job) reschedule(ctx context.Context, id uuid.UUID, attempts int32, sendErr error) {
+	ctx = context.WithoutCancel(ctx) // see markFailed
 	msg := truncateError(sendErr.Error())
 	if err := j.store.RescheduleEmail(ctx, db.RescheduleEmailParams{
 		LastError:      &msg,
@@ -256,17 +270,36 @@ func (j *Job) maybePrune(ctx context.Context) (int64, bool) {
 		return 0, false
 	}
 
-	deleted, err := j.store.PruneEmailOutbox(ctx, db.PruneEmailOutboxParams{
+	params := db.PruneEmailOutboxParams{
 		RetentionSeconds: int32(j.retention.Seconds()),
 		BatchSize:        pruneBatchSize,
-	})
-	if err != nil {
-		j.log.WarnContext(ctx, "email outbox prune failed", "error", err)
-		return 0, false
 	}
 
+	var total int64
+	for batches := 0; batches < maxPruneBatches; batches++ {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+
+		deleted, err := j.store.PruneEmailOutbox(ctx, params)
+		if err != nil {
+			j.log.WarnContext(ctx, "email outbox prune failed", "error", err, "deleted_before_failure", total)
+			break
+		}
+
+		total += deleted
+
+		// A short batch means the retention window is drained.
+		if deleted < pruneBatchSize {
+			j.lastPrunedAt = now
+			return total, true
+		}
+	}
+
+	// Hit the batch cap (or bailed out): whatever is left drains next sweep.
+	// lastPrunedAt is still set so a huge backlog cannot make every run prune.
 	j.lastPrunedAt = now
-	return deleted, true
+	return total, true
 }
 
 // backoffFor returns how long to wait before retrying a row that has already
@@ -300,18 +333,40 @@ func truncateError(msg string) string {
 	}
 
 	truncated := msg[:maxLastErrorLen]
-	// Back off to a full rune boundary rather than splitting a multi-byte
-	// UTF-8 sequence in half.
-	for len(truncated) > 0 && !utf8.RuneStart(truncated[len(truncated)-1]) {
+	// Drop a trailing partial rune. Testing RuneStart on the last byte is not
+	// enough: it strips orphaned continuation bytes but leaves a dangling
+	// LEAD byte in place, which is still invalid UTF-8. Postgres rejects that
+	// outright (SQLSTATE 22021), so the write is lost — and on the terminal
+	// path that is unbounded, because a row that can never be recorded as
+	// failed stays pending and is re-claimed and re-sent forever.
+	//
+	// DecodeLastRuneInString reports (RuneError, 1) for exactly the broken
+	// tails we want gone, and (RuneError, 3) for a genuine U+FFFD, which must
+	// survive — hence the size check rather than a bare RuneError test.
+	for len(truncated) > 0 {
+		r, size := utf8.DecodeLastRuneInString(truncated)
+		if r != utf8.RuneError || size > 1 {
+			break
+		}
 		truncated = truncated[:len(truncated)-1]
 	}
 	return truncated
 }
 
-// leaseSeconds is how long a claimed row is hidden from the next run: twice
-// the dispatch interval, floored at minLeaseSeconds.
+// leaseSeconds is how long a claimed row is hidden from other runs.
+//
+// It is derived from the longest possible RUN, not from the interval. The
+// worker holds a job's lock for only interval-interval/10 (13.5s at the 15s
+// default), so on a multi-replica fleet the next run starts well before this
+// one has worked through a batch of sends that may take up to a minute each.
+// An interval-sized lease lapsed mid-flight and let that second run re-claim
+// rows still being sent: duplicate delivery attempts, and a duplicated
+// attempts increment that silently ate the retry budget.
+//
+// The worker cancels any run at jobTimeout, so no run outlives it. That plus
+// one interval of margin is the shortest lease that is always safe.
 func (j *Job) leaseSeconds() int32 {
-	lease := int32(j.interval.Seconds()) * 2
+	lease := int32((j.jobTimeout + j.interval).Seconds())
 	if lease < minLeaseSeconds {
 		return minLeaseSeconds
 	}

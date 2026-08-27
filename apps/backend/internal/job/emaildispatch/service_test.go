@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -30,7 +31,7 @@ type mockStore struct {
 	failed       []db.MarkEmailFailedParams
 	rescheduled  []db.RescheduleEmailParams
 	pruneCalls   []db.PruneEmailOutboxParams
-	pruneDeleted int64
+	pruneReturns []int64 // one entry per prune call; missing entries return 0
 
 	markSentErr error
 }
@@ -73,8 +74,12 @@ func (m *mockStore) RescheduleEmail(_ context.Context, arg db.RescheduleEmailPar
 func (m *mockStore) PruneEmailOutbox(_ context.Context, arg db.PruneEmailOutboxParams) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	idx := len(m.pruneCalls)
 	m.pruneCalls = append(m.pruneCalls, arg)
-	return m.pruneDeleted, nil
+	if idx < len(m.pruneReturns) {
+		return m.pruneReturns[idx], nil
+	}
+	return 0, nil
 }
 
 var _ dispatchStore = (*mockStore)(nil)
@@ -102,6 +107,21 @@ func (f *fakeSender) messages() []email.Message {
 
 var _ email.Sender = (*fakeSender)(nil)
 
+// cancellingSender cancels the run's context from inside Send and then
+// fails, reproducing a provider call that is still in flight when the
+// worker's per-run timeout fires.
+type cancellingSender struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (c *cancellingSender) Send(context.Context, email.Message) error {
+	c.cancel()
+	return c.err
+}
+
+var _ email.Sender = (*cancellingSender)(nil)
+
 // ---- helpers ----
 
 func strptr(s string) *string { return &s }
@@ -123,7 +143,7 @@ const secretToken = "8f14e45fceea167a5a36dedd4bea2543b1e3b3c8a2f5d9e0c7b4a1968d2
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newJob(store dispatchStore, sender email.Sender) *Job {
-	return New(store, sender, discardLogger(), 15*time.Second, 20, 5, 168*time.Hour)
+	return New(store, sender, discardLogger(), 15*time.Second, 5*time.Minute, 20, 5, 168*time.Hour)
 }
 
 func attrValue(attrs []any, key string) (any, bool) {
@@ -167,12 +187,9 @@ func TestJob_EmptyOutboxIsANoOp(t *testing.T) {
 	}
 }
 
-// The lease must outlast a send. Twice the interval, floored, so a short
-// dispatch interval cannot produce a lease that expires mid-flight and lets
-// the next tick send the same mail again.
-func TestJob_ClaimsWithBatchSizeAndLease(t *testing.T) {
+func TestJob_ClaimsWithBatchSize(t *testing.T) {
 	store := &mockStore{}
-	j := New(store, &fakeSender{}, discardLogger(), 15*time.Second, 20, 5, time.Hour)
+	j := newJob(store, &fakeSender{})
 
 	if _, err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -183,20 +200,47 @@ func TestJob_ClaimsWithBatchSizeAndLease(t *testing.T) {
 	if got := store.claimCalls[0].BatchSize; got != 20 {
 		t.Errorf("BatchSize = %d, want 20", got)
 	}
-	if got := store.claimCalls[0].LeaseSeconds; got != minLeaseSeconds {
-		t.Errorf("LeaseSeconds = %d for a 15s interval, want the %d floor", got, minLeaseSeconds)
-	}
 }
 
-func TestJob_LeaseIsTwiceTheIntervalWhenAboveTheFloor(t *testing.T) {
+// The lease has to outlast the longest possible RUN, not the interval.
+//
+// Sizing it off the interval is what the first version did, and it is wrong:
+// the worker holds a job's lock for only interval-interval/10 (13.5s at the
+// 15s default), so on a multi-replica fleet the next run starts long before
+// this one has worked through a batch of 20 sends that may take up to a
+// minute each. Once the old 60s lease lapsed mid-flight, the second run
+// re-claimed rows the first was still sending — double delivery attempts, and
+// a double attempts increment that silently eats the retry budget.
+//
+// The worker cancels any run at jobTimeout, so no run can outlive it: that
+// plus one interval of margin is the correct lease.
+func TestJob_LeaseOutlastsAFullRun(t *testing.T) {
 	store := &mockStore{}
-	j := New(store, &fakeSender{}, discardLogger(), 5*time.Minute, 20, 5, time.Hour)
+	j := New(store, &fakeSender{}, discardLogger(), 15*time.Second, 5*time.Minute, 20, 5, time.Hour)
 
 	if _, err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := store.claimCalls[0].LeaseSeconds; got != 600 {
-		t.Errorf("LeaseSeconds = %d for a 5m interval, want 600", got)
+
+	got := store.claimCalls[0].LeaseSeconds
+	want := int32((5*time.Minute + 15*time.Second).Seconds())
+	if got != want {
+		t.Errorf("LeaseSeconds = %d, want %d (jobTimeout + one interval)", got, want)
+	}
+	if got <= int32((15 * time.Second).Seconds()) {
+		t.Errorf("lease %ds does not outlast even one dispatch interval", got)
+	}
+}
+
+func TestJob_LeaseHasAFloor(t *testing.T) {
+	store := &mockStore{}
+	j := New(store, &fakeSender{}, discardLogger(), time.Second, time.Second, 1, 1, time.Hour)
+
+	if _, err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := store.claimCalls[0].LeaseSeconds; got != minLeaseSeconds {
+		t.Errorf("LeaseSeconds = %d for sub-second config, want the %d floor", got, minLeaseSeconds)
 	}
 }
 
@@ -456,7 +500,7 @@ func TestBackoffFor_NeverNegativeOrZero(t *testing.T) {
 // ---- prune throttling ----
 
 func TestJob_PrunesOnFirstRun(t *testing.T) {
-	store := &mockStore{pruneDeleted: 3}
+	store := &mockStore{pruneReturns: []int64{3}}
 	j := newJob(store, &fakeSender{})
 
 	res, err := j.Run(context.Background())
@@ -548,7 +592,7 @@ func TestJob_NeverLogsTheBody(t *testing.T) {
 	store := &mockStore{claimBatches: [][]db.EmailOutbox{{good, bad}}}
 	sender := &fakeSender{errs: map[string]error{"b@example.com": errors.New("nope")}}
 
-	j := New(store, sender, log, 15*time.Second, 20, 5, time.Hour)
+	j := New(store, sender, log, 15*time.Second, 5*time.Minute, 20, 5, time.Hour)
 	if _, err := j.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -583,5 +627,124 @@ func TestJob_StopsOnContextCancellation(t *testing.T) {
 	}
 	if n := len(sender.messages()); n > 1 {
 		t.Errorf("sent %d messages on a cancelled context, want it to stop immediately", n)
+	}
+}
+
+// ---- regression: last_error must be storable ----
+
+// truncateError cuts a byte slice, which can land in the middle of a
+// multi-byte rune. The first version stripped trailing continuation bytes but
+// left a dangling LEAD byte, producing invalid UTF-8 — and Postgres rejects
+// that with SQLSTATE 22021, so the write is lost. On the terminal path that
+// is unbounded: a row at its attempt budget whose upstream error is long and
+// non-ASCII can never be recorded as failed, stays pending, and is re-claimed
+// and re-sent to the provider forever.
+//
+// The original test here only used ASCII, so it never caught this.
+func TestTruncateError_AlwaysProducesValidUTF8(t *testing.T) {
+	for _, tc := range []struct{ name, in string }{
+		{"euro at the cut", strings.Repeat("a", maxLastErrorLen-1) + "€" + strings.Repeat("b", 100)},
+		{"thai at the cut", strings.Repeat("a", maxLastErrorLen-1) + "ก" + strings.Repeat("b", 100)},
+		{"emoji at the cut", strings.Repeat("a", maxLastErrorLen-2) + "🔥" + strings.Repeat("b", 100)},
+		{"continuation at the cut", strings.Repeat("a", maxLastErrorLen-3) + "€€" + strings.Repeat("b", 100)},
+		{"all multibyte", strings.Repeat("€", 400)},
+		{"emoji run", strings.Repeat("🔥", 300)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateError(tc.in)
+			if !utf8.ValidString(got) {
+				t.Errorf("invalid UTF-8 (len %d, last byte 0x%X) — Postgres will reject this", len(got), got[len(got)-1])
+			}
+			if len(got) > maxLastErrorLen {
+				t.Errorf("length %d exceeds the %d cap", len(got), maxLastErrorLen)
+			}
+		})
+	}
+}
+
+// Sweep every cut position through a multi-byte string: whatever the offset,
+// the result must be both storable and within the cap.
+func TestTruncateError_ValidAtEveryCutOffset(t *testing.T) {
+	for pad := 0; pad < 8; pad++ {
+		in := strings.Repeat("a", maxLastErrorLen-pad) + strings.Repeat("🔥€ก", 50)
+		got := truncateError(in)
+		if !utf8.ValidString(got) {
+			t.Fatalf("pad=%d produced invalid UTF-8", pad)
+		}
+		if len(got) > maxLastErrorLen {
+			t.Fatalf("pad=%d produced %d bytes, over the %d cap", pad, len(got), maxLastErrorLen)
+		}
+	}
+}
+
+// A legitimate U+FFFD in the message is a real rune, not a broken tail, and
+// must survive rather than being eaten by the trim.
+func TestTruncateError_KeepsGenuineReplacementChar(t *testing.T) {
+	in := strings.Repeat("a", 100) + "\uFFFD"
+	if got := truncateError(in); got != in {
+		t.Errorf("a short message was altered: %q", got[len(got)-10:])
+	}
+}
+
+// ---- regression: outcome writes must survive cancellation ----
+
+// If ctx is cancelled while the provider call is in flight, the follow-up
+// write recording that failure must still land. Using the dead ctx loses
+// last_error silently and leaves the row looking untouched.
+func TestJob_RecordsOutcomeWhenCancelledDuringSend(t *testing.T) {
+	row := testRow("cancelled@example.com", 1)
+	store := &mockStore{claimBatches: [][]db.EmailOutbox{{row}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sender := &cancellingSender{cancel: cancel, err: errors.New("upstream timeout")}
+
+	j := newJob(store, sender)
+	_, _ = j.Run(ctx)
+
+	if len(store.rescheduled) != 1 {
+		t.Fatalf("rescheduled %d rows, want 1 — the outcome write was lost to the cancelled context", len(store.rescheduled))
+	}
+	if le := store.rescheduled[0].LastError; le == nil || !strings.Contains(*le, "upstream timeout") {
+		t.Errorf("LastError = %v, want the upstream reason recorded", le)
+	}
+}
+
+// ---- regression: prune must keep up with dispatch ----
+
+// One sweep is capped at pruneBatchSize, but the sweep only runs once an
+// hour. Capping the HOUR at pruneBatchSize rows put the ceiling at 1000
+// deletions/hour against a dispatch ceiling of 4800/hour, so email_outbox
+// grew without bound at any sustained volume. The sweep must drain.
+func TestJob_PruneDrainsTheBacklog(t *testing.T) {
+	store := &mockStore{pruneReturns: []int64{pruneBatchSize, pruneBatchSize, 7}}
+	j := newJob(store, &fakeSender{})
+
+	res, err := j.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(store.pruneCalls) != 3 {
+		t.Fatalf("pruned %d times, want 3 (two full batches then a short one)", len(store.pruneCalls))
+	}
+	if v, _ := attrValue(res.Attrs, "pruned"); v != int64(2*pruneBatchSize+7) {
+		t.Errorf("Attrs pruned = %v, want %d", v, 2*pruneBatchSize+7)
+	}
+}
+
+// Draining must still be bounded, or one sweep can hold the job lock for the
+// whole interval against a pathological backlog.
+func TestJob_PruneStopsAtTheBatchCap(t *testing.T) {
+	full := make([]int64, maxPruneBatches+10)
+	for i := range full {
+		full[i] = pruneBatchSize
+	}
+	store := &mockStore{pruneReturns: full}
+	j := newJob(store, &fakeSender{})
+
+	if _, err := j.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(store.pruneCalls) > maxPruneBatches {
+		t.Errorf("pruned %d times, want at most %d", len(store.pruneCalls), maxPruneBatches)
 	}
 }

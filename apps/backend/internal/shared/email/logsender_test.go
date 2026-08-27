@@ -43,17 +43,32 @@ func TestLogSender_DevelopmentLogsTheLink(t *testing.T) {
 	}
 }
 
-// Anything that is not exactly "production" is development. A typo in
-// APP_ENV must not silently turn logging off.
-func TestLogSender_UnknownEnvIsTreatedAsDevelopment(t *testing.T) {
-	for _, appEnv := range []string{"", "dev", "staging", "Production", "PRODUCTION"} {
-		t.Run(appEnv, func(t *testing.T) {
+// Only explicitly-named local environments may log a body. The previous rule
+// was "anything that is not exactly production is development", which meant a
+// staging or preview deployment with no RESEND_API_KEY shipped live
+// account-takeover tokens into aggregated logs. An allowlist fails closed: an
+// unrecognised APP_ENV gets the safe branch, not the loud one.
+func TestLogSender_OnlyExplicitLocalEnvsLogTheBody(t *testing.T) {
+	for _, appEnv := range []string{"development", "local", "test"} {
+		t.Run("logs/"+appEnv, func(t *testing.T) {
 			s, buf := newCapturingLogSender(appEnv)
 			if err := s.Send(context.Background(), testMessage()); err != nil {
 				t.Fatalf("Send returned %v, want nil for APP_ENV=%q", err, appEnv)
 			}
 			if !strings.Contains(buf.String(), secretToken) {
 				t.Errorf("APP_ENV=%q did not log the link.\nlog:\n%s", appEnv, buf.String())
+			}
+		})
+	}
+
+	// Everything else — an empty value, a typo, and every deployed-but-not-
+	// production environment — must withhold the body.
+	for _, appEnv := range []string{"", "staging", "preview", "prod", "Production", "PRODUCTION", "dev"} {
+		t.Run("withholds/"+appEnv, func(t *testing.T) {
+			s, buf := newCapturingLogSender(appEnv)
+			_ = s.Send(context.Background(), testMessage())
+			if strings.Contains(buf.String(), secretToken) {
+				t.Errorf("APP_ENV=%q leaked a live token into the log.\nlog:\n%s", appEnv, buf.String())
 			}
 		})
 	}

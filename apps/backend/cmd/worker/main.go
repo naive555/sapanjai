@@ -81,6 +81,10 @@ func main() {
 	w.Register(emaildispatch.New(
 		store, sender, log,
 		cfg.EmailDispatchInterval,
+		// The claim lease is sized off this, not off the interval: the worker
+		// cancels a run at WORKER_JOB_TIMEOUT, so it bounds how long a batch
+		// can still be in flight while another replica's run begins.
+		cfg.WorkerJobTimeout,
 		cfg.EmailDispatchBatchSize,
 		cfg.EmailMaxAttempts,
 		cfg.EmailOutboxRetention,
