@@ -53,11 +53,13 @@ type authStore interface {
 }
 
 // loginLimiter is the subset of *redis.Auth the service needs for login
-// rate limiting, narrowed for the same reason as authStore.
+// rate limiting plus re-priming the ban cache on a banned credential's
+// login attempt, narrowed for the same reason as authStore.
 type loginLimiter interface {
 	GetLoginAttempts(ctx context.Context, email string) (int, error)
 	IncrementLoginAttempts(ctx context.Context, email string) (int64, error)
 	ResetLoginAttempts(ctx context.Context, email string) error
+	Ban(ctx context.Context, userID uuid.UUID) error
 }
 
 // Service implements register/login/session-rotation, mirroring AuthService
@@ -160,6 +162,18 @@ func (s *Service) Login(ctx context.Context, email, password string) (db.User, e
 
 	if err := s.limiter.ResetLoginAttempts(ctx, email); err != nil {
 		return db.User{}, err
+	}
+
+	// Credentials check out, but a banned account never gets a session.
+	// Re-priming the Redis ban cache here — rather than only trusting
+	// whatever is already there — is what makes a Redis flush self-heal:
+	// the next login attempt from a banned user re-establishes the cache
+	// entry even if it was lost. See docs/11-admin-panel.md §4.
+	if user.BannedAt.Valid {
+		if err := s.limiter.Ban(ctx, user.ID); err != nil {
+			return db.User{}, err
+		}
+		return db.User{}, apperror.New(apperror.AccountSuspended)
 	}
 
 	s.audit.Record(ctx, auditlog.ActionUserLogin, &user.ID, nil, nil)

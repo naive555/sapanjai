@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -58,15 +59,37 @@ func (q *Queries) CreateMCPKey(ctx context.Context, arg CreateMCPKeyParams) (Mcp
 }
 
 const getMCPKeyByHash = `-- name: GetMCPKeyByHash :one
-SELECT id, organization_id, user_id, name, key_hash, scopes, last_used_at, expires_at, revoked_at, created_at FROM mcp_api_keys WHERE key_hash = $1
+SELECT mcp_api_keys.id, mcp_api_keys.organization_id, mcp_api_keys.user_id, mcp_api_keys.name, mcp_api_keys.key_hash, mcp_api_keys.scopes, mcp_api_keys.last_used_at, mcp_api_keys.expires_at, mcp_api_keys.revoked_at, mcp_api_keys.created_at, users.banned_at AS owner_banned_at
+FROM mcp_api_keys
+JOIN users ON users.id = mcp_api_keys.user_id
+WHERE mcp_api_keys.key_hash = $1
 `
+
+type GetMCPKeyByHashRow struct {
+	ID             uuid.UUID        `json:"id"`
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	UserID         uuid.UUID        `json:"user_id"`
+	Name           string           `json:"name"`
+	KeyHash        string           `json:"key_hash"`
+	Scopes         []string         `json:"scopes"`
+	LastUsedAt     pgtype.Timestamp `json:"last_used_at"`
+	ExpiresAt      pgtype.Timestamp `json:"expires_at"`
+	RevokedAt      pgtype.Timestamp `json:"revoked_at"`
+	CreatedAt      time.Time        `json:"created_at"`
+	OwnerBannedAt  pgtype.Timestamp `json:"owner_banned_at"`
+}
 
 // Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
 // key_hash carries a unique index (migration 00008), so this is a single
 // indexed read — no Redis cache in front of it, per Decision 1.
-func (q *Queries) GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKey, error) {
+//
+// Joined against users for owner_banned_at: an MCP PAT has no expiry of its
+// own, so a banned owner's key would otherwise keep authenticating forever
+// (docs/11-admin-panel.md §4). Extending this query rather than adding a
+// sibling keeps exactly one gateway auth path.
+func (q *Queries) GetMCPKeyByHash(ctx context.Context, keyHash string) (GetMCPKeyByHashRow, error) {
 	row := q.db.QueryRow(ctx, getMCPKeyByHash, keyHash)
-	var i McpApiKey
+	var i GetMCPKeyByHashRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrganizationID,
@@ -78,6 +101,7 @@ func (q *Queries) GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKe
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.OwnerBannedAt,
 	)
 	return i, err
 }

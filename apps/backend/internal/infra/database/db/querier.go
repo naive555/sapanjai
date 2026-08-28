@@ -30,6 +30,7 @@ type Querier interface {
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
+	CountSuperadmins(ctx context.Context) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
 	// scopes ($6) is nullable: a nil slice binds NULL (no independent
@@ -55,7 +56,12 @@ type Querier interface {
 	// Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
 	// key_hash carries a unique index (migration 00008), so this is a single
 	// indexed read — no Redis cache in front of it, per Decision 1.
-	GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKey, error)
+	//
+	// Joined against users for owner_banned_at: an MCP PAT has no expiry of its
+	// own, so a banned owner's key would otherwise keep authenticating forever
+	// (docs/11-admin-panel.md §4). Extending this query rather than adding a
+	// sibling keeps exactly one gateway auth path.
+	GetMCPKeyByHash(ctx context.Context, keyHash string) (GetMCPKeyByHashRow, error)
 	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
@@ -103,6 +109,14 @@ type Querier interface {
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	// Both $2 and $3 are nullable; an unban passes NULL/NULL. users.banned_at
+	// is the durable source of truth behind the Redis banned:<userId> cache
+	// (see internal/infra/redis/auth.go and internal/middleware.Guards.verify).
+	SetUserBan(ctx context.Context, arg SetUserBanParams) error
+	// $2 is nullable: NULL revokes platform staff status (cmd/grantadmin's
+	// "-role none"), 'superadmin'/'support' grants it. Enforced by the
+	// users_platform_role_check CHECK constraint from migration 00011.
+	SetUserPlatformRole(ctx context.Context, arg SetUserPlatformRoleParams) error
 	// Best-effort bookkeeping: called after a successful RequireMCPKey
 	// authentication. A failure to stamp must never fail the MCP request, so
 	// the caller logs and swallows any error from this query.

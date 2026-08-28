@@ -66,6 +66,40 @@ const (
 	// builds a CallToolResult carrying the concrete retry-after instead of
 	// this generic message.
 	RateLimited = "RATE_LIMITED"
+
+	// AccountSuspended is POST /auth/login's response to a banned
+	// credential: 403, since the login attempt never issues a token.
+	// Contrast the 401 "Account suspended" that internal/middleware.Guards
+	// .verify returns for an already-issued, now-banned token — that
+	// asymmetry is intentional (docs/11-admin-panel.md §4) and is not
+	// unified with this code.
+	AccountSuspended = "ACCOUNT_SUSPENDED"
+
+	// ReauthFailed is returned when a destructive admin operation's
+	// password-confirmation step (docs/11-admin-panel.md D4) fails.
+	ReauthFailed = "REAUTH_FAILED"
+
+	// CannotTargetSelf guards admin mutations a staff member must not be
+	// able to perform on their own account (ban, platform-role change).
+	CannotTargetSelf = "CANNOT_TARGET_SELF"
+
+	// TargetIsPlatformStaff guards against banning or deleting a platform
+	// staff account directly — it must be demoted first.
+	TargetIsPlatformStaff = "TARGET_IS_PLATFORM_STAFF"
+
+	// SuperadminLimit guards against demoting/removing the last superadmin.
+	SuperadminLimit = "SUPERADMIN_LIMIT"
+
+	// PlanInUse guards against deleting a plan with active subscriptions.
+	PlanInUse = "PLAN_IN_USE"
+
+	// ImpersonationReadOnly is returned when an impersonated session (see
+	// docs/11-admin-panel.md §5) attempts a non-GET/HEAD/OPTIONS request.
+	ImpersonationReadOnly = "IMPERSONATION_READ_ONLY"
+
+	// CannotImpersonateStaff guards against impersonating a platform staff
+	// account, closing off impersonation as a privilege-escalation ladder.
+	CannotImpersonateStaff = "CANNOT_IMPERSONATE_STAFF"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -102,6 +136,15 @@ var Map = map[string]mapping{
 	VerificationResendTooSoon: {429, "Verification email already sent, try again in a few minutes"},
 
 	InvalidResetToken: {400, "Invalid or expired password reset token"},
+
+	AccountSuspended:       {403, "Account suspended"},
+	ReauthFailed:           {403, "Password confirmation failed"},
+	CannotTargetSelf:       {403, "Cannot perform this action on your own account"},
+	TargetIsPlatformStaff:  {409, "Demote this account before banning or deleting it"},
+	SuperadminLimit:        {409, "Too many superadmin accounts"},
+	PlanInUse:              {409, "Plan has active subscriptions"},
+	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
+	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

@@ -30,14 +30,23 @@ type tokenVerifier interface {
 	VerifyAccessToken(token string) (uuid.UUID, string, error)
 }
 
-// blacklistChecker is the subset of *redis.Auth the guards depend on.
+// blacklistChecker is the subset of *redis.Auth the guards depend on: the
+// access-token blacklist and the ban cache behind Guards.verify's durable
+// ban check (see its doc comment).
 type blacklistChecker interface {
 	IsBlacklisted(ctx context.Context, token string) (bool, error)
+	IsBanned(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
-// membershipStore is the subset of *database.Store the org guard depends on.
-type membershipStore interface {
+// userStore is the subset of *database.Store the guards depend on: org
+// membership lookups (RequireOrg/RequirePermission) plus a fresh per-request
+// user row (RequirePlatformRole, see platform.go — platform_role is
+// deliberately not a JWT claim, so it is re-read from the database on every
+// admin request). Named for what it now covers; it started as
+// membershipStore before RequirePlatformRole needed GetUserByID.
+type userStore interface {
 	GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error)
 }
 
 // permissionChecker is the subset of *rbac.Service the RequirePermission
@@ -52,12 +61,12 @@ type permissionChecker interface {
 type Guards struct {
 	token     tokenVerifier
 	blacklist blacklistChecker
-	store     membershipStore
+	store     userStore
 	rbac      permissionChecker
 }
 
 // NewGuards builds a Guards from its narrow dependencies.
-func NewGuards(token tokenVerifier, blacklist blacklistChecker, store membershipStore, rbac permissionChecker) *Guards {
+func NewGuards(token tokenVerifier, blacklist blacklistChecker, store userStore, rbac permissionChecker) *Guards {
 	return &Guards{token: token, blacklist: blacklist, store: store, rbac: rbac}
 }
 
@@ -66,6 +75,30 @@ func NewGuards(token tokenVerifier, blacklist blacklistChecker, store membership
 // BEFORE signature verification) -> 401 "Token revoked"; invalid/expired
 // signature or missing subject -> 401 "Unauthorized". On success it stores
 // the caller's user id and email on the echo.Context.
+//
+// A banned user is rejected last, with 401 "Account suspended" — 401 rather
+// than 403 because the credential is no longer usable and the frontend's
+// 401 path already clears the session cleanly (contrast POST /auth/login,
+// which returns 403 ACCOUNT_SUSPENDED for the same condition; see
+// docs/11-admin-panel.md §4, and do not unify the two). The ban check runs
+// AFTER signature verification because it is keyed by user id, which is
+// only trustworthy once the signature is verified — checking an unverified
+// claim would let a forged-but-unsigned token probe the ban cache. That
+// ordering costs a second Redis round trip on every request rather than
+// pipelining it with the blacklist read above: the blacklist key is keyed
+// by token and can be read before verification, but the ban key needs the
+// verified subject, so the two reads cannot be issued in the same
+// pipeline without first decoding the subject from an unverified token —
+// exactly the kind of contortion this function is documented not to take.
+//
+// Durability caveat: users.banned_at is the source of truth and
+// banned:<userId> in Redis (internal/infra/redis.Auth) is a fast-path
+// cache with no TTL. Nothing re-primes the cache from the database on a
+// Redis flush except a login attempt (auth.Service.Login). Worst case
+// after a flush is that a banned user's already-issued access token keeps
+// working until it expires — bounded by JWT_ACCESS_EXPIRES_IN (<=15 min),
+// because banning also revokes every session so the refresh path is
+// already dead. That bound is why no reaper job exists.
 func (g *Guards) verify(c echo.Context) error {
 	token := bearerToken(c)
 	if token == "" {
@@ -83,6 +116,14 @@ func (g *Guards) verify(c echo.Context) error {
 	userID, email, err := g.token.VerifyAccessToken(token)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
+	}
+
+	banned, err := g.blacklist.IsBanned(c.Request().Context(), userID)
+	if err != nil {
+		return err
+	}
+	if banned {
+		return echo.NewHTTPError(http.StatusUnauthorized, "Account suspended")
 	}
 
 	c.Set(ctxUserID, userID)

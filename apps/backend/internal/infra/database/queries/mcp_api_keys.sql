@@ -15,7 +15,15 @@ SELECT * FROM mcp_api_keys WHERE organization_id = $1 AND name = $2;
 -- Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
 -- key_hash carries a unique index (migration 00008), so this is a single
 -- indexed read — no Redis cache in front of it, per Decision 1.
-SELECT * FROM mcp_api_keys WHERE key_hash = $1;
+--
+-- Joined against users for owner_banned_at: an MCP PAT has no expiry of its
+-- own, so a banned owner's key would otherwise keep authenticating forever
+-- (docs/11-admin-panel.md §4). Extending this query rather than adding a
+-- sibling keeps exactly one gateway auth path.
+SELECT mcp_api_keys.*, users.banned_at AS owner_banned_at
+FROM mcp_api_keys
+JOIN users ON users.id = mcp_api_keys.user_id
+WHERE mcp_api_keys.key_hash = $1;
 
 -- name: ListMCPKeysByOrg :many
 SELECT * FROM mcp_api_keys WHERE organization_id = $1 ORDER BY created_at ASC;

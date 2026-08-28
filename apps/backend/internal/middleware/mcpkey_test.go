@@ -18,13 +18,13 @@ import (
 // ---- hand-mocked dependencies ----
 
 type mockMCPKeyLookup struct {
-	getByHash        func(ctx context.Context, keyHash string) (db.McpApiKey, error)
+	getByHash        func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error)
 	stampLastUsed    func(ctx context.Context, id uuid.UUID) error
 	stampCallCount   int
 	lastStampedKeyID uuid.UUID
 }
 
-func (m *mockMCPKeyLookup) GetMCPKeyByHash(ctx context.Context, keyHash string) (db.McpApiKey, error) {
+func (m *mockMCPKeyLookup) GetMCPKeyByHash(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) {
 	return m.getByHash(ctx, keyHash)
 }
 
@@ -59,8 +59,8 @@ func newResolver(t *testing.T, want *fakePrincipal) (MCPPrincipalResolver, *int)
 	}, &calls
 }
 
-func validMCPKeyRow() db.McpApiKey {
-	return db.McpApiKey{
+func validMCPKeyRow() db.GetMCPKeyByHashRow {
+	return db.GetMCPKeyByHashRow{
 		ID:             uuid.New(),
 		OrganizationID: uuid.New(),
 		UserID:         uuid.New(),
@@ -96,8 +96,8 @@ func TestRequireMCPKey_MalformedAuthorizationHeader(t *testing.T) {
 
 func TestRequireMCPKey_UnknownHash(t *testing.T) {
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) {
-			return db.McpApiKey{}, pgx.ErrNoRows
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) {
+			return db.GetMCPKeyByHashRow{}, pgx.ErrNoRows
 		},
 	}
 	resolve, _ := newResolver(t, &fakePrincipal{})
@@ -115,8 +115,8 @@ func TestRequireMCPKey_UnknownHash(t *testing.T) {
 func TestRequireMCPKey_StoreErrorPropagates(t *testing.T) {
 	wantErr := errors.New("db is down")
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) {
-			return db.McpApiKey{}, wantErr
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) {
+			return db.GetMCPKeyByHashRow{}, wantErr
 		},
 	}
 	resolve, _ := newResolver(t, &fakePrincipal{})
@@ -134,7 +134,7 @@ func TestRequireMCPKey_RevokedKey(t *testing.T) {
 	row := validMCPKeyRow()
 	row.RevokedAt = pgtype.Timestamp{Time: time.Now().Add(-time.Hour), Valid: true}
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 	resolve, calls := newResolver(t, &fakePrincipal{})
 	c, _ := newTestContext(http.MethodPost, "/mcp/"+uuid.NewString(), map[string]string{
@@ -152,7 +152,7 @@ func TestRequireMCPKey_ExpiredKey(t *testing.T) {
 	row := validMCPKeyRow()
 	row.ExpiresAt = pgtype.Timestamp{Time: time.Now().Add(-time.Minute), Valid: true}
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 	resolve, calls := newResolver(t, &fakePrincipal{})
 	c, _ := newTestContext(http.MethodPost, "/mcp/"+uuid.NewString(), map[string]string{
@@ -166,11 +166,37 @@ func TestRequireMCPKey_ExpiredKey(t *testing.T) {
 	}
 }
 
+func TestRequireMCPKey_BannedOwner(t *testing.T) {
+	// An MCP PAT has no expiry of its own, so a banned owner's key would
+	// otherwise authenticate forever — the strictly worse hole
+	// docs/11-admin-panel.md §4 calls out. The rejection must be the same
+	// indistinguishable 401 as every other credential failure: no
+	// "account suspended" message, no distinct WWW-Authenticate error.
+	row := validMCPKeyRow()
+	row.OwnerBannedAt = pgtype.Timestamp{Time: time.Now().Add(-time.Hour), Valid: true}
+	store := &mockMCPKeyLookup{
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
+	}
+	resolve, calls := newResolver(t, &fakePrincipal{})
+	c, rec := newTestContext(http.MethodPost, "/mcp/"+uuid.NewString(), map[string]string{
+		"Authorization": "Bearer sk_live_test-token",
+	})
+
+	err := RequireMCPKey(store, resolve, nil)(okNext)(c)
+	assertHTTPError(t, err, http.StatusUnauthorized, "Unauthorized")
+	if *calls != 0 {
+		t.Errorf("resolve called %d times, want 0 for a banned owner", *calls)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="sapanjai", error="invalid_token"` {
+		t.Errorf("WWW-Authenticate = %q, want the same invalid_token variant as a revoked/expired/unknown key", got)
+	}
+}
+
 func TestRequireMCPKey_FutureExpiryIsAccepted(t *testing.T) {
 	row := validMCPKeyRow()
 	row.ExpiresAt = pgtype.Timestamp{Time: time.Now().Add(time.Hour), Valid: true}
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 	want := &fakePrincipal{userID: row.UserID}
 	resolve, calls := newResolver(t, want)
@@ -199,7 +225,7 @@ func TestRequireMCPKey_FutureExpiryIsAccepted(t *testing.T) {
 func TestRequireMCPKey_HappyPath_PrincipalOnRequestContext(t *testing.T) {
 	row := validMCPKeyRow()
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) {
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) {
 			if keyHash != hashMCPToken("sk_live_test-token") {
 				t.Errorf("looked up hash %q, want the sha256 of the presented token", keyHash)
 			}
@@ -246,7 +272,7 @@ func TestRequireMCPKey_HappyPath_PrincipalOnRequestContext(t *testing.T) {
 func TestRequireMCPKey_StampFailureNeverFailsTheRequest(t *testing.T) {
 	row := validMCPKeyRow()
 	store := &mockMCPKeyLookup{
-		getByHash:     func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash:     func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 		stampLastUsed: func(ctx context.Context, id uuid.UUID) error { return errors.New("stamp write failed") },
 	}
 	resolve, _ := newResolver(t, &fakePrincipal{userID: row.UserID})
@@ -263,7 +289,7 @@ func TestRequireMCPKey_StampFailureNeverFailsTheRequest(t *testing.T) {
 func TestRequireMCPKey_ResolveErrorPropagates(t *testing.T) {
 	row := validMCPKeyRow()
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 	wantErr := errors.New("rbac lookup failed")
 	resolve := func(ctx context.Context, userID, organizationID uuid.UUID, scopes []string) (any, error) {
@@ -286,7 +312,7 @@ func TestRequireMCPKey_ScopesPassedThroughToResolver(t *testing.T) {
 	row := validMCPKeyRow()
 	row.Scopes = []string{"connector:read"}
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 
 	var gotScopes []string
@@ -312,7 +338,7 @@ func TestRequireMCPKey_ScopesPassedThroughToResolver(t *testing.T) {
 func TestRequireMCPKey_HappyPath_KeyNameOnRequestContext(t *testing.T) {
 	row := validMCPKeyRow() // Name: "test-key"
 	store := &mockMCPKeyLookup{
-		getByHash: func(ctx context.Context, keyHash string) (db.McpApiKey, error) { return row, nil },
+		getByHash: func(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error) { return row, nil },
 	}
 	resolve, _ := newResolver(t, &fakePrincipal{userID: row.UserID})
 	c, _ := newTestContext(http.MethodPost, "/mcp/"+uuid.NewString(), map[string]string{

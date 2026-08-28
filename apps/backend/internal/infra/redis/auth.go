@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,12 +27,14 @@ func NewAuth(client *redis.Client, prefix string) *Auth {
 	return &Auth{client: client, prefix: prefix}
 }
 
-// blacklistKey and loginAttemptsKey are the single place each key shape is
-// built, so the prefix can never be applied on the write path and forgotten
-// on the read path.
+// blacklistKey, loginAttemptsKey, and banKey are the single place each key
+// shape is built, so the prefix can never be applied on the write path and
+// forgotten on the read path.
 func (a *Auth) blacklistKey(token string) string { return a.prefix + "blacklist:" + token }
 
 func (a *Auth) loginAttemptsKey(email string) string { return a.prefix + "login:attempts:" + email }
+
+func (a *Auth) banKey(userID uuid.UUID) string { return a.prefix + "banned:" + userID.String() }
 
 // BlacklistToken marks an access token as revoked for ttl, key
 // "<prefix>blacklist:<token>".
@@ -68,6 +71,29 @@ func (a *Auth) IncrementLoginAttempts(ctx context.Context, email string) (int64,
 // ResetLoginAttempts clears the failed-login counter for email.
 func (a *Auth) ResetLoginAttempts(ctx context.Context, email string) error {
 	return a.client.Del(ctx, a.loginAttemptsKey(email)).Err()
+}
+
+// Ban marks a user as banned, key "<prefix>banned:<userId>", with no TTL:
+// this is a fast-path cache in front of the durable users.banned_at column
+// (docs/11-admin-panel.md §4/D3), and an entry that silently expired would
+// let a Redis-only ban lapse behind the DB's back. Unban is the only thing
+// that clears it.
+func (a *Auth) Ban(ctx context.Context, userID uuid.UUID) error {
+	return a.client.Set(ctx, a.banKey(userID), "1", 0).Err()
+}
+
+// Unban clears the ban cache entry for a user.
+func (a *Auth) Unban(ctx context.Context, userID uuid.UUID) error {
+	return a.client.Del(ctx, a.banKey(userID)).Err()
+}
+
+// IsBanned reports whether the given user is cached as banned.
+func (a *Auth) IsBanned(ctx context.Context, userID uuid.UUID) (bool, error) {
+	n, err := a.client.Exists(ctx, a.banKey(userID)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // GetLoginAttempts returns the current failed-login count for email, or 0 if

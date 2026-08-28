@@ -41,7 +41,7 @@ type mcpKeyNameCtxKey struct{}
 // narrowed so unit tests can hand-mock it without the full db.Querier
 // surface.
 type mcpKeyLookup interface {
-	GetMCPKeyByHash(ctx context.Context, keyHash string) (db.McpApiKey, error)
+	GetMCPKeyByHash(ctx context.Context, keyHash string) (db.GetMCPKeyByHashRow, error)
 	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
@@ -84,6 +84,15 @@ func RequireMCPKey(store mcpKeyLookup, resolve MCPPrincipalResolver, log *slog.L
 				return mcpUnauthorized(c, "invalid_token")
 			}
 			if row.ExpiresAt.Valid && row.ExpiresAt.Time.Before(time.Now()) {
+				return mcpUnauthorized(c, "invalid_token")
+			}
+			// A banned owner is rejected with the same indistinguishable
+			// 401 as a revoked/expired/unknown key — never a distinguishing
+			// message. This matters more here than on the JWT path: an MCP
+			// PAT has no expiry of its own, so without this check a banned
+			// user's key would otherwise authenticate forever
+			// (docs/11-admin-panel.md §4).
+			if row.OwnerBannedAt.Valid {
 				return mcpUnauthorized(c, "invalid_token")
 			}
 

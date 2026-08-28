@@ -126,11 +126,14 @@ type Session struct {
 }
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	DisplayName  *string   `json:"display_name"`
-	IsVerified   bool      `json:"is_verified"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           uuid.UUID        `json:"id"`
+	Email        string           `json:"email"`
+	PasswordHash string           `json:"password_hash"`
+	DisplayName  *string          `json:"display_name"`
+	IsVerified   bool             `json:"is_verified"`
+	CreatedAt    time.Time        `json:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+	PlatformRole *string          `json:"platform_role"`
+	BannedAt     pgtype.Timestamp `json:"banned_at"`
+	BanReason    *string          `json:"ban_reason"`
 }

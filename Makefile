@@ -1,4 +1,4 @@
-.PHONY: up down dev api web worker build test lint tidy fmt migrate migrate-down migrate-status sqlc seed swagger
+.PHONY: up down dev api web worker build test lint tidy fmt migrate migrate-down migrate-status sqlc seed admin-grant swagger
 
 ## Start Postgres + Redis in the background
 up:
@@ -42,6 +42,13 @@ migrate-status:
 ## Seed default plans (free / pro / enterprise) — idempotent
 seed:
 	cd apps/backend && go run ./cmd/seed
+
+## Grant (or revoke) a platform role for an existing user, e.g.
+##   make admin-grant EMAIL=user@example.com ROLE=superadmin
+##   make admin-grant EMAIL=user@example.com ROLE=none   # revoke
+## Promote-only: never creates a user or sets a password.
+admin-grant:
+	cd apps/backend && go run ./cmd/grantadmin -email "$(EMAIL)" -role "$(ROLE)"
 
 ## Run the Next.js dev server
 web:

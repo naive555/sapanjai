@@ -26,18 +26,34 @@ func (m *mockTokenVerifier) VerifyAccessToken(token string) (uuid.UUID, string, 
 
 type mockBlacklist struct {
 	isBlacklisted func(ctx context.Context, token string) (bool, error)
+	isBanned      func(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 func (m *mockBlacklist) IsBlacklisted(ctx context.Context, token string) (bool, error) {
 	return m.isBlacklisted(ctx, token)
 }
 
+func (m *mockBlacklist) IsBanned(ctx context.Context, userID uuid.UUID) (bool, error) {
+	if m.isBanned == nil {
+		return false, nil
+	}
+	return m.isBanned(ctx, userID)
+}
+
 type mockMembershipStore struct {
 	getMembership func(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error)
+	getUserByID   func(ctx context.Context, id uuid.UUID) (db.User, error)
 }
 
 func (m *mockMembershipStore) GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
 	return m.getMembership(ctx, arg)
+}
+
+func (m *mockMembershipStore) GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error) {
+	if m.getUserByID == nil {
+		return db.User{}, nil
+	}
+	return m.getUserByID(ctx, id)
 }
 
 type mockPermissionChecker struct {
@@ -176,6 +192,88 @@ func TestRequireAuth_Success(t *testing.T) {
 	}
 	if gotEmail != "user@example.com" {
 		t.Errorf("UserEmail(c) = %q, want %q", gotEmail, "user@example.com")
+	}
+}
+
+func TestRequireAuth_BannedUser(t *testing.T) {
+	userID := uuid.New()
+	g := NewGuards(
+		&mockTokenVerifier{
+			verify: func(token string) (uuid.UUID, string, error) {
+				return userID, "user@example.com", nil
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isBanned: func(ctx context.Context, gotUserID uuid.UUID) (bool, error) {
+				if gotUserID != userID {
+					t.Errorf("IsBanned called with %v, want %v", gotUserID, userID)
+				}
+				return true, nil
+			},
+		},
+		&mockMembershipStore{},
+		&mockPermissionChecker{},
+	)
+	c, _ := newTestContext(http.MethodGet, "/", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	err := g.RequireAuth()(okNext)(c)
+	assertHTTPError(t, err, http.StatusUnauthorized, "Account suspended")
+}
+
+func TestRequireAuth_BanCheckedAfterSignatureVerification(t *testing.T) {
+	// A banned check must never run for a token whose signature fails to
+	// verify — there is no trustworthy user id to check yet.
+	g := NewGuards(
+		&mockTokenVerifier{
+			verify: func(token string) (uuid.UUID, string, error) {
+				return uuid.Nil, "", errors.New("bad signature")
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isBanned: func(ctx context.Context, userID uuid.UUID) (bool, error) {
+				t.Fatal("IsBanned should not be called when signature verification fails")
+				return false, nil
+			},
+		},
+		&mockMembershipStore{},
+		&mockPermissionChecker{},
+	)
+	c, _ := newTestContext(http.MethodGet, "/", map[string]string{
+		"Authorization": "Bearer some.jwt.token",
+	})
+
+	err := g.RequireAuth()(okNext)(c)
+	assertHTTPError(t, err, http.StatusUnauthorized, "Unauthorized")
+}
+
+func TestRequireAuth_IsBannedErrorPropagates(t *testing.T) {
+	banErr := errors.New("redis down")
+	g := NewGuards(
+		&mockTokenVerifier{
+			verify: func(token string) (uuid.UUID, string, error) {
+				return uuid.New(), "user@example.com", nil
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isBanned: func(ctx context.Context, userID uuid.UUID) (bool, error) {
+				return false, banErr
+			},
+		},
+		&mockMembershipStore{},
+		&mockPermissionChecker{},
+	)
+	c, _ := newTestContext(http.MethodGet, "/", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	err := g.RequireAuth()(okNext)(c)
+	if !errors.Is(err, banErr) {
+		t.Fatalf("expected the raw error to propagate, got %v", err)
 	}
 }
 

@@ -37,10 +37,18 @@ func (f *fakeBlacklistChecker) IsBlacklisted(ctx context.Context, token string) 
 	return false, nil
 }
 
+func (f *fakeBlacklistChecker) IsBanned(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 type fakeMembershipStore struct{}
 
 func (f *fakeMembershipStore) GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
 	return db.Membership{ID: uuid.New(), UserID: arg.UserID, OrganizationID: arg.OrganizationID, Role: "member"}, nil
+}
+
+func (f *fakeMembershipStore) GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error) {
+	return db.User{ID: id}, nil
 }
 
 // fakePermissionChecker grants exactly the actions listed in granted,
