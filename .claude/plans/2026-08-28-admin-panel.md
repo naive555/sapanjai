@@ -67,6 +67,11 @@ cd apps/frontend && pnpm lint && pnpm exec tsc --noEmit && pnpm test
 
 **Done when:** all green, with the backend test count recorded in the phase notes.
 
+**Baseline recorded 2026-08-28** (commit `eaaefbc`, branch `dev`) — all green:
+`make lint` 0 issues · `make test` all packages ok, **548 passing Go tests**
+(including subtests) · frontend `pnpm lint` clean · `pnpm exec tsc --noEmit`
+clean · `pnpm test` **84 passing across 14 files**.
+
 ### Task 0.2 — Write the design doc
 
 **Create:** `docs/11-admin-panel.md`.
@@ -74,6 +79,12 @@ cd apps/frontend && pnpm lint && pnpm exec tsc --noEmit && pnpm test
 Content: §0 of this plan (framing, the seven-finding table, non-goals), the role/permission matrix from §2.1, the impersonation threat model from §4.1, and the "explicitly deferred" list from §8. This is the document a future reader is pointed at from `CLAUDE.md`; this plan file is the throwaway execution script.
 
 **Done when:** doc exists and `docs/` numbering is contiguous (`11-` follows `10-transactional-email.md`).
+
+**Done 2026-08-28** — `docs/11-admin-panel.md` written with §1 framing, §2 the
+locked decisions, §3 the seven-finding table, §4 the role/permission matrix
+(plus the three places a ban is enforced), §5 the impersonation threat model,
+§6 the deferred list, §7 the hard non-goals. Task 4.1's "write the threat model
+into the doc first" is therefore already satisfied.
 
 > **GATE — stop and confirm with the owner before Phase 1.**
 
