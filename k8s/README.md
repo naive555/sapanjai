@@ -42,7 +42,7 @@ Env reaches every workload through `envFrom`, combining two objects:
 
 | Object | Kind | Holds |
 | --- | --- | --- |
-| `sapanjai-config` | ConfigMap | `APP_NAME`, `APP_ENV=production`, `LOG_LEVEL`, `PORT`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN` |
+| `sapanjai-config` | ConfigMap | `APP_NAME`, `APP_ENV=production`, `LOG_LEVEL`, `PORT`, `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`, `REDIS_KEY_PREFIX` |
 | `sapanjai-secret` | Secret | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (min 32 chars each), `CONNECTOR_MASTER_KEY` (base64, exactly 32 bytes), `REDIS_URL` |
 | `postgres-credentials` | Secret | `username`, `password`, `dbname` |
 

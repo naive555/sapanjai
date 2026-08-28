@@ -469,6 +469,7 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | `APP_NAME` | sapanjai-api | logger service name |
 | `DATABASE_URL` | — | `postgres://user:pass@host:5432/sapanjai` |
 | `REDIS_URL` | — | required at boot |
+| `REDIS_KEY_PREFIX` | `sapanjai:` | prepended to every Redis key (blacklist, login attempts, verification/reset tokens, MCP rate-limit buckets, worker job locks) so a shared Redis instance cannot collide with another app's keys. Must be identical on api and worker. Explicit empty string opts out. |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | min 32 chars |
 | `CONNECTOR_MASTER_KEY` | — | base64, exactly 32 bytes (`openssl rand -base64 32`); master key wrapping every connector's envelope-encryption data key |
 | `JWT_ACCESS_EXPIRES_IN` | 15m | duration string |

@@ -343,6 +343,7 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `DATABASE_URL` | — | **required** |
 | `DATABASE_USER` / `DATABASE_PASSWORD` / `DATABASE_NAME` | `username` / `password` / `sapanjai` | also configure the compose `db` container and the container-side `DATABASE_URL` |
 | `REDIS_URL` | — | **required** |
+| `REDIS_KEY_PREFIX` | `sapanjai:` | prepended to every Redis key, so an instance shared with another app cannot collide with ours. Must match on api and worker — they meet on the job locks and the token blacklist. Changing it orphans every live key (in-flight verification/reset links stop resolving); the orphans expire on their own TTLs. Set explicitly empty to opt out. |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | — | **required**, min 32 chars each |
 | `CONNECTOR_MASTER_KEY` | — | **required**, base64 of exactly 32 bytes — generate with `openssl rand -base64 32`. Wraps every connector's envelope-encryption data key; the value in `.env.example` is a working dev key, not a placeholder to leave in place for anything real. |
 | `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |

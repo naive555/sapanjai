@@ -34,19 +34,40 @@ const resetRequestCooldown = 15 * time.Minute
 // docs/07-sheets-adapter-decisions.md §1).
 type Email struct {
 	client *redis.Client
+	prefix string
 }
 
-// NewEmail wraps an already-connected client.
-func NewEmail(client *redis.Client) *Email {
-	return &Email{client: client}
+// NewEmail wraps an already-connected client. prefix namespaces every key
+// this type touches (config.Config.RedisKeyPrefix); see NewAuth.
+func NewEmail(client *redis.Client, prefix string) *Email {
+	return &Email{client: client, prefix: prefix}
+}
+
+// Each key shape is built in exactly one place so the prefix cannot be
+// applied when a token is stored and forgotten when it is redeemed — which
+// would silently break every verification and reset link.
+func (e *Email) verifyTokenKey(tokenHash string) string {
+	return e.prefix + "verify:email:" + tokenHash
+}
+
+func (e *Email) verifyResendKey(userID uuid.UUID) string {
+	return e.prefix + "verify:resend:" + userID.String()
+}
+
+func (e *Email) resetTokenKey(tokenHash string) string {
+	return e.prefix + "reset:password:" + tokenHash
+}
+
+func (e *Email) resetRequestKey(email string) string {
+	return e.prefix + "reset:request:" + email
 }
 
 // SetVerifyToken stores tokenHash -> userID for 24h, key
-// "verify:email:<tokenHash>". tokenHash is the caller's sha256 hex digest
+// "<prefix>verify:email:<tokenHash>". tokenHash is the caller's sha256 hex digest
 // of the raw token that was actually emailed — the raw token itself never
 // reaches Redis.
 func (e *Email) SetVerifyToken(ctx context.Context, tokenHash string, userID uuid.UUID) error {
-	return e.client.Set(ctx, "verify:email:"+tokenHash, userID.String(), verifyTokenTTL).Err()
+	return e.client.Set(ctx, e.verifyTokenKey(tokenHash), userID.String(), verifyTokenTTL).Err()
 }
 
 // ConsumeVerifyToken atomically reads and deletes the key for tokenHash
@@ -55,7 +76,7 @@ func (e *Email) SetVerifyToken(ctx context.Context, tokenHash string, userID uui
 // observe found == true. found is false when the key was absent or already
 // expired/consumed.
 func (e *Email) ConsumeVerifyToken(ctx context.Context, tokenHash string) (userID uuid.UUID, found bool, err error) {
-	val, err := e.client.GetDel(ctx, "verify:email:"+tokenHash).Result()
+	val, err := e.client.GetDel(ctx, e.verifyTokenKey(tokenHash)).Result()
 	if errors.Is(err, redis.Nil) {
 		return uuid.Nil, false, nil
 	}
@@ -75,7 +96,7 @@ func (e *Email) ConsumeVerifyToken(ctx context.Context, tokenHash string) (userI
 // cooldown was already active — one round trip instead of an
 // EXISTS-then-SET pair, and free of the race between them.
 func (e *Email) MarkVerifyResent(ctx context.Context, userID uuid.UUID) (bool, error) {
-	ok, err := e.client.SetNX(ctx, "verify:resend:"+userID.String(), "1", verifyResendCooldown).Result()
+	ok, err := e.client.SetNX(ctx, e.verifyResendKey(userID), "1", verifyResendCooldown).Result()
 	if err != nil {
 		return false, err
 	}
@@ -83,11 +104,11 @@ func (e *Email) MarkVerifyResent(ctx context.Context, userID uuid.UUID) (bool, e
 }
 
 // SetResetToken stores tokenHash -> userID for 1h, key
-// "reset:password:<tokenHash>". tokenHash is the caller's sha256 hex digest
+// "<prefix>reset:password:<tokenHash>". tokenHash is the caller's sha256 hex digest
 // of the raw token that was actually emailed — the raw token itself never
 // reaches Redis, same precedent as SetVerifyToken.
 func (e *Email) SetResetToken(ctx context.Context, tokenHash string, userID uuid.UUID) error {
-	return e.client.Set(ctx, "reset:password:"+tokenHash, userID.String(), resetTokenTTL).Err()
+	return e.client.Set(ctx, e.resetTokenKey(tokenHash), userID.String(), resetTokenTTL).Err()
 }
 
 // ConsumeResetToken atomically reads and deletes the key for tokenHash
@@ -95,7 +116,7 @@ func (e *Email) SetResetToken(ctx context.Context, tokenHash string, userID uuid
 // race — same reasoning as ConsumeVerifyToken. found is false when the key
 // was absent or already expired/consumed.
 func (e *Email) ConsumeResetToken(ctx context.Context, tokenHash string) (userID uuid.UUID, found bool, err error) {
-	val, err := e.client.GetDel(ctx, "reset:password:"+tokenHash).Result()
+	val, err := e.client.GetDel(ctx, e.resetTokenKey(tokenHash)).Result()
 	if errors.Is(err, redis.Nil) {
 		return uuid.Nil, false, nil
 	}
@@ -121,7 +142,7 @@ func (e *Email) ConsumeResetToken(ctx context.Context, tokenHash string) (userID
 // is also what makes the unknown-address path indistinguishable from the
 // known one, matching the existing login:attempts:<email> convention.
 func (e *Email) MarkResetRequested(ctx context.Context, email string) (bool, error) {
-	ok, err := e.client.SetNX(ctx, "reset:request:"+email, "1", resetRequestCooldown).Result()
+	ok, err := e.client.SetNX(ctx, e.resetRequestKey(email), "1", resetRequestCooldown).Result()
 	if err != nil {
 		return false, err
 	}

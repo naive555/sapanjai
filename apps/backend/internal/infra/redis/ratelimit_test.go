@@ -31,7 +31,7 @@ func newTestLimiter(t *testing.T, perMinute int) (*appredis.RateLimiter, string)
 	t.Cleanup(func() { _ = client.Close() })
 
 	connectorID := "ratelimit-test-" + uuid.NewString()
-	return appredis.NewRateLimiter(client, perMinute), connectorID
+	return appredis.NewRateLimiter(client, perMinute, testKeyPrefix), connectorID
 }
 
 func TestRateLimiter_AllowsUnderBudget(t *testing.T) {

@@ -18,6 +18,11 @@ import (
 
 const minSecretLen = 32
 
+// defaultRedisKeyPrefix namespaces this application's keys so a Redis
+// instance shared with a sibling project cannot collide with them. See
+// Config.RedisKeyPrefix.
+const defaultRedisKeyPrefix = "sapanjai:"
+
 // maxCleanupBatchSize bounds SESSION_CLEANUP_BATCH_SIZE so a misconfigured
 // deployment can't ask the cleanup job to delete unbounded rows in a single
 // statement.
@@ -39,6 +44,25 @@ type Config struct {
 
 	DatabaseURL string
 	RedisURL    string
+
+	// RedisKeyPrefix is prepended to every Redis key this process reads or
+	// writes (blacklist, login attempts, verification/reset tokens, the MCP
+	// rate-limit buckets, and the worker job locks). It exists so a Redis
+	// instance shared with another application cannot collide with ours:
+	// several keys here ("blacklist:", "login:attempts:", "verify:resend:")
+	// come from a platform-core template that sibling projects also derive
+	// from, so a shared instance silently shares those counters.
+	//
+	// It MUST be identical on the api and worker processes — they meet on
+	// "<prefix>worker:lock:<job>" and "<prefix>blacklist:<token>" — which is
+	// why it is a fixed default rather than being derived from APP_NAME.
+	// Changing it orphans every live key: in-flight verification and
+	// password-reset links stop resolving and the blacklist forgets prior
+	// logouts. Nothing needs migrating; the orphans expire on their own TTLs.
+	//
+	// Explicitly setting REDIS_KEY_PREFIX="" opts out and restores the
+	// unprefixed keys, for a deployment that already owns its Redis.
+	RedisKeyPrefix string
 
 	JWTAccessSecret     string
 	JWTRefreshSecret    string
@@ -116,6 +140,8 @@ func Load() (*Config, error) {
 
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		RedisURL:    os.Getenv("REDIS_URL"),
+
+		RedisKeyPrefix: redisKeyPrefix(),
 
 		JWTAccessSecret:  os.Getenv("JWT_ACCESS_SECRET"),
 		JWTRefreshSecret: os.Getenv("JWT_REFRESH_SECRET"),
@@ -247,6 +273,25 @@ func Load() (*Config, error) {
 // the worker wires up email.LogSender instead of email.ResendSender.
 func (c *Config) EmailEnabled() bool {
 	return c.ResendAPIKey != ""
+}
+
+// redisKeyPrefix resolves REDIS_KEY_PREFIX, normalising a non-empty value to
+// end in ":" so "sapanjai" and "sapanjai:" behave identically rather than the
+// former silently producing "sapanjaiblacklist:<token>".
+//
+// It reads with LookupEnv rather than getEnv because "" is a meaningful value
+// here — an operator whose Redis is not shared can set REDIS_KEY_PREFIX= to
+// opt out — and getEnv cannot distinguish that from unset.
+func redisKeyPrefix() string {
+	raw, ok := os.LookupEnv("REDIS_KEY_PREFIX")
+	if !ok {
+		return defaultRedisKeyPrefix
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.HasSuffix(raw, ":") {
+		return raw
+	}
+	return raw + ":"
 }
 
 func getEnv(key, fallback string) string {

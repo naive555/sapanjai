@@ -30,14 +30,19 @@ func setupRedisLock(t *testing.T) (*worker.RedisLock, *redis.Client) {
 	}
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	return worker.NewRedisLock(rdb), rdb
+	return worker.NewRedisLock(rdb, testKeyPrefix), rdb
 }
 
-// lockKey mirrors the unexported "worker:lock:" prefix documented in
-// CLAUDE.md's Redis keys list, so tests can force-clean a key regardless of
-// which owner (if any) currently holds it.
+// testKeyPrefix namespaces every lock key these tests write, uuid-suffixed
+// per run so a shared REDIS_URL cannot leak one run's locks into another's.
+var testKeyPrefix = "test:" + uuid.NewString() + ":"
+
+// lockKey mirrors RedisLock's key construction — testKeyPrefix plus the
+// unexported "worker:lock:" prefix documented in CLAUDE.md's Redis keys
+// list — so tests can force-clean a key regardless of which owner (if any)
+// currently holds it.
 func lockKey(name string) string {
-	return "worker:lock:" + name
+	return testKeyPrefix + "worker:lock:" + name
 }
 
 func TestRedisLock_AcquireExclusivity(t *testing.T) {

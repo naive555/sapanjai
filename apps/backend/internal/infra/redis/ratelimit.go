@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// rateLimitKeyPrefix backs the bucket key "mcp:ratelimit:<connectorId>" —
+// rateLimitKeyPrefix backs the bucket key "<prefix>mcp:ratelimit:<connectorId>" —
 // see CLAUDE.md's Redis key conventions.
 const rateLimitKeyPrefix = "mcp:ratelimit:"
 
@@ -88,7 +88,7 @@ return {allowed, retry_after}
 `)
 
 // RateLimiter enforces a per-connector token bucket, one bucket per
-// upstream connector ("mcp:ratelimit:<connectorId>"), sized in whole
+// upstream connector ("<prefix>mcp:ratelimit:<connectorId>"), sized in whole
 // tokens-per-minute and refilled continuously (capacity/60 tokens/second).
 //
 // It counts upstream Google API requests, not MCP tool calls (see
@@ -99,6 +99,7 @@ return {allowed, retry_after}
 // time rather than the whole scan's page count up front.
 type RateLimiter struct {
 	client          *redis.Client
+	prefix          string
 	capacity        float64
 	refillPerSecond float64
 }
@@ -109,13 +110,17 @@ type RateLimiter struct {
 // building a bucket that can never admit anything — defends callers that
 // construct a Config literal directly (every integration test's
 // setupTestServer does) without routing through config.Load's validation.
-func NewRateLimiter(client *redis.Client, perMinute int) *RateLimiter {
+//
+// prefix namespaces the bucket keys (config.Config.RedisKeyPrefix); see
+// NewAuth.
+func NewRateLimiter(client *redis.Client, perMinute int, prefix string) *RateLimiter {
 	if perMinute <= 0 {
 		perMinute = 60
 	}
 	capacity := float64(perMinute)
 	return &RateLimiter{
 		client:          client,
+		prefix:          prefix,
 		capacity:        capacity,
 		refillPerSecond: capacity / 60,
 	}
@@ -133,7 +138,7 @@ func (r *RateLimiter) Take(ctx context.Context, connectorID string, n int) (allo
 		n = 1
 	}
 
-	key := rateLimitKeyPrefix + connectorID
+	key := r.prefix + rateLimitKeyPrefix + connectorID
 	res, err := tokenBucketScript.Run(ctx, r.client, []string{key},
 		r.capacity, r.refillPerSecond, n, int(bucketIdleTTL.Seconds()),
 	).Result()

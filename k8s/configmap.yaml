@@ -10,3 +10,11 @@ data:
   PORT: "3000"
   JWT_ACCESS_EXPIRES_IN: 15m
   JWT_REFRESH_EXPIRES_IN: "604800"
+  # Prepended to every Redis key so an instance shared with another
+  # application cannot collide with ours. It lives here rather than in the
+  # Secret because it is not sensitive — and because both the api and worker
+  # Deployments envFrom this ConfigMap, which is what guarantees they agree:
+  # they meet on "<prefix>worker:lock:<job>" and "<prefix>blacklist:<token>",
+  # and a mismatch gives two processes that cannot see each other's locks or
+  # logouts.
+  REDIS_KEY_PREFIX: "sapanjai:"

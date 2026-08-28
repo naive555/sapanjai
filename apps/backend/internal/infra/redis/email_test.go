@@ -10,6 +10,14 @@ import (
 	appredis "github.com/sapanjai/backend/internal/infra/redis"
 )
 
+// testKeyPrefix namespaces every key this package's tests write. It is
+// uuid-suffixed per run for the same reason uniqueTokenHash and
+// newTestLimiter's connector id are: the REDIS_URL under test may be a
+// shared instance, and a run must not observe or clobber another's keys.
+// It also exercises the prefixing itself — a helper that dropped the prefix
+// on one side of a set/get pair would fail here rather than in production.
+var testKeyPrefix = "test:" + uuid.NewString() + ":"
+
 // newTestEmail skips unless REDIS_URL is set (matches
 // internal/server's setupTestServer / ratelimit_test.go's newTestLimiter
 // convention) and returns an Email helper backed by the real Redis
@@ -30,7 +38,7 @@ func newTestEmail(t *testing.T) *appredis.Email {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	return appredis.NewEmail(client)
+	return appredis.NewEmail(client, testKeyPrefix)
 }
 
 func uniqueTokenHash(prefix string) string {

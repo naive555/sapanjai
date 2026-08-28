@@ -61,8 +61,8 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	e.GET("/swagger/*", echoSwagger.WrapHandler)
 
 	store := database.NewStore(pool)
-	redisAuth := appredis.NewAuth(rdb)
-	redisEmail := appredis.NewEmail(rdb)
+	redisAuth := appredis.NewAuth(rdb, cfg.RedisKeyPrefix)
+	redisEmail := appredis.NewEmail(rdb, cfg.RedisKeyPrefix)
 	tokenSvc := auth.NewTokenService(cfg)
 	auditSvc := auditlog.NewService(store, log)
 
@@ -125,7 +125,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		}
 		return principal.Narrow(scopes), nil
 	}
-	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin)
+	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin, cfg.RedisKeyPrefix)
 	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 

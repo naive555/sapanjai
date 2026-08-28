@@ -26,6 +26,13 @@ import (
 	"github.com/sapanjai/backend/migrations"
 )
 
+// testRedisKeyPrefix namespaces every Redis key the integration suite
+// writes. Uuid-suffixed per run for the same reason the suite uses unique
+// emails rather than flushing: REDIS_URL may point at an instance shared
+// with another application (or another test run), and neither may observe
+// the other's keys.
+var testRedisKeyPrefix = "test:" + uuid.NewString() + ":"
+
 // setupTestServer skips unless DATABASE_URL and REDIS_URL are set, runs
 // migrations against DATABASE_URL, boots the real server.New(...), and
 // returns an httptest.Server plus the pieces subtests need for direct DB/
@@ -70,6 +77,7 @@ func setupTestServer(t *testing.T, configure ...func(*config.Config)) (*httptest
 		LogLevel:            "error",
 		DatabaseURL:         databaseURL,
 		RedisURL:            redisURL,
+		RedisKeyPrefix:      testRedisKeyPrefix,
 		JWTAccessSecret:     "integration-access-secret-aaaaaaaaaaaaaaaaaaa",
 		JWTRefreshSecret:    "integration-refresh-secret-bbbbbbbbbbbbbbbbbb",
 		JWTAccessExpiresIn:  15 * time.Minute,
@@ -422,7 +430,7 @@ func TestIntegration_Logout(t *testing.T) {
 			t.Fatalf("logout: status = %d, body = %v", resp.StatusCode, body)
 		}
 
-		ttl, err := rdb.TTL(context.Background(), "blacklist:"+accessToken).Result()
+		ttl, err := rdb.TTL(context.Background(), testRedisKeyPrefix+"blacklist:"+accessToken).Result()
 		if err != nil {
 			t.Fatalf("redis TTL: %v", err)
 		}

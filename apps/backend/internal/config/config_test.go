@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,16 @@ func setBaselineEnv(t *testing.T) {
 		"EMAIL_MAX_ATTEMPTS", "EMAIL_OUTBOX_RETENTION",
 	} {
 		t.Setenv(k, "")
+	}
+
+	// REDIS_KEY_PREFIX is unset rather than set to "", because "" is a
+	// meaningful value for it — an explicit opt-out of prefixing — and
+	// t.Setenv(k, "") would make the defaults test assert the opt-out
+	// instead of the default. There is no t.Unsetenv, hence the manual
+	// save/restore.
+	if prev, ok := os.LookupEnv("REDIS_KEY_PREFIX"); ok {
+		_ = os.Unsetenv("REDIS_KEY_PREFIX")
+		t.Cleanup(func() { _ = os.Setenv("REDIS_KEY_PREFIX", prev) })
 	}
 }
 
@@ -254,5 +265,45 @@ func TestLoad_ExistingDefaultsUnchanged(t *testing.T) {
 	}
 	if cfg.SessionCleanupBatchSize != 1000 {
 		t.Errorf("SessionCleanupBatchSize = %d, want 1000", cfg.SessionCleanupBatchSize)
+	}
+}
+
+// The prefix defends a Redis instance shared with a sibling project, so an
+// unset REDIS_KEY_PREFIX must namespace rather than fall back to the bare
+// keys — the default is the safe direction, not the backwards-compatible
+// one.
+func TestLoad_RedisKeyPrefixDefaults(t *testing.T) {
+	setBaselineEnv(t)
+
+	if got := mustLoad(t).RedisKeyPrefix; got != "sapanjai:" {
+		t.Errorf("RedisKeyPrefix = %q, want %q", got, "sapanjai:")
+	}
+}
+
+func TestLoad_RedisKeyPrefixNormalisesAndOptsOut(t *testing.T) {
+	tests := []struct {
+		name string
+		set  string
+		want string
+	}{
+		// A prefix without the separator would otherwise silently produce
+		// "acmeblacklist:<token>".
+		{"appends missing separator", "acme", "acme:"},
+		{"keeps an explicit separator", "acme:", "acme:"},
+		{"trims surrounding space", "  acme  ", "acme:"},
+		// The documented escape hatch for a deployment that owns its Redis
+		// and wants the pre-prefix keys back.
+		{"empty opts out", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("REDIS_KEY_PREFIX", tt.set)
+
+			if got := mustLoad(t).RedisKeyPrefix; got != tt.want {
+				t.Errorf("RedisKeyPrefix = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

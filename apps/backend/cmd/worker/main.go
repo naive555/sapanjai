@@ -70,7 +70,7 @@ func main() {
 		log.Info("email sender: log (no RESEND_API_KEY configured)", "from", cfg.EmailFrom)
 	}
 
-	w := worker.New(worker.NewRedisLock(rdb), log, cfg.WorkerJobTimeout)
+	w := worker.New(worker.NewRedisLock(rdb, cfg.RedisKeyPrefix), log, cfg.WorkerJobTimeout)
 	// Register future jobs here — one line each.
 	w.Register(sessioncleanup.New(
 		store, log,

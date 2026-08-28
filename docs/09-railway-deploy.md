@@ -133,6 +133,7 @@ processes, not just the API):**
 | ---------------------- | ---------------------------------- |
 | `DATABASE_URL`         | `${{Postgres.DATABASE_URL}}`       |
 | `REDIS_URL`            | `${{Redis.REDIS_URL}}`             |
+| `REDIS_KEY_PREFIX`     | `sapanjai:` (must match on both)   |
 | `JWT_ACCESS_SECRET`    | ≥ 32 chars                         |
 | `JWT_REFRESH_SECRET`   | ≥ 32 chars                         |
 | `CONNECTOR_MASTER_KEY` | `openssl rand -base64 32`          |
@@ -143,6 +144,35 @@ processes, not just the API):**
 against, so it must point at **`web`**, not `api` — a link pointing at the API
 lands on a route that does not exist. Left at its `http://localhost:4000`
 default, every email sent from a deployment ships a dead link.
+
+`REDIS_KEY_PREFIX` matters here because `${{Redis.REDIS_URL}}` resolves to a
+service **inside this Railway project** — if another application's services
+live in the same project and reference the same `Redis` plugin, both apps share
+one instance and one keyspace (DB 0, no prefix). Several of our key names come
+from the platform-core template that sibling projects also derive from, so
+`login:attempts:<email>` in particular becomes one shared counter: a user with
+the same address in both apps can be locked out of ours by failed logins
+against theirs, and a success on either side clears the other's count. The
+prefix makes the keyspaces disjoint.
+
+It does **not** make the *instances* disjoint. `maxmemory` and the eviction
+policy are instance-wide, and the evictor does not care which prefix or logical
+DB a key lives under — a noisy neighbour can still evict our `worker:lock:` and
+`verify:email:` keys, both of which fail silently when they vanish (a dropped
+lock lets two replicas run one job; a dropped token kills a user's verification
+link). Check with:
+
+```
+redis-cli -u "$REDIS_URL" CONFIG GET maxmemory-policy maxmemory
+redis-cli -u "$REDIS_URL" INFO stats | grep evicted_keys
+```
+
+A climbing `evicted_keys`, or an `allkeys-*` policy, means the prefix is not
+enough and the app wants its own Redis service.
+
+Set `REDIS_KEY_PREFIX` to the same value on `api` and `worker` — they meet on
+`<prefix>worker:lock:<job>` and `<prefix>blacklist:<token>`, so a mismatch
+gives you two processes that cannot see each other's locks or logouts.
 
 **`worker` only** — the transactional-mail sender. Deliberately *not* set on
 `api`: the API renders and enqueues and never talks to Resend, so the key has no
