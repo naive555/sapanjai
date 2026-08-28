@@ -6,11 +6,93 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 type Querier interface {
+	AdminCountActiveMCPKeys(ctx context.Context) (int64, error)
+	AdminCountActiveSessions(ctx context.Context) (int64, error)
+	AdminCountActiveSessionsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
+	AdminCountAllAuditLogs(ctx context.Context) (int64, error)
+	AdminCountAllConnectors(ctx context.Context) (int64, error)
+	AdminCountAllMCPKeys(ctx context.Context) (int64, error)
+	// The remaining queries back GET /admin/system/stats. Each is cached
+	// individually under its own fixed filter key (admin.Service.SystemStats) —
+	// there is no user-supplied filter, but they still go through
+	// admin.Service.cachedCount for the same "don't COUNT(*) on every staff
+	// page load" reason as the paged lists above.
+	AdminCountAllOrganizations(ctx context.Context) (int64, error)
+	AdminCountAllUsers(ctx context.Context) (int64, error)
+	// Mirrors AdminQueryAuditLogs's WHERE exactly.
+	AdminCountAuditLogs(ctx context.Context, arg AdminCountAuditLogsParams) (int64, error)
+	// Mirrors AdminListConnectors's WHERE exactly.
+	AdminCountConnectors(ctx context.Context, arg AdminCountConnectorsParams) (int64, error)
+	// A rising 'failed' count is the single best early warning that Resend or
+	// the EMAIL_FROM domain is misconfigured (CLAUDE.md's Background worker
+	// bullet).
+	AdminCountEmailOutboxByStatus(ctx context.Context) ([]AdminCountEmailOutboxByStatusRow, error)
+	// Mirrors AdminListMCPKeys's WHERE exactly.
+	AdminCountMCPKeys(ctx context.Context, arg AdminCountMCPKeysParams) (int64, error)
+	// Mirrors AdminListOrganizations's WHERE exactly — the pair behind
+	// admin.Service.cachedCount for GET /admin/organizations.
+	AdminCountOrganizations(ctx context.Context, search *string) (int64, error)
+	AdminCountOrganizationsSince(ctx context.Context, since time.Time) (int64, error)
+	// Mirrors AdminListUsers's WHERE exactly.
+	AdminCountUsers(ctx context.Context, arg AdminCountUsersParams) (int64, error)
+	AdminCountUsersSince(ctx context.Context, since time.Time) (int64, error)
+	// Queries backing internal/module/admin, the cross-org platform staff
+	// console (docs/11-admin-panel.md). Every query here deliberately has NO
+	// organization_id predicate the way the tenant-facing queries do — that is
+	// the whole point of /admin, not an oversight. See the module's own
+	// doc comment for the authorization boundary (RequirePlatformRole, not
+	// RequireOrg/RequirePermission).
+	//
+	// None of these ever select connectors.encrypted_config or
+	// mcp_api_keys.key_hash; column lists are explicit rather than SELECT *
+	// specifically to keep it that way as the schema evolves.
+	AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
+	// Cross-org connector metadata only — no encrypted_config column in this
+	// SELECT, ever (docs/11-admin-panel.md §7). Also used, filtered by
+	// organization_id alone, to populate the connector list nested in
+	// GET /admin/organizations/:orgId (admin.Service.OrganizationDetail).
+	AdminListConnectors(ctx context.Context, arg AdminListConnectorsParams) ([]AdminListConnectorsRow, error)
+	// Cross-org MCP key metadata only — no key_hash column in this SELECT,
+	// ever (docs/11-admin-panel.md §7). search matches the key's own name or
+	// its owner's email. Also used, filtered by organization_id alone, to
+	// populate the MCP key list nested in GET /admin/organizations/:orgId.
+	AdminListMCPKeys(ctx context.Context, arg AdminListMCPKeysParams) ([]AdminListMCPKeysRow, error)
+	// search matches name or slug (case-insensitive substring). member/
+	// connector/mcp-key counts are correlated subqueries rather than a
+	// three-way JOIN + GROUP BY, which would multiply the plan row per
+	// member*connector*key combination. plan_name is NULL for an org with no
+	// subscription row.
+	AdminListOrganizations(ctx context.Context, arg AdminListOrganizationsParams) ([]AdminListOrganizationsRow, error)
+	// search matches email or display_name. role is nullable text taking
+	// 'superadmin', 'support', 'none' (meaning platform_role IS NULL), or NULL
+	// (no filter) — a single text param rather than a separate bool so the
+	// three-way choice stays one WHERE clause. banned is a nullable bool.
+	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]AdminListUsersRow, error)
+	// LEFT JOIN so a plan with zero subscribers still shows a 0 row rather
+	// than disappearing from the breakdown entirely.
+	AdminPlanBreakdown(ctx context.Context) ([]AdminPlanBreakdownRow, error)
+	// Cross-org: unlike QueryAuditLogs (internal/infra/database/queries/auditlog.sql),
+	// which mandates organization_id as a tenant-isolation guarantee, this one
+	// deliberately carries no such predicate — see admin.sql's file header.
+	// Two queries, two guarantees; do not widen QueryAuditLogs to cover this.
+	//
+	// action_patterns is a nullable text[] of LIKE patterns: the handler turns
+	// a bare action into a literal (with '%'/'_' escaped) and a trailing '*'
+	// into a '<prefix>%' pattern, so "admin.*" matches by prefix while an exact
+	// action matches by equality (LIKE with no wildcard characters behaves as
+	// equality). `LIKE ANY (array)` matches if any pattern in the array
+	// matches.
+	//
+	// from/to are nullable naive timestamps — audit_logs.created_at has no time
+	// zone (see QueryAuditLogs's comment); callers must normalize any RFC3339
+	// input to UTC before binding here, same as there.
+	AdminQueryAuditLogs(ctx context.Context, arg AdminQueryAuditLogsParams) ([]AdminQueryAuditLogsRow, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies

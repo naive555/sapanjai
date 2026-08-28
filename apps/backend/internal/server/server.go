@@ -21,6 +21,7 @@ import (
 	"github.com/sapanjai/backend/internal/infra/database"
 	appredis "github.com/sapanjai/backend/internal/infra/redis"
 	appmw "github.com/sapanjai/backend/internal/middleware"
+	"github.com/sapanjai/backend/internal/module/admin"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/auth"
 	"github.com/sapanjai/backend/internal/module/connector"
@@ -128,6 +129,14 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin, cfg.RedisKeyPrefix)
 	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
+
+	// The admin console (docs/11-admin-panel.md) sits outside the tenant
+	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission. This
+	// phase wires only the read surfaces; the token service Phase 4
+	// (impersonation) needs is not added yet, per the execution plan.
+	adminCache := appredis.NewAdminCount(rdb, cfg.RedisKeyPrefix)
+	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, log)
+	admin.NewHandler(adminSvc).Register(e.Group("/admin"), guards)
 
 	return e, nil
 }

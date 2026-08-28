@@ -42,6 +42,26 @@ func NewService(store subStore) *Service {
 // subscription at all — the caller treats that as unlimited, mirroring the
 // source's `if (!sub) return null`.
 func (s *Service) GetLimit(ctx context.Context, organizationID uuid.UUID, key string) (*float64, error) {
+	limits, err := s.EffectiveLimits(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	if v, ok := limits[key]; ok {
+		return &v, nil
+	}
+	return nil, nil
+}
+
+// EffectiveLimits returns organizationID's full merged limits map — plan
+// limits overlaid by custom_limits, custom winning on conflict — the same
+// precedence GetLimit resolves for a single key. Returns (nil, nil) when
+// the org has no subscription at all, mirroring GetLimit's "no subscription
+// = unlimited" contract.
+//
+// Exported so internal/module/admin's organization-detail view
+// (docs/11-admin-panel.md, execution plan Task 2.4) calls into this method
+// rather than reimplementing the custom-over-plan merge a second time.
+func (s *Service) EffectiveLimits(ctx context.Context, organizationID uuid.UUID) (map[string]float64, error) {
 	row, err := s.store.GetOrgSubscriptionWithPlan(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -60,11 +80,7 @@ func (s *Service) GetLimit(ctx context.Context, organizationID uuid.UUID, key st
 			maps.Copy(limits, custom)
 		}
 	}
-
-	if v, ok := limits[key]; ok {
-		return &v, nil
-	}
-	return nil, nil
+	return limits, nil
 }
 
 // GetSubscription returns organizationID's subscription with its plan
