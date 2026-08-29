@@ -1,23 +1,57 @@
 # Sapanjai (HeartBridge)
 
-A multi-tenant B2B SaaS platform template: **Go backend + Next.js dashboard** in one monorepo.
+**A managed [MCP](https://modelcontextprotocol.io) gateway for business data.** Sapanjai puts a permission boundary between an AI agent and a customer's systems: an organization mints a revocable key, points it at a connector, and the agent sees exactly the tools that organization's roles grant — over exactly the data the connector's allowlist admits, rate limited, and written to an audit log.
 
-It gives you the parts every B2B product needs before it can have any features of its own:
+The problem it exists to solve: wiring Claude or Cursor into a company's spreadsheets today means handing an agent a long-lived OAuth credential. That credential is **all-or-nothing** (every file the account can reach), **unattributable** (the upstream audit trail says "the service account", not which person or which key), **hard to revoke** (rotating it cuts off everyone), and **unscoped** (nothing stops a "read last month's invoices" agent from listing the whole Drive). Sapanjai is the thing in between:
 
-- **Auth** — bcrypt password hashing, HS256 JWT access/refresh pairs, session rotation with token-family reuse detection, a Redis access-token blacklist, and login rate limiting.
-- **Organizations** — orgs, memberships, invite/remove, and an active-org header (`x-organization-id`) that scopes every other route.
-- **RBAC** — org-scoped custom roles with wildcard permissions (`*` > `resource:verb` > `resource:*`).
-- **Audit logs** — immutable, org-scoped, queryable, written best-effort so they can never fail a request.
-- **Subscriptions** — plans with limits (e.g. `max_members`) enforced at the point of use.
-- **Background jobs** — an interval scheduler with Redis-based cross-replica locking.
+```
+Claude · Cursor · Claude Desktop
+        │  Authorization: Bearer sk_live_…
+        ▼
+POST /mcp/:connectorId          ← one Streamable HTTP MCP endpoint per connector
+        │
+        ├─ key           → the org it was minted in, and its creator's live RBAC grant ∩ the key's scopes
+        ├─ tools/list    → only the tools that principal may call are registered at all
+        ├─ tools/call    → re-checked, rate limited per connector, audit logged
+        └─ adapter       → the upstream, restricted to the connector's allowlist
+                           (today: Google Sheets + Drive, read only)
+```
 
-Add your business domain on top as new modules.
+Everything a B2B product needs around that — accounts, organizations, roles, plans, audit logs, transactional email — is here as well, because a gateway that cannot answer *"who did that, under which key, and can I switch it off"* is not a product. Those parts began as a reusable platform core and are still general enough to build another domain on.
+
+The name: *sà-pan-jai* (สะพานใจ), a bridge of hearts — the gateway sits between two parties that do not otherwise trust each other with a credential.
+
+## The three ideas the design turns on
+
+Each was a finding from the spike in [`spikes/mcp-gateway/`](spikes/mcp-gateway/), and each is load-bearing. The reasoning is in [`docs/05-mcp-gateway.md`](docs/05-mcp-gateway.md).
+
+**1. A tool is a route.** `sheets:read` gates `sheets_query_rows` exactly the way `RequirePermission("connector:read")` gates a REST route — the same action strings, the same `*` > `resource:verb` > `resource:*` matching, the same owner bypass. Adding MCP required no change to the RBAC engine, and an org's existing roles govern its agents for free.
+
+**2. A denied tool is invisible, not merely uncallable.** It is never registered on the server built for that request, so it never appears in `tools/list` and the model does not know to attempt it. But the tool list is a **UX affordance, never the authorization boundary** — clients cache it — so every `tools/call` re-checks permission at call time. Revoking a role takes effect on the agent's *next call*, not its next reconnect.
+
+**3. The credential carries the tenant.** MCP client headers are static configuration: the model cannot choose one per call and no client has a "switch organization" concept, so the `x-organization-id` header that scopes every REST route has no analogue here. The organization is bound to the key instead. A key's optional `scopes` can only **narrow** its creator's live grant, never widen it, and that grant is re-resolved on every request rather than frozen into the key.
+
+## What is built, and what is not
+
+| | Status |
+| --- | --- |
+| Gateway — `POST /mcp/:connectorId`, stateless Streamable HTTP, RBAC-filtered catalog, per-connector rate limit, audit trail | **shipped** |
+| MCP keys — mint / list / revoke org-scoped PATs, raw token shown once | **shipped** |
+| `google_sheets` connector — six read tools over allowlisted Sheets + Drive, OAuth refresh, health probe, signed short-lived file downloads | **shipped** |
+| Platform core — auth, email verification, password reset, organizations, RBAC, audit logs, plans, background worker | **shipped** |
+| Write tools (append a row, upload a file) | not built — [`docs/07`](docs/07-sheets-adapter-decisions.md) §3 |
+| A staff console for cross-org support | not built |
+| OAuth consent flow in the dashboard | not built — onboarding is a manual credential paste ([MCP client setup](#mcp-client-setup)) |
+| OAuth 2.1 / dynamic client registration for Claude Desktop's connector picker | not built |
+| A second adapter (FlowAccount, PEAK, LINE, …) | not built — the connector-agnostic boundary it would land on is drawn in [`docs/08`](docs/08-gateway-core.md) |
+
+## Stack
 
 | | |
 | --- | --- |
-| **Backend** | Go · [Echo](https://echo.labstack.com) · [sqlc](https://sqlc.dev) + [pgx/v5](https://github.com/jackc/pgx) · [goose](https://github.com/pressly/goose) migrations · go-redis v9 · golang-jwt/v5 · `log/slog` · [swaggo](https://github.com/swaggo/swag) |
+| **Backend** | Go · [Echo](https://echo.labstack.com) · [sqlc](https://sqlc.dev) + [pgx/v5](https://github.com/jackc/pgx) · [goose](https://github.com/pressly/goose) migrations · go-redis v9 · golang-jwt/v5 · [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) · `log/slog` · [swaggo](https://github.com/swaggo/swag) |
 | **Frontend** | Next.js (App Router) · TypeScript · Tailwind v4 · [shadcn/ui](https://ui.shadcn.com) · [TanStack Query](https://tanstack.com/query) |
-| **Infra** | PostgreSQL 16 · Redis 7 · Docker Compose · Kubernetes manifests · GitHub Actions |
+| **Infra** | PostgreSQL 16 · Redis 7 · [Resend](https://resend.com) · Docker Compose · Kubernetes manifests · GitHub Actions |
 
 ## Prerequisites
 
@@ -42,6 +76,8 @@ curl localhost:3000/health
 open http://localhost:4000   # dashboard — register a user to get started
 ```
 
+That gets you the platform. To go from a fresh account to an AI agent actually reading a spreadsheet through the gateway, follow [MCP client setup](#mcp-client-setup) — it is the walkthrough this README is really about.
+
 There is no process manager tying the three together — `make api`, `make web`, and `make worker` are separate terminals by design. To run everything in containers instead, see [Docker](#docker).
 
 ## Repository layout
@@ -57,39 +93,44 @@ apps/backend/
   internal/
     config/        env parsing + validation (fails fast at boot)
     server/        Echo wiring: middleware stack, error handler, route mounting
-    middleware/    RequireAuth, RequireOrg, RequirePermission, RequireMCPKey, request ID
-    module/        one package per domain: auth, organization, rbac,
-                   auditlog, subscription, connector, health, mcpkey, mcp
+    middleware/    RequireAuth, RequireOrg, RequirePermission, RequireMCPKey,
+                   request ID
+    module/        one package per domain: auth, organization, rbac, auditlog,
+                   subscription, connector, health, mcpkey, mcp
     adapter/       per-connector-type upstream integrations (googlesheets/ — the
                    first, Sheets + Drive; imports connector for the Checker
                    interface, not the reverse)
     worker/        the Job interface + interval scheduler with Redis locking
-    job/           registered jobs (sessioncleanup)
+    job/           registered jobs: sessioncleanup, emaildispatch
     infra/         database (pgx pool + sqlc-generated queries), redis
-    shared/        apperror, httpx, logger (incl. log redaction), envelope
-                   (envelope encryption for connector config)
+    shared/        apperror, httpx, logger (incl. log redaction), email
+                   (renderer + Resend/log senders), envelope (envelope
+                   encryption for connector config)
   migrations/      goose SQL migrations, embedded into the binaries
   docs/            generated OpenAPI spec (committed)
 
 apps/frontend/
-  app/(auth)/      login, register
-  app/(dashboard)/ organizations, members, roles, audit, subscription, mcp-keys, connectors
+  app/(auth)/      login, register, verify-email, forgot-password, reset-password
+  app/(dashboard)/ overview, organizations, members, roles, activity (audit log),
+                   subscription, mcp-keys, connectors (+ the google_sheets form)
   app/api/[...path]/route.ts   runtime reverse proxy to the backend
   lib/api/         fetch client with single-flight 401 refresh
   lib/auth/        token store + session provider
   lib/org/         active-organization state
   components/      shadcn/ui primitives + app components
 
-docs/              source analysis, API contract, architecture, migration plan,
-                   MCP gateway design (05), Google Sheets/Drive adapter spec (06)
-                   and its implementation plan (07)
+docs/              the design record — see the table at the end of this file
+spikes/            throwaway feasibility spikes, each its own Go module and
+                   deliberately outside the build (make/CI only cover apps/backend)
 k8s/               Kubernetes manifests (api, worker, migrate Job, postgres, redis)
 compose.yaml       full stack: db, redis, api, worker, web
 ```
 
 ## Architecture
 
-### Request flow
+### Two request flows
+
+The dashboard's, which is an ordinary REST stack:
 
 ```
 browser → /api/* (same-origin, Next.js Route Handler proxy)
@@ -101,9 +142,22 @@ browser → /api/* (same-origin, Next.js Route Handler proxy)
         → sqlc queries / Redis
 ```
 
-A single Echo `HTTPErrorHandler` maps `apperror` codes to status codes and messages, so services never import `net/http`. Multi-step writes (org create + owner membership, session rotation) run inside a transaction.
+And the agent's, which is the product:
 
-Each module follows the same shape: `handler.go` → `service.go` → `dto.go`, backed by sqlc-generated queries in `internal/infra/database`.
+```
+MCP client → POST /mcp/:connectorId
+        → RequireMCPKey:  hash the bearer token, look it up, resolve org + principal
+        → resolveConnector: load the connector, confirm it belongs to that org
+        → a fresh mcp.Server per request, registering only the permitted tools
+        → tools/call:  re-check permission → Redis token bucket → adapter → upstream
+        → audit log (best effort)
+```
+
+The second flow is stateless on purpose. Stateful Streamable HTTP pins a session to one server instance at `initialize`, which would mean sticky routing behind a load balancer and permission changes that only land on reconnect; stateless mode makes an MCP request behave exactly like an Echo route. The cost — no server→client sampling or elicitation, no resumable streams — buys horizontal scaling and immediate revocation. A connector that one day needs progress reporting should return a job id and poll with a second tool rather than reach for SSE.
+
+A single Echo `HTTPErrorHandler` maps `apperror` codes to status codes and messages, so services never import `net/http`. The gateway needs a **second** mapping alongside it: a JSON-RPC error aborts the agent's turn, while `CallToolResult{IsError: true}` is text the model can read and adapt to, so permission denials and not-founds go back as `IsError` and the agent says "I don't have access to that" instead of crashing.
+
+Multi-step writes (org create + owner membership, session rotation, register + queue its verification email) run inside a transaction. Each module follows the same shape: `handler.go` → `service.go` → `dto.go`, backed by sqlc-generated queries in `internal/infra/database` — `mcp` is the one exception, since its handler hands the JSON-RPC envelope to the MCP SDK's `StreamableHTTPHandler` rather than binding a DTO.
 
 ### Auth model
 
@@ -112,6 +166,14 @@ Each module follows the same shape: `handler.go` → `service.go` → `dto.go`, 
 - **Rotation** — every `/auth/refresh` issues a new pair and revokes the old session. Replaying an already-rotated or revoked refresh token revokes the **entire token family**, so a stolen token is contained.
 - **Rate limiting** — 5 failed logins per email per 15 minutes (`login:attempts:<email>`).
 - **Logout** — blacklists the presented access token for 15 minutes and revokes all of the user's sessions.
+- **Email verification / password reset** — both ride a Redis token + outbox pattern ([`docs/10`](docs/10-transactional-email.md)). `register` inserts the user row and its verification email into `email_outbox` in one transaction, so a user can never exist without its mail queued. Tokens are 32 CSPRNG bytes stored SHA-256-**hashed** in Redis and consumed with `GETDEL`, so redemption is single-use with no read-then-delete race and a Redis dump yields nothing redeemable. `POST /auth/verify-email` is deliberately a POST: the frontend page at `/verify-email?token=…` is the GET target and POSTs the token on, so a link scanner prefetching the page cannot burn it. `POST /auth/forgot-password` **always** returns `200 {success:true}` — unknown address, known address, and active cooldown are indistinguishable.
+- **Verification is a banner, not a gate.** Nothing in the backend checks `is_verified`. `GET /auth/me` reads it fresh from the database rather than carrying it as a JWT claim, which would go stale for a full access-token lifetime after a user verifies.
+
+### Secrets at rest
+
+Connector `config` — OAuth client secrets, refresh tokens, database credentials — is sealed with envelope encryption (`internal/shared/envelope`): a fresh AES-256-GCM data key per row, wrapped by `CONNECTOR_MASTER_KEY`. No endpoint, response DTO, log line, or audit entry ever returns it; the dashboard's connector form is write-only by construction. Rotation is rotate-on-read rather than a batch job — every envelope carries the `kid` that wrapped it, and retired keys stay decrypt-only in `CONNECTOR_MASTER_KEY_PREVIOUS` while rows re-seal as they are read.
+
+MCP keys are hashed with SHA-256, not bcrypt. A PAT is 256 bits of CSPRNG output, not a low-entropy password, so the slow-hash argument does not apply and the gateway would be paying bcrypt on every agent call ([`docs/07`](docs/07-sheets-adapter-decisions.md) §1).
 
 ### Guards
 
@@ -120,6 +182,7 @@ Each module follows the same shape: `handler.go` → `service.go` → `dto.go`, 
 | `RequireAuth` | valid, non-blacklisted access token |
 | `RequireOrg` | `RequireAuth` + `x-organization-id` header + caller is a member of that org |
 | `RequirePermission(action)` | `RequireOrg` + the caller's roles grant `action` (owners bypass) |
+| `RequireMCPKey` | a live, unrevoked MCP key (`Authorization: Bearer sk_live_…`) — no JWT, no org header; the key names the org |
 
 Permission matching: `*` grants everything; then an exact `resource:verb` match; then a `resource:*` wildcard on that resource.
 
@@ -138,6 +201,11 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `POST /auth/login` | public | Return an access/refresh pair (rate limited) |
 | `POST /auth/refresh` | public | Rotate the refresh token, return a new pair |
 | `POST /auth/logout` | public¹ | Blacklist the access token, revoke all sessions |
+| `GET /auth/me` | auth | The caller, including `isVerified` read fresh from the database |
+| `POST /auth/verify-email` | public | Redeem a verification token (single-use) |
+| `POST /auth/resend-verification` | auth | Re-queue the verification email (5 min cooldown) |
+| `POST /auth/forgot-password` | public | Queue a reset email — **always** `200 {success:true}` |
+| `POST /auth/reset-password` | public | Redeem a reset token; also verifies the user and revokes every session |
 | `POST /organizations` | auth | Create an org; caller becomes its owner |
 | `GET /organizations` | auth | Caller's memberships, org embedded |
 | `GET /organizations/members` | org | Active org's member roster |
@@ -161,9 +229,11 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `GET /mcp-keys` | perm:`mcpkey:read` | Org's MCP keys (never the hash or raw token) |
 | `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | Revoke a key (`revoked_at`) |
 | `POST /mcp/:connectorId` | MCP key² | Not REST — one Streamable HTTP MCP JSON-RPC endpoint per connector. See [MCP client setup](#mcp-client-setup) below. |
+| `GET /mcp/files/:connectorId/:fileId` | signed link³ | Downloads a Drive file handed out by `drive_get_file` |
 
 ¹ reads `Authorization` if present, but does not require it.
 ² `Authorization: Bearer sk_live_...` — an MCP key from `POST /mcp-keys` above, not a JWT access token.
+³ no header at all: the URL carries an HMAC signature and an expiry of at most 15 minutes. The signing key is derived from `CONNECTOR_MASTER_KEY` with HKDF-SHA256 rather than being a separate secret to own — a master-key rotation invalidating in-flight links is a non-event at that TTL.
 
 Common error responses: `401 Unauthorized` / `Token revoked`, `400 Missing x-organization-id header`, `403 Not a member of this organization`, `403 Missing permission: <action>`, `422 Validation failed`, `404 Route not found`. Service-level codes (`EMAIL_TAKEN`, `REFRESH_TOKEN_REUSE`, `LIMIT_EXCEEDED`, …) and their exact messages are tabulated in `docs/02-api-contract.md`.
 
@@ -267,7 +337,7 @@ With `make up` and `make api` running:
 make web   # cd apps/frontend && pnpm dev — Next.js on :4000
 ```
 
-`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Organizations, Members, Roles, Audit Logs, Subscription, MCP keys, Connectors) talks to the live API. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
+`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
 
 **Same-origin only.** The browser never calls the Go API directly — it calls `/api/*` on the Next.js origin, and `app/api/[...path]/route.ts` proxies to `BACKEND_URL`. This is a Route Handler rather than a `next.config.ts` `rewrites()` entry on purpose: `next.config.ts` resolves once at build time, so a rewrite destination gets baked into the image, whereas the handler reads `process.env.BACKEND_URL` fresh on every request. The same production image therefore works in dev (`http://localhost:3000`) and in compose (`http://api:3000`) unchanged. A consequence worth knowing: **the backend has no CORS middleware and needs none.**
 
@@ -311,7 +381,7 @@ claude mcp add sapanjai --scope local --transport http \
 claude mcp list   # -> sapanjai: ... - ✔ Connected
 ```
 
-(`--header` is variadic and swallows anything after it, so the URL must come *before* `--header` — a real gotcha hit during development.) `claude mcp list` should show the connection, and asking the agent to list its available tools should surface `sheets_list_spreadsheets`, `sheets_describe_spreadsheet`, `sheets_query_rows`, `sheets_read_range`, `drive_list_folder`, and `drive_get_file` — filtered to whatever `sheets:read`/`drive:read` the key's creator actually holds. A tool call against a spreadsheet outside the connector's allowlist is rejected every time, even if the underlying Google account could otherwise reach it.
+(`--header` is variadic and swallows anything after it, so the URL must come *before* `--header` — a real gotcha hit during development.) `claude mcp list` should show the connection, and asking the agent to list its available tools should surface the six `google_sheets` tools — `sheets_list_spreadsheets`, `sheets_describe_spreadsheet`, `sheets_query_rows`, `sheets_read_range`, `drive_list_folder`, `drive_get_file` — plus two connector-type-agnostic ones, `sapanjai_describe_connector` and `sapanjai_whoami`, which let an agent orient itself and let you debug "why can't it see that tool" from the client side. All of it is filtered to whatever `sheets:read`/`drive:read` the key's creator actually holds, intersected with the key's own `scopes`. A tool call against a spreadsheet outside the connector's allowlist is rejected every time, even if the underlying Google account could otherwise reach it.
 
 **What's not here yet:** write tools (append/update a sheet, upload to Drive), a LINE adapter, an OAuth consent flow in the dashboard (hence step 1's manual paste), and OAuth 2.1 / dynamic client registration for Claude Desktop's own connector-picker UI — see `docs/07-sheets-adapter-decisions.md` §3 "Out of scope" for the full list. This walkthrough has been verified against the code and its tests but **not** re-run end to end against a real Google account as part of this documentation pass — treat step 1 onward as the intended path, not a confirmed transcript.
 
@@ -326,7 +396,13 @@ make worker                  # cd apps/backend && go run ./cmd/worker
 curl localhost:3001/health   # {status, uptime, jobs: [{name, runs, failures, skipped, ...}]}
 ```
 
-The one job today is **session cleanup**: batched deletes of expired sessions, plus revoked sessions older than a retention window. Revoked sessions are kept for a while on purpose — that's what lets refresh-token reuse detection recognize a replayed token as a family reuse instead of an unknown session.
+Two jobs ship.
+
+**Session cleanup** (`SESSION_CLEANUP_*`) batch-deletes expired sessions, plus revoked sessions older than a retention window. Revoked sessions are kept for a while on purpose — that's what lets refresh-token reuse detection recognize a replayed token as a family reuse instead of an unknown session.
+
+**Email dispatch** (`EMAIL_*`) drains the `email_outbox` table: it claims a batch with `FOR UPDATE SKIP LOCKED`, sends via `internal/shared/email`, then marks each row `sent` (nulling the body in the same statement) or backs it off to `failed` after `EMAIL_MAX_ATTEMPTS`, and prunes old rows. Claiming is **lease-based rather than a `sending` status**: the claim pushes `next_attempt_at` forward by the job timeout plus one interval, so a run that dies mid-flight leaves its rows claimable again when the lease lapses. Nothing has to reap them, and there is no stuck state to own.
+
+Two consequences worth knowing. `RESEND_API_KEY` is read **only** by `cmd/worker` — the API renders and enqueues and never talks to Resend, which keeps that secret off the internet-facing service. And rendered bodies contain live single-use tokens, so an `email.Message` is never logged and a body never appears in an error; the centralized log redaction cannot help there, because it matches attribute *keys* and the token sits inside a value. The one sanctioned exception is `email.LogSender`, which prints the whole body so a local developer can click the link without a Resend account — gated by an **allowlist** of local `APP_ENV` values, not by "anything that isn't production", so a staging deploy missing its API key fails loudly instead of quietly logging tokens.
 
 **Adding a job.** Implement `worker.Job` — `Name() string`, `Interval() time.Duration`, `Run(ctx) (worker.Result, error)` — in a new package under `apps/backend/internal/job/<name>/`, then register it with one line in `cmd/worker/main.go`: `w.Register(yourjob.New(...))`. Locking, timeouts, panic recovery, and logging are handled for you.
 
@@ -349,22 +425,44 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `CONNECTOR_MASTER_KEY_PREVIOUS` | — | optional, comma-separated base64 keys. Retired `CONNECTOR_MASTER_KEY` values kept decrypt-only so rows sealed under an old key still open; each read that lands on a retired key also re-seals under the current one (rotate-on-read). Drop an entry once every row has been read at least once since the rotation. |
 | `JWT_ACCESS_EXPIRES_IN` | `15m` | Go duration string |
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
+| `APP_PUBLIC_URL` | `http://localhost:4000` | the browser-facing **frontend** origin that verification and reset links are built against — not the API. Trailing slash trimmed |
 | `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-decisions.md`](docs/07-sheets-adapter-decisions.md) step 4. Most `google_sheets` tools charge a floor of 1 unit per `tools/call`; `sheets_query_rows`' bounded scan charges 1 unit per page fetched from the upstream API instead, so a single call can cost more than 1 |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |
 | `WORKER_JOB_TIMEOUT` | `5m` | per-run timeout, any job |
 | `SESSION_CLEANUP_INTERVAL` | `1h` | |
 | `SESSION_CLEANUP_RETENTION` | `720h` | how long a revoked-but-unexpired session survives (30d) |
 | `SESSION_CLEANUP_BATCH_SIZE` | `1000` | rows per `DELETE` statement |
+| `RESEND_API_KEY` | — | **worker only.** Unset ⇒ `LogSender`, which prints the whole rendered email (including its live token) to the log — allowed only in a local `APP_ENV`, and a hard failure anywhere else |
+| `EMAIL_FROM` | `Sapanjai <noreply@localhost>` | must be on a Resend-verified domain in production, or every send 403s |
+| `EMAIL_DISPATCH_INTERVAL` | `15s` | |
+| `EMAIL_DISPATCH_BATCH_SIZE` | `20` | rows claimed per run |
+| `EMAIL_MAX_ATTEMPTS` | `5` | after this many failures a row is marked `failed` |
+| `EMAIL_OUTBOX_RETENTION` | `168h` | how long `sent`/`failed` rows survive before the prune sweep (7d) |
 
 A single `.env` serves both paths — `make api`/`make worker` load it via godotenv, and compose passes the same file to the containerized api/worker as `env_file`. Only the two host-specific URLs differ, and compose overrides them per service rather than in a second file: `DATABASE_URL` (the `db` hostname) and `REDIS_URL` (`redis://redis:6379`). That is safe in both directions — `godotenv.Load` never overrides a variable compose has already set, and `.env` is in `apps/backend/.dockerignore`, so nothing is baked into the image.
 
 `DATABASE_USER`/`PASSWORD`/`NAME` are the single source of the credentials: compose feeds them to the Postgres container *and* builds the api/worker `DATABASE_URL` from them, so the two can't drift. The `DATABASE_URL` in `.env` is the host-side one (via the published port); containers get theirs from compose using the `db` hostname.
 
-Redis keys used: `blacklist:<accessToken>` (15 min), `login:attempts:<email>` (max 5 / 15 min), `worker:lock:<jobName>` (TTL ≈ job interval), `mcp:ratelimit:<connectorId>` (token bucket, idle TTL 2 min).
+Redis keys used, all written with `REDIS_KEY_PREFIX` in front:
+
+| Key | Purpose |
+| --- | --- |
+| `blacklist:<accessToken>` | logged-out access tokens, 15 min |
+| `login:attempts:<email>` | 5 failures per 15 min |
+| `verify:email:<sha256hex(token)>` | email-verification token → userId, 24h, `GETDEL` |
+| `verify:resend:<userId>` | resend cooldown, `SET EX 300 NX` |
+| `reset:password:<sha256hex(token)>` | password-reset token → userId, 1h, `GETDEL` |
+| `reset:request:<email>` | reset cooldown, 15 min — keyed by **email, not userId**, because `forgot-password` runs before the address is known to belong to a user, and an id-keyed cooldown could not cover the unknown-address path identically |
+| `worker:lock:<jobName>` | job lock, TTL ≈ one interval |
+| `mcp:ratelimit:<connectorId>` | per-connector token bucket, idle TTL 2 min |
+
+Both token namespaces store `sha256hex(32 random bytes)`, never the raw token, so a `KEYS` / `MONITOR` / RDB dump yields nothing redeemable. Key construction lives behind a small helper in each of `internal/infra/redis/{auth,email,ratelimit}.go` and `internal/worker/lock.go`, so the prefix cannot be applied on the write path and forgotten on the read path. It namespaces the *keyspace*, not the instance — `maxmemory` and eviction stay instance-wide, so a noisy co-tenant can still evict our locks and tokens.
 
 ## Docker
 
-`apps/backend/Dockerfile` is a multi-stage build: a `golang:1.26-alpine` builder compiles all five binaries — `api`, `worker`, `migrate`, `seed`, and `healthcheck` — into one image, so any of them can be run by overriding the entrypoint. The runner is [`gcr.io/distroless/static-debian12:nonroot`](https://github.com/GoogleContainerTools/distroless). Distroless has no shell, which is why `HEALTHCHECK` runs the dedicated `healthcheck` binary rather than `curl`. The `worker` service reuses that same image with its entrypoint overridden to `/app/worker` and `HEALTHCHECK_PORT=3001`, so the shared healthcheck probes the worker's port instead of the API's.
+`apps/backend/Dockerfile` is a multi-stage build: a `golang:1.26-alpine` builder compiles all five binaries — `api`, `worker`, `migrate`, `seed`, and `healthcheck` — into one image, and which one runs is chosen by overriding the container **command**. The runner is [`gcr.io/distroless/static-debian12:nonroot`](https://github.com/GoogleContainerTools/distroless); distroless has no shell, which is why `HEALTHCHECK` runs the dedicated `healthcheck` binary rather than `curl`. The `worker` service reuses that same image with `command: ["/app/worker"]` and `HEALTHCHECK_PORT=3001`, so the shared healthcheck probes the worker's port instead of the API's.
+
+The image ends in `CMD ["/app/api"]` and deliberately sets **no `ENTRYPOINT`**. An exec-form entrypoint would make a command override *append* to `/app/api` rather than replace it, so the worker, migrate, and seed services would each silently start a second API — and hosts that expose only a "start command" (Railway, see [`docs/09`](docs/09-railway-deploy.md)) give you no way to reset the entrypoint.
 
 `apps/frontend/Dockerfile` builds the Next.js standalone output on `node:${NODE_VERSION}-alpine`, where `NODE_VERSION` is a single build `ARG` shared by all three stages so the build and runtime majors can't diverge (override with `--build-arg NODE_VERSION=…`). The runner sets `HOSTNAME=0.0.0.0` explicitly — the standalone server otherwise binds to the container's assigned IP rather than all interfaces, and a loopback-based `HEALTHCHECK` would fail silently.
 
@@ -402,7 +500,13 @@ make lint    # golangci-lint if installed, else go vet ./...
 Two layers:
 
 - **Unit tests** per service, using interface mocks for the database and Redis.
-- **Integration tests** in `apps/backend/internal/server/`, run against real Postgres and Redis (service containers in CI). These encode `docs/02-api-contract.md` directly — every route, its happy path, and each of its error codes. Auth edge cases specifically covered: refresh rotation, token-family reuse revoking the family, the rate limit tripping at 5 attempts, and logout revoking all sessions plus blacklisting the access token.
+- **Integration tests** in `apps/backend/internal/server/`, run against real Postgres and Redis (service containers in CI). These encode `docs/02-api-contract.md` directly — every route, its happy path, and each of its error codes.
+
+The cases that are non-negotiable, because they are the ones where a regression is a security incident rather than a bug:
+
+*Auth* — refresh rotation; replaying a rotated token revoking the whole family; the rate limit tripping at 5 attempts; logout revoking every session and blacklisting the access token.
+
+*Gateway* — a denied tool never appearing in `tools/list`; a permission or allowlist change taking effect on the very next call rather than the next reconnect; a revoked, expired, or unknown PAT rejected with reasons the caller cannot tell apart; one tenant's connector and spreadsheets unreachable from another org's key; a rate-limited or scan-budget-exhausted call ending cleanly as `IsError` / `scan_complete: false` rather than a panic or a raw Go error reaching the model.
 
 CI (`.github/workflows/ci.yml`) runs lint, backend test, frontend (lint / typecheck / test / build), and a Docker build job. `release.yml` pushes images to ghcr on a green CI run against `main`.
 
@@ -445,5 +549,8 @@ make swagger         # regenerate the OpenAPI spec (requires swag)
 | [`docs/05-mcp-gateway.md`](docs/05-mcp-gateway.md) | Managed MCP Gateway architecture, phases, and shipped-vs-not status |
 | [`docs/06-sheets-adapter.md`](docs/06-sheets-adapter.md) | `google_sheets` connector spec: tool catalog, RBAC mapping, guardrails |
 | [`docs/07-sheets-adapter-decisions.md`](docs/07-sheets-adapter-decisions.md) | Why the adapter is shaped the way it is — the four decisions, what was left unbuilt and its trigger, and the risks still open. The 12 build steps are archived in `.claude/plans/archives/2026-08-18-sheets-adapter.md` |
+| [`docs/08-gateway-core.md`](docs/08-gateway-core.md) | The connector-agnostic boundary: which parts of the gateway belong to every connector and which belong to the one that happened to be first. Read before adding a second adapter |
+| [`docs/09-railway-deploy.md`](docs/09-railway-deploy.md) | How this monorepo is deployed on Railway, and the two settings that are easy to get wrong |
+| [`docs/10-transactional-email.md`](docs/10-transactional-email.md) | The outbox + Redis-token design behind verification and password reset, and the token-logging rule |
 | [`apps/frontend/README.md`](apps/frontend/README.md) | Frontend proxy, token model, page map |
 | [`k8s/README.md`](k8s/README.md) | Manifest layout and apply instructions |
