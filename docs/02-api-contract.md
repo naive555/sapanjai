@@ -18,6 +18,7 @@
 - **auth** — valid, non-blacklisted access JWT
 - **org** — auth + `x-organization-id` header + caller is a member of that org
 - **perm:`<action>`** — org + RBAC permission check. First used by the Connectors routes below: the permission check runs *before* membership is resolved, so a non-member gets 403 `Missing permission: <action>`, never `Not a member of this organization`.
+- **platform:`<role…>`** — auth + `users.platform_role` is one of the listed roles, read **fresh from the database on every request** and never carried as a JWT claim (`docs/11-admin-panel.md` D1). Used only by the `/admin` routes below. There is no `x-organization-id` and no membership check: these routes read across every organization, and platform staff typically hold no membership anywhere. A caller with no platform role, or with one not in the list, gets 403 `Insufficient permissions` — deliberately the same wording `FORBIDDEN` uses, so the console cannot be probed for which platform roles exist.
 
 ### Error responses
 
@@ -30,6 +31,8 @@ Guard failures:
 | Missing `x-organization-id`        | 400    | `Missing x-organization-id header` |
 | Not a member of the org            | 403    | `Not a member of this organization` |
 | Missing RBAC permission            | 403    | `Missing permission: <action>`   |
+| Banned user, any auth-guarded route | 401   | `Account suspended`              |
+| Missing/insufficient platform role | 403    | `Insufficient permissions`       |
 
 Service error map (service throws code → HTTP response):
 
@@ -41,6 +44,7 @@ Service error map (service throws code → HTTP response):
 | `INVALID_REFRESH_TOKEN` | 401    | Invalid refresh token                            |
 | `REFRESH_TOKEN_REUSE`   | 401    | Refresh token reuse detected                     |
 | `REFRESH_TOKEN_EXPIRED` | 401    | Refresh token expired                            |
+| `ACCOUNT_SUSPENDED`     | 403    | Account suspended                                |
 | `SLUG_TAKEN`            | 409    | Organization slug already taken                  |
 | `USER_NOT_FOUND`        | 404    | User not found                                   |
 | `ALREADY_MEMBER`        | 409    | User is already a member                         |
@@ -67,6 +71,8 @@ always returns `200 { success: true }`, whether or not the address belongs to
 an account and whether or not its 15-minute resend cooldown is currently
 active — a distinguishable response for "cooldown active" would itself be the
 enumeration oracle the uniform response exists to close.
+
+A banned account is rejected with **403 `ACCOUNT_SUSPENDED` from `POST /auth/login`** but **401 `Account suspended` from the guard** on an already-issued access token. The asymmetry is intentional: at login the credential is valid and the account is not, while mid-session the credential itself is no longer usable and the frontend's existing 401 path clears the session cleanly. Do not unify them. `RequireMCPKey` is a third case and stays silent about the reason — a banned key owner gets the same indistinguishable 401 as a revoked, expired, or unknown key (`docs/11-admin-panel.md` §4).
 
 `RATE_LIMITED` has exactly one definition (`apperror.Map`, for a future REST
 caller) but no REST route emits it today — the MCP gateway's rate limiter
@@ -456,6 +462,120 @@ no-store`, and `X-Content-Type-Options: nosniff`, and writes a best-effort
 `mcp.file.downloaded` audit row (`connector_id`, `file_id`, `mime_type`;
 actor `uid`, org `org` — both from the verified link, since this route has
 no re-resolved RBAC principal of its own).
+
+### Admin console (`/admin`)
+
+The platform-staff surface, and the one deliberate exception to tenant
+scoping: every route below reads **across all organizations**, guarded by
+`RequirePlatformRole("superadmin", "support")` rather than
+`RequireOrg`/`RequirePermission`. Design, threat model, and the decisions
+behind it: [`11-admin-panel.md`](11-admin-panel.md).
+
+Everything documented here is a **read**. `docs/11-admin-panel.md` §4's role
+matrix also lists superadmin-only mutations (plan/limit changes, delete org,
+`platform-role` grant, ban) and impersonation; **none of those are wired
+today**, and they belong in this contract when they are, not before. The only
+way to grant a platform role at present is the operator CLI
+(`make admin-grant EMAIL=… ROLE=superadmin|support|none`), which promotes an
+existing account and never creates one or sets a password; there is no API
+path to it today.
+
+Because every route in this phase is a read and support reads everything, the
+two roles are indistinguishable here: anything a superadmin can see, support
+can see. `GET /admin/me` reports which one the caller holds.
+
+**Shared list conventions.** Every list route takes `?limit=` (1–100, default
+50 — `GET /admin/audit-logs` allows up to 200) and `?offset=` (≥ 0, default
+0), and returns `{ items: [...], total }` rather than a bare array. `?search=`
+is a case-insensitive substring match; an absent or empty value binds "no
+filter" rather than an empty-string `ILIKE`. Out-of-range `limit`/`offset`,
+a non-UUID `organizationId`/`userId`, an unrecognized `role`/`status`, or an
+unparseable `from`/`to` are all 422 `Validation failed`.
+
+`total` is served from a 30-second Redis cache (`admin:count:<hash>`) keyed by
+the exact filter set, so paging through one search does not re-`COUNT(*)` per
+page. It is therefore allowed to lag a write by up to 30s. A Redis failure
+falls back to counting directly — an admin list may be slow when Redis is
+down, never broken.
+
+| Method/Path | Guard | Query | Behavior |
+| ----------- | ----- | ----- | -------- |
+| `GET /admin/me` | platform:`superadmin,support` | — | The calling staff account and its `platformRole`. This is what the console's layout guard calls to decide whether to render at all. |
+| `GET /admin/organizations` | platform:`superadmin,support` | `search`, `limit`, `offset` | Every org, oldest first. `search` matches name **or** slug. Each row carries `memberCount`/`connectorCount`/`mcpKeyCount` and `planName` (null for an org with no subscription). |
+| `GET /admin/organizations/:orgId` | platform:`superadmin,support` | — | One org's detail view: members, connectors (metadata only), MCP keys (metadata only), the 20 most recent audit entries, `planName`, and `effectiveLimits` (the custom-over-plan merge, resolved by `subscription.Service` rather than re-derived here). 404 `Resource not found` for an unknown **or malformed** id — a malformed UUID can never match a row, so it resolves to the same 404 rather than a 422. |
+| `GET /admin/users` | platform:`superadmin,support` | `search`, `role`, `banned`, `limit`, `offset` | Every user, oldest first. `search` matches email **or** display name. `role` is `superadmin`\|`support`\|`none` (`none` = no platform role); `banned` is a bool on whether `bannedAt` is set. |
+| `GET /admin/users/:userId` | platform:`superadmin,support` | — | One user's detail view: memberships with org name/slug/role, `bannedAt`/`banReason`, and `activeSessions`. **Never `password_hash`** — the response is mapped field-by-field from the row, never a struct embed. 404 `User not found` for an unknown or malformed id. |
+| `GET /admin/connectors` | platform:`superadmin,support` | `organizationId`, `type`, `status`, `search`, `limit`, `offset` | Every connector, oldest first, with its org's name joined in. `status` is `active`\|`inactive`\|`error`; `search` matches connector name. **Metadata only** — no `encrypted_config`, no decrypted config, and not even a "config present" boolean beyond what `status` already implies. |
+| `GET /admin/mcp-keys` | platform:`superadmin,support` | `organizationId`, `userId`, `search`, `limit`, `offset` | Every MCP key, oldest first, with org name and owner email joined in. `search` matches key name **or** owner email. **Never `key_hash`, never a raw token** — a raw token does not exist anywhere after its mint response. |
+| `GET /admin/audit-logs` | platform:`superadmin,support` | `organizationId`, `userId`, `action` (repeatable), `from`, `to`, `limit` (1–200), `offset` | Cross-org audit query, newest first, with org name and actor email joined in. `action` is repeatable (`?action=a&action=b`, matching any); a trailing `*` makes one entry a prefix match (`?action=mcp.*`), and everything else is matched literally with `%`/`_`/`\` escaped, so an action string can never be misread as a pattern. `from`/`to` are RFC3339 and are normalized to UTC before binding — `audit_logs.created_at` is a `timestamp` with no time zone, so an unnormalized offset would silently compare against the wrong instant. |
+| `GET /admin/system/stats` | platform:`superadmin,support` | — | Platform-wide counts for the console landing page: orgs, users, connectors, MCP keys (total and active), active sessions, audit rows, the `email_outbox` breakdown, 7-day signup deltas, org-count per plan, and Redis's `used_memory_human`. Same 30s count cache as the lists. A rising `emailOutbox.failed` is the earliest signal that Resend or the `EMAIL_FROM` domain is misconfigured. |
+| `GET /admin/plans` | platform:`superadmin,support` | — | Every plan with its raw `limits` JSON. `total` is simply `len(items)` — plans is a small seeded table with no filters, so it bypasses the count cache. |
+
+Response shapes:
+
+```
+GET /admin/me                     -> { id, email, displayName, platformRole }
+
+GET /admin/organizations          -> { items: [{ id, name, slug, createdAt, memberCount,
+                                                 connectorCount, mcpKeyCount, planName }], total }
+
+GET /admin/organizations/:orgId   -> { id, name, slug, createdAt, updatedAt, planName,
+                                       effectiveLimits: { <limit>: number },
+                                       members:  [{ userId, email, displayName, role, joinedAt }],
+                                       connectors: [ <ConnectorItem> ],
+                                       mcpKeys:    [ <MCPKeyItem> ],
+                                       recentAuditLogs: [{ id, userId, action, metadata, createdAt }] }
+
+GET /admin/users                  -> { items: [{ id, email, displayName, isVerified, platformRole,
+                                                 bannedAt, createdAt, orgCount }], total }
+
+GET /admin/users/:userId          -> { id, email, displayName, isVerified, platformRole, bannedAt,
+                                       banReason, createdAt, activeSessions,
+                                       memberships: [{ organizationId, organizationName,
+                                                       organizationSlug, role, joinedAt }] }
+
+GET /admin/connectors             -> { items: [ ConnectorItem ], total }
+    ConnectorItem                 =  { id, organizationId, organizationName, name, type, status,
+                                       lastHealthCheckAt, createdAt }
+
+GET /admin/mcp-keys               -> { items: [ MCPKeyItem ], total }
+    MCPKeyItem                    =  { id, organizationId, organizationName, userId, userEmail,
+                                       name, scopes, lastUsedAt, expiresAt, revokedAt, createdAt }
+
+GET /admin/audit-logs             -> { items: [{ id, organizationId, organizationName, userId,
+                                                 userEmail, action, metadata, createdAt }], total }
+
+GET /admin/system/stats           -> { organizations, users, connectors, mcpKeysTotal, mcpKeysActive,
+                                       sessionsActive, auditLogs,
+                                       emailOutbox: { pending, sent, failed },
+                                       usersLast7d, organizationsLast7d,
+                                       planBreakdown: [{ planName, orgCount }],
+                                       redisUsedMemoryHuman }
+
+GET /admin/plans                  -> { items: [{ id, name, limits, createdAt }], total }
+```
+
+**What these routes must never return**, restated here because it is the rule
+most likely to be relaxed by a well-meaning "the console needs to debug this"
+change (`docs/11-admin-panel.md` §7): a connector's `config`, sealed or
+opened; an MCP key's `key_hash` or raw token; a user's `password_hash`. A
+staff console that can read a tenant's upstream credentials is a credential
+store with a login page, and the gateway's whole security argument depends on
+it not being one. Connector health is diagnosable from `status` and
+`lastHealthCheckAt` plus the tenant's own `mcp.*` audit trail, which is why
+those are joined into these views instead.
+
+This rule is enforced by test, not by review habit:
+`internal/server/admin_integration_test.go` seeds a connector whose sealed
+config contains a known secret, then walks every admin response — including
+nested objects — asserting both that no `encrypted_config`/`password_hash`/
+`key_hash` key appears under any spelling and that the secret's raw bytes
+appear nowhere in the body. A leak under a renamed key still fails.
+
+Admin reads are **not** themselves audit-logged today. That is a known gap
+rather than a decision — the audit trail records what tenants do, not what
+staff looked at — and it is worth closing before impersonation ships, since
+impersonation is the point at which "who looked at this" starts to matter.
 
 ### API docs
 
