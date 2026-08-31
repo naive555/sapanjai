@@ -191,9 +191,54 @@ only and records `no RESEND_API_KEY configured` in `email_outbox.last_error`.
 
 Optional, with defaults: `APP_ENV`, `LOG_LEVEL`, `JWT_ACCESS_EXPIRES_IN`,
 `JWT_REFRESH_EXPIRES_IN`, `MCP_RATE_LIMIT_PER_MIN`,
-`CONNECTOR_MASTER_KEY_PREVIOUS`, and the worker's `WORKER_JOB_TIMEOUT` /
-`SESSION_CLEANUP_*` / `EMAIL_DISPATCH_INTERVAL` / `EMAIL_DISPATCH_BATCH_SIZE` /
+`CONNECTOR_MASTER_KEY_PREVIOUS`, `ADMIN_IP_ALLOWLIST`, `ADMIN_REQUIRE_2FA`
+(`api` only — the worker never serves `/admin`, so neither var does anything
+there), and the worker's `WORKER_JOB_TIMEOUT` / `SESSION_CLEANUP_*` /
+`EMAIL_DISPATCH_INTERVAL` / `EMAIL_DISPATCH_BATCH_SIZE` /
 `EMAIL_MAX_ATTEMPTS` / `EMAIL_OUTBOX_RETENTION`. See CLAUDE.md § Environment.
+
+### Admin console: `ADMIN_IP_ALLOWLIST` has no in-app recovery path
+
+`ADMIN_IP_ALLOWLIST` (comma-separated CIDRs, parsed once at `api` boot — a
+malformed entry fails the deploy rather than silently letting every request
+through) restricts `/admin` before `RequireAuth` even runs. **A wrong value
+locks every platform staff account out of the console, and there is no
+break-glass account, no bypass header, and no way to fix it from inside the
+console it just locked you out of.** Recovery is: fix the variable on the
+`api` service, redeploy. Test any change against a non-empty value in a
+non-production environment first. Left unset (the default), the check is
+disabled — required for local dev and for any deployment that hasn't
+explicitly opted in.
+
+What it actually filters depends on how the request reached `api`, which is
+why this lives in this document rather than only in `.env.example`. Every
+`/admin` request from the console's own UI arrives through `web`'s runtime
+proxy (`app/api/[...path]/route.ts`) over Railway's **private** network — the
+same path `BACKEND_URL` uses for everything else on this page. `api`'s
+`e.IPExtractor` (`internal/server/server.go`) is configured to trust that hop
+(`TrustPrivateNet`) and read the real caller's address from
+`X-Forwarded-For` beyond it — but `route.ts` unconditionally **strips** any
+inbound `X-Forwarded-For`/`X-Real-IP` before it forwards a request (see that
+file's own comment), rather than trying to tell a genuine upstream entry
+apart from one the browser itself set. The consequence: for console traffic
+proxied through `web`, `api` sees `web`'s own private-network address, not
+the staff member's — there is no trustworthy signal of "which office/VPN did
+this admin call from" once headers from the browser are refused on
+principle. `ADMIN_IP_ALLOWLIST` is therefore a real defense against
+internet-wide scanning of `api`'s public `/admin/*` routes directly (an
+off-network request gets a 404 before authenticating at all, which is the
+control's actual job), but it is **not** a substitute for restricting who can
+reach the console's UI in the first place — that has to happen in front of
+`web` (Railway access control on the `web` service, a WAF rule, or a VPN
+requirement) if per-office/VPN granularity is required. See
+`internal/server/server.go`'s `e.IPExtractor` comment for the full trust
+chain this depends on.
+
+`ADMIN_REQUIRE_2FA` (default `true`) gates every `/admin` route except
+`POST /admin/2fa/{enroll,confirm,verify}` behind a confirmed TOTP step-up,
+cached 12h per admin in Redis. It has no equivalent lockout risk — enroll and
+confirm are always reachable to any platform-role account regardless of this
+setting — but note it does nothing on the worker either.
 
 Rotating `CONNECTOR_MASTER_KEY` without moving the old value into
 `CONNECTOR_MASTER_KEY_PREVIOUS` makes every stored connector config
