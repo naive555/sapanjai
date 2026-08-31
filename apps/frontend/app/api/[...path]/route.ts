@@ -71,6 +71,22 @@ async function proxy(request: NextRequest, path: string[]): Promise<Response> {
   headers.delete("host");
   headers.delete("content-length");
 
+  // Never forward a client-supplied X-Forwarded-For/X-Real-IP. `headers` above
+  // is a copy of whatever the caller sent, and `fetch` would otherwise relay
+  // it to the backend verbatim — so a request crafted with
+  // `X-Forwarded-For: <anything>` reached the API completely unmodified,
+  // including an address the backend's ADMIN_IP_ALLOWLIST (docs/11-admin-panel.md
+  // Task 6.2) or its audit-log "ip" metadata would treat as trustworthy.
+  // Deleting rather than trying to sanitize/re-derive a "real" value is
+  // deliberate: this process has no reliable way to tell a genuine upstream
+  // hop's entry apart from one the client fabricated once both live in the
+  // same header, and guessing wrong would silently reopen exactly this hole.
+  // The backend's own e.IPExtractor (apps/backend/internal/server/server.go)
+  // then sees, at most, whatever this proxy's own connection looks like —
+  // never anything the original caller wrote.
+  headers.delete("x-forwarded-for");
+  headers.delete("x-real-ip");
+
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const startedAt = Date.now();
 
