@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/sapanjai/backend/internal/infra/database"
 )
 
@@ -198,7 +200,7 @@ func TestIntegration_ResendVerification(t *testing.T) {
 }
 
 func TestIntegration_Me(t *testing.T) {
-	ts, _, _ := setupTestServer(t)
+	ts, _, store := setupTestServer(t)
 	client := ts.Client()
 
 	t.Run("requires auth", func(t *testing.T) {
@@ -226,6 +228,25 @@ func TestIntegration_Me(t *testing.T) {
 		}
 		if _, ok := body["createdAt"].(string); !ok {
 			t.Fatalf("missing createdAt: %v", body)
+		}
+		// platformRole is nil for every tenant user — the tenant nav (Task
+		// 5.2) reads this to decide whether to render an "Admin" entry at
+		// all, and a freshly registered account is never platform staff.
+		if body["platformRole"] != nil {
+			t.Fatalf("platformRole = %v, want nil", body["platformRole"])
+		}
+	})
+
+	t.Run("reflects platformRole once the account is promoted", func(t *testing.T) {
+		user := registerUser(t, client, ts.URL, "me-platform-role")
+		promoteToPlatformRole(t, store, uuid.MustParse(user.UserID), "superadmin")
+
+		resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/auth/me", nil, authHeader(user.AccessToken))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body = %v", resp.StatusCode, body)
+		}
+		if body["platformRole"] != "superadmin" {
+			t.Fatalf("platformRole = %v, want %q", body["platformRole"], "superadmin")
 		}
 	})
 }
