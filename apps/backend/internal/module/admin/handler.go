@@ -62,6 +62,17 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	// both roles), and the token it mints is itself read-only. It is a POST
 	// purely because it has a body and a side effect worth auditing.
 	g.POST("/users/:userId/impersonate", h.impersonate, read)
+
+	// TOTP step-up (Phase 6, Task 6.3) sits on RequirePlatformRoleNo2FA, NOT
+	// on `read`/`write` above (both of which enforce ADMIN_REQUIRE_2FA) —
+	// the chicken-and-egg the guard's own doc comment names: a staff member
+	// cannot complete step-up through a route step-up itself gates. Both
+	// roles get all three: enroll/confirm set up 2FA, verify is the step-up
+	// check every other route depends on.
+	noTwoFA := guards.RequirePlatformRoleNo2FA("superadmin", "support")
+	g.POST("/2fa/enroll", h.enrollTOTP, noTwoFA)
+	g.POST("/2fa/confirm", h.confirmTOTP, noTwoFA)
+	g.POST("/2fa/verify", h.verifyTOTP, noTwoFA)
 }
 
 // adminContext builds the AdminContext every Phase 3 mutation passes to its
@@ -70,10 +81,14 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 // inside the service (execution plan Task 3.1 — CLAUDE.md's
 // handler->service->sqlc convention: no HTTP concerns inside a service).
 //
-// c.RealIP() trusts the X-Forwarded-For header unconditionally until
-// e.IPExtractor is configured (Phase 6 Task 6.1, not done in this phase) —
-// until then, treat the ip this produces as attacker-controlled input, not
-// evidence of where a request actually came from.
+// c.RealIP() is governed by e.IPExtractor (server.go, Phase 6 Task 6.1) and
+// by apps/frontend's proxy stripping any inbound X-Forwarded-For/X-Real-IP
+// before forwarding — a caller can no longer inject an arbitrary chain, so
+// this is no longer attacker-controlled input. It is still not a
+// per-staff-member location, though: every admin request is relayed through
+// that same frontend proxy, so this resolves to the frontend's own private
+// network address for all of them. See AdminContext's doc comment and
+// server.go's e.IPExtractor comment for the full trust chain.
 func adminContext(c echo.Context) AdminContext {
 	return AdminContext{
 		AdminID:   appmw.UserID(c),
@@ -709,4 +724,81 @@ func (h *Handler) impersonate(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+// ==== TOTP step-up (execution plan Phase 6, Task 6.3) ====
+
+// enrollTOTP generates a fresh secret for the calling staff member and
+// returns its otpauth:// URI once. Sits on RequirePlatformRoleNo2FA — the
+// chicken-and-egg is that a staff member with ADMIN_REQUIRE_2FA=true cannot
+// reach a 2FA-gated route to set 2FA up in the first place.
+// @Summary  Enroll a fresh TOTP secret (returns the otpauth:// URI once)
+// @Tags     admin
+// @Security BearerAuth
+// @Produce  json
+// @Success  200  {object}  TOTPEnrollResponse
+// @Failure  401  {object}  httpx.ErrorResponse  "Unauthorized"
+// @Failure  403  {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Router   /admin/2fa/enroll [post]
+func (h *Handler) enrollTOTP(c echo.Context) error {
+	resp, err := h.service.EnrollTOTP(c.Request().Context(), appmw.UserID(c), appmw.UserEmail(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// confirmTOTP verifies the first code from a just-enrolled authenticator
+// and returns ten recovery codes once.
+// @Summary  Confirm TOTP enrollment (returns ten recovery codes once)
+// @Tags     admin
+// @Security BearerAuth
+// @Accept   json
+// @Produce  json
+// @Param    body  body      TOTPConfirmRequest  true  "6-digit code from the authenticator app"
+// @Success  200   {object}  TOTPConfirmResponse
+// @Failure  400   {object}  httpx.ErrorResponse  "TOTP_NOT_ENROLLED"
+// @Failure  401   {object}  httpx.ErrorResponse  "INVALID_TOTP_CODE / Unauthorized"
+// @Failure  403   {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Failure  422   {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /admin/2fa/confirm [post]
+func (h *Handler) confirmTOTP(c echo.Context) error {
+	var req TOTPConfirmRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	resp, err := h.service.ConfirmTOTP(c.Request().Context(), appmw.UserID(c), req.Code)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// verifyTOTP is the step-up check: on success it sets the admin:2fa:<userId>
+// Redis key every other /admin route requires when ADMIN_REQUIRE_2FA=true.
+// code is tried as a live TOTP code first, then as an unused recovery code.
+// @Summary  Verify a TOTP or recovery code (step-up, 12h)
+// @Tags     admin
+// @Security BearerAuth
+// @Accept   json
+// @Produce  json
+// @Param    body  body      TOTPVerifyRequest  true  "TOTP code or an unused recovery code"
+// @Success  200   {object}  SuccessResponse
+// @Failure  400   {object}  httpx.ErrorResponse  "TOTP_NOT_ENROLLED"
+// @Failure  401   {object}  httpx.ErrorResponse  "INVALID_TOTP_CODE / Unauthorized"
+// @Failure  403   {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Failure  422   {object}  httpx.ErrorResponse  "Validation failed"
+// @Failure  429   {object}  httpx.ErrorResponse  "TOO_MANY_ATTEMPTS"
+// @Router   /admin/2fa/verify [post]
+func (h *Handler) verifyTOTP(c echo.Context) error {
+	var req TOTPVerifyRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	if err := h.service.VerifyTOTP(c.Request().Context(), appmw.UserID(c), req.Code); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
 }

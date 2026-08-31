@@ -40,11 +40,13 @@ type tokenVerifier interface {
 var safeMethods = []string{http.MethodGet, http.MethodHead, http.MethodOptions}
 
 // blacklistChecker is the subset of *redis.Auth the guards depend on: the
-// access-token blacklist and the ban cache behind Guards.verify's durable
-// ban check (see its doc comment).
+// access-token blacklist, the ban cache behind Guards.verify's durable ban
+// check (see its doc comment), and the step-up 2FA cache RequirePlatformRole
+// consults (internal/middleware/platform.go, execution plan Task 6.3).
 type blacklistChecker interface {
 	IsBlacklisted(ctx context.Context, token string) (bool, error)
 	IsBanned(ctx context.Context, userID uuid.UUID) (bool, error)
+	IsTwoFactorVerified(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // userStore is the subset of *database.Store the guards depend on: org
@@ -72,11 +74,27 @@ type Guards struct {
 	blacklist blacklistChecker
 	store     userStore
 	rbac      permissionChecker
+
+	// adminRequire2FA gates RequirePlatformRole's step-up check (execution
+	// plan Task 6.3). Set via SetAdminRequire2FA rather than a NewGuards
+	// parameter so the five existing call sites across this package's and
+	// other modules' tests don't all need updating for a single boolean
+	// only server.go's real wiring cares about; it defaults false, which is
+	// the safe "2FA not enforced" behavior every test that never calls the
+	// setter already assumes.
+	adminRequire2FA bool
 }
 
 // NewGuards builds a Guards from its narrow dependencies.
 func NewGuards(token tokenVerifier, blacklist blacklistChecker, store userStore, rbac permissionChecker) *Guards {
 	return &Guards{token: token, blacklist: blacklist, store: store, rbac: rbac}
+}
+
+// SetAdminRequire2FA sets whether RequirePlatformRole enforces step-up TOTP
+// (ADMIN_REQUIRE_2FA, execution plan Task 6.3). Called once from server.New
+// after construction.
+func (g *Guards) SetAdminRequire2FA(require bool) {
+	g.adminRequire2FA = require
 }
 
 // verify reproduces plugin.ts's verifyToken exactly, including check order:

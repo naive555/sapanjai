@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -126,6 +127,31 @@ type Config struct {
 	// EmailOutboxRetention is how long 'sent'/'failed' rows are kept before
 	// the dispatch job prunes them.
 	EmailOutboxRetention time.Duration
+
+	// AdminIPAllowlist gates the /admin route group (execution plan Task
+	// 6.2, docs/11-admin-panel.md) before RequireAuth runs at all — an
+	// off-network request never reaches the login/2FA surface. Parsed at
+	// boot, not per-request, so a malformed CIDR fails startup instead of
+	// silently letting every request through (or none). Nil/empty disables
+	// the check entirely, which is the required default for local dev and
+	// for any deployment that hasn't set ADMIN_IP_ALLOWLIST.
+	//
+	// See internal/server/server.go's e.IPExtractor comment and
+	// docs/09-railway-deploy.md for what c.RealIP() — the value this list
+	// is matched against — actually depends on: through this app's own
+	// frontend proxy (100% of the console's browser traffic), it resolves
+	// to the frontend's own network address, not an individual staff
+	// member's, so this allowlist is not a substitute for restricting
+	// access at the platform edge if that granularity is required.
+	AdminIPAllowlist []*net.IPNet
+
+	// AdminRequire2FA gates every /admin route except
+	// POST /admin/2fa/{enroll,confirm,verify} behind a confirmed
+	// admin:2fa:<userId> Redis key (execution plan Task 6.3). Defaults true;
+	// set false only for local development, where minting a TOTP enrollment
+	// for every throwaway seeded account is friction with no security
+	// benefit.
+	AdminRequire2FA bool
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -262,11 +288,60 @@ func Load() (*Config, error) {
 		cfg.EmailMaxAttempts = emailMaxAttempts
 	}
 
+	allowlist, err := parseCIDRList(os.Getenv("ADMIN_IP_ALLOWLIST"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("ADMIN_IP_ALLOWLIST is invalid: %v", err))
+	} else {
+		cfg.AdminIPAllowlist = allowlist
+	}
+
+	require2FA, err := strconv.ParseBool(getEnv("ADMIN_REQUIRE_2FA", "true"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("ADMIN_REQUIRE_2FA is not a valid boolean: %v", err))
+	} else {
+		cfg.AdminRequire2FA = require2FA
+	}
+
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 
 	return cfg, nil
+}
+
+// parseCIDRList parses a comma-separated list of CIDRs (ADMIN_IP_ALLOWLIST).
+// "" returns (nil, nil) — an empty list, not an error — since an unset
+// variable must disable the allowlist rather than fail startup. Every
+// non-empty entry must parse as a CIDR or the whole config load fails: a
+// single typo'd entry silently narrowing (or, worse, silently widening,
+// if the bad entry were just dropped) the allowlist is exactly the kind of
+// mistake that must be caught at boot, not discovered when staff are
+// locked out.
+func parseCIDRList(raw string) ([]*net.IPNet, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	var nets []*net.IPNet
+	var problems []string
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(entry)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%q: %v", entry, err))
+			continue
+		}
+		nets = append(nets, ipNet)
+	}
+
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nets, nil
 }
 
 // EmailEnabled reports whether a real Resend key is configured. When false

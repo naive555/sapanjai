@@ -42,6 +42,10 @@ func (f *fakeBlacklistChecker) IsBanned(ctx context.Context, userID uuid.UUID) (
 	return false, nil
 }
 
+func (f *fakeBlacklistChecker) IsTwoFactorVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 type fakeMembershipStore struct{}
 
 func (f *fakeMembershipStore) GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {

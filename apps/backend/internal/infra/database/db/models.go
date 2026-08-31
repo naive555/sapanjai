@@ -137,3 +137,11 @@ type User struct {
 	BannedAt     pgtype.Timestamp `json:"banned_at"`
 	BanReason    *string          `json:"ban_reason"`
 }
+
+type UserTotp struct {
+	UserID          uuid.UUID        `json:"user_id"`
+	SecretEncrypted json.RawMessage  `json:"secret_encrypted"`
+	RecoveryCodes   []string         `json:"recovery_codes"`
+	ConfirmedAt     pgtype.Timestamp `json:"confirmed_at"`
+	CreatedAt       time.Time        `json:"created_at"`
+}

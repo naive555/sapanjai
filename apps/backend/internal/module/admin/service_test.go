@@ -44,6 +44,11 @@ type mockAdminStore struct {
 	adminDeletePlan               func(ctx context.Context, id uuid.UUID) error
 	adminDeletePlanCalls          int
 	adminCountSubscriptionsByPlan func(ctx context.Context, planID uuid.UUID) (int64, error)
+
+	upsertUserTOTPSecret        func(ctx context.Context, arg db.UpsertUserTOTPSecretParams) error
+	getUserTOTP                 func(ctx context.Context, userID uuid.UUID) (db.UserTotp, error)
+	confirmUserTOTP             func(ctx context.Context, arg db.ConfirmUserTOTPParams) error
+	updateUserTOTPRecoveryCodes func(ctx context.Context, arg db.UpdateUserTOTPRecoveryCodesParams) error
 }
 
 func (m *mockAdminStore) GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error) {
@@ -98,6 +103,22 @@ func (m *mockAdminStore) AdminCountSubscriptionsByPlan(ctx context.Context, plan
 	return m.adminCountSubscriptionsByPlan(ctx, planID)
 }
 
+func (m *mockAdminStore) UpsertUserTOTPSecret(ctx context.Context, arg db.UpsertUserTOTPSecretParams) error {
+	return m.upsertUserTOTPSecret(ctx, arg)
+}
+
+func (m *mockAdminStore) GetUserTOTP(ctx context.Context, userID uuid.UUID) (db.UserTotp, error) {
+	return m.getUserTOTP(ctx, userID)
+}
+
+func (m *mockAdminStore) ConfirmUserTOTP(ctx context.Context, arg db.ConfirmUserTOTPParams) error {
+	return m.confirmUserTOTP(ctx, arg)
+}
+
+func (m *mockAdminStore) UpdateUserTOTPRecoveryCodes(ctx context.Context, arg db.UpdateUserTOTPRecoveryCodesParams) error {
+	return m.updateUserTOTPRecoveryCodes(ctx, arg)
+}
+
 var _ adminStore = (*mockAdminStore)(nil)
 
 // mockAdminAuth hand-mocks adminAuth for the reauth/ban rate-limit and
@@ -114,6 +135,16 @@ type mockAdminAuth struct {
 	banErr     error
 	unbanCalls []uuid.UUID
 	unbanErr   error
+
+	getTwoFactorAttempts func(ctx context.Context, userID uuid.UUID) (int, error)
+
+	setTwoFactorVerifiedCalls []uuid.UUID
+	setTwoFactorVerifiedErr   error
+
+	incrementTwoFactorCalls int
+	incrementTwoFactorErr   error
+	resetTwoFactorCalls     int
+	resetTwoFactorErr       error
 }
 
 func (m *mockAdminAuth) GetReauthAttempts(ctx context.Context, userID uuid.UUID) (int, error) {
@@ -138,6 +169,28 @@ func (m *mockAdminAuth) Ban(ctx context.Context, userID uuid.UUID) error {
 func (m *mockAdminAuth) Unban(ctx context.Context, userID uuid.UUID) error {
 	m.unbanCalls = append(m.unbanCalls, userID)
 	return m.unbanErr
+}
+
+func (m *mockAdminAuth) SetTwoFactorVerified(ctx context.Context, userID uuid.UUID) error {
+	m.setTwoFactorVerifiedCalls = append(m.setTwoFactorVerifiedCalls, userID)
+	return m.setTwoFactorVerifiedErr
+}
+
+func (m *mockAdminAuth) GetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int, error) {
+	if m.getTwoFactorAttempts == nil {
+		return 0, nil
+	}
+	return m.getTwoFactorAttempts(ctx, userID)
+}
+
+func (m *mockAdminAuth) IncrementTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int64, error) {
+	m.incrementTwoFactorCalls++
+	return int64(m.incrementTwoFactorCalls), m.incrementTwoFactorErr
+}
+
+func (m *mockAdminAuth) ResetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) error {
+	m.resetTwoFactorCalls++
+	return m.resetTwoFactorErr
 }
 
 var _ adminAuth = (*mockAdminAuth)(nil)
@@ -189,7 +242,7 @@ func TestService_Me_HappyPath(t *testing.T) {
 			}
 			return db.User{ID: userID, Email: "alice@example.com", DisplayName: &name, PlatformRole: &role}, nil
 		},
-	}, &mockCountCache{}, nil, nil, nil, nil, nil)
+	}, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	got, err := svc.Me(context.Background(), userID)
 	if err != nil {
@@ -210,7 +263,7 @@ func TestService_Me_NilPlatformRoleIsEmptyString(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: userID, Email: "bob@example.com", PlatformRole: nil}, nil
 		},
-	}, &mockCountCache{}, nil, nil, nil, nil, nil)
+	}, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	got, err := svc.Me(context.Background(), userID)
 	if err != nil {
@@ -227,7 +280,7 @@ func TestService_Me_DatabaseErrorPropagates(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{}, dbErr
 		},
-	}, &mockCountCache{}, nil, nil, nil, nil, nil)
+	}, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	_, err := svc.Me(context.Background(), uuid.New())
 	if !errors.Is(err, dbErr) {
@@ -239,7 +292,7 @@ func TestService_Me_DatabaseErrorPropagates(t *testing.T) {
 
 func TestCachedCount_MissComputesAndCaches(t *testing.T) {
 	cache := &mockCountCache{}
-	svc := NewService(nil, cache, nil, nil, nil, nil, nil)
+	svc := NewService(nil, cache, nil, nil, nil, nil, nil, nil)
 
 	computed := 0
 	compute := func() (int64, error) {
@@ -264,7 +317,7 @@ func TestCachedCount_MissComputesAndCaches(t *testing.T) {
 
 func TestCachedCount_HitSkipsCompute(t *testing.T) {
 	cache := &mockCountCache{values: map[string]int64{"key-a": 7}}
-	svc := NewService(nil, cache, nil, nil, nil, nil, nil)
+	svc := NewService(nil, cache, nil, nil, nil, nil, nil, nil)
 
 	compute := func() (int64, error) {
 		t.Fatal("compute should not be called on a cache hit")
@@ -284,7 +337,7 @@ func TestCachedCount_DifferentFilterKeysMissIndependently(t *testing.T) {
 	// The whole point of requiring every filter in the key: two different
 	// filter sets must never share a cached total.
 	cache := &mockCountCache{values: map[string]int64{"key-a": 7}}
-	svc := NewService(nil, cache, nil, nil, nil, nil, nil)
+	svc := NewService(nil, cache, nil, nil, nil, nil, nil, nil)
 
 	n, err := svc.cachedCount(context.Background(), "key-b", func() (int64, error) { return 99, nil })
 	if err != nil {
@@ -297,7 +350,7 @@ func TestCachedCount_DifferentFilterKeysMissIndependently(t *testing.T) {
 
 func TestCachedCount_CacheReadErrorFallsBackToCompute(t *testing.T) {
 	cache := &mockCountCache{getErr: errors.New("redis unavailable")}
-	svc := NewService(nil, cache, nil, nil, nil, nil, nil)
+	svc := NewService(nil, cache, nil, nil, nil, nil, nil, nil)
 
 	n, err := svc.cachedCount(context.Background(), "key-a", func() (int64, error) { return 5, nil })
 	if err != nil {
@@ -310,7 +363,7 @@ func TestCachedCount_CacheReadErrorFallsBackToCompute(t *testing.T) {
 
 func TestCachedCount_ComputeErrorPropagates(t *testing.T) {
 	computeErr := errors.New("query failed")
-	svc := NewService(nil, &mockCountCache{}, nil, nil, nil, nil, nil)
+	svc := NewService(nil, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	_, err := svc.cachedCount(context.Background(), "key-a", func() (int64, error) { return 0, computeErr })
 	if !errors.Is(err, computeErr) {
@@ -417,7 +470,7 @@ func TestReauth_Success(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: adminID, PasswordHash: adminBcryptHash}, nil
 		},
-	}, &mockCountCache{}, nil, nil, auth, nil, nil)
+	}, &mockCountCache{}, nil, nil, auth, nil, nil, nil)
 
 	if err := svc.reauth(context.Background(), adminID, "password123"); err != nil {
 		t.Fatalf("reauth() unexpected error: %v", err)
@@ -437,7 +490,7 @@ func TestReauth_WrongPassword(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: adminID, PasswordHash: adminBcryptHash}, nil
 		},
-	}, &mockCountCache{}, nil, nil, auth, nil, nil)
+	}, &mockCountCache{}, nil, nil, auth, nil, nil, nil)
 
 	err := svc.reauth(context.Background(), adminID, "totally-wrong")
 	if appErrorCode(t, err) != apperror.ReauthFailed {
@@ -457,7 +510,7 @@ func TestReauth_TooManyAttempts(t *testing.T) {
 	// getUserByID is intentionally left nil: exhausting the limiter must
 	// short-circuit before the admin's row is ever loaded or a password
 	// compared — calling the unset func would nil-panic and fail the test.
-	svc := NewService(&mockAdminStore{}, &mockCountCache{}, nil, nil, auth, nil, nil)
+	svc := NewService(&mockAdminStore{}, &mockCountCache{}, nil, nil, auth, nil, nil, nil)
 
 	err := svc.reauth(context.Background(), adminID, "password123")
 	if appErrorCode(t, err) != apperror.TooManyAttempts {
@@ -534,7 +587,7 @@ func TestChangePlatformRole_CannotTargetSelf(t *testing.T) {
 		// withTx left nil: reaching it would mean the self-target guard
 		// didn't short-circuit before the write.
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	role := "support"
 	err := svc.ChangePlatformRole(context.Background(), AdminContext{AdminID: adminID}, adminID, &role, "password123")
@@ -553,7 +606,7 @@ func TestChangePlatformRole_TargetNotFound(t *testing.T) {
 			return db.User{}, pgx.ErrNoRows
 		},
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	role := "support"
 	err := svc.ChangePlatformRole(context.Background(), AdminContext{AdminID: adminID}, targetID, &role, "password123")
@@ -574,7 +627,7 @@ func TestChangePlatformRole_SuperadminLimit(t *testing.T) {
 		countSuperadmins: func(ctx context.Context) (int64, error) { return superadminCap, nil },
 		// withTx left nil: the cap must be enforced before any write.
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	role := "superadmin"
 	err := svc.ChangePlatformRole(context.Background(), AdminContext{AdminID: adminID}, targetID, &role, "password123")
@@ -599,7 +652,7 @@ func TestChangePlatformRole_DemotingPastCapIsNotBlocked(t *testing.T) {
 		// countSuperadmins left nil: calling it would fail this test.
 		withTx: withMockAdminTx(&tx),
 	}
-	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, alwaysAllowReauth(), nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, alwaysAllowReauth(), nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	if err := svc.ChangePlatformRole(context.Background(), AdminContext{AdminID: adminID}, targetID, nil, "password123"); err != nil {
 		t.Fatalf("ChangePlatformRole() unexpected error: %v", err)
@@ -623,7 +676,7 @@ func TestChangePlatformRole_HappyPath_RevokesSessionsAndAudits(t *testing.T) {
 		withTx:           withMockAdminTx(&tx),
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, alwaysAllowReauth(), nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, alwaysAllowReauth(), nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	role := "superadmin"
 	if err := svc.ChangePlatformRole(context.Background(), AdminContext{AdminID: adminID, IP: "203.0.113.5", UserAgent: "test-agent"}, targetID, &role, "password123"); err != nil {
@@ -650,7 +703,7 @@ func TestSetBan_CannotTargetSelf(t *testing.T) {
 			return db.User{ID: adminID, PasswordHash: adminBcryptHash}, nil
 		},
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	err := svc.SetBan(context.Background(), AdminContext{AdminID: adminID}, adminID, true, nil, "password123")
 	if appErrorCode(t, err) != apperror.CannotTargetSelf {
@@ -671,7 +724,7 @@ func TestSetBan_TargetIsPlatformStaff(t *testing.T) {
 		// withTx left nil: a platform-staff target must be refused before
 		// any write, ban or unban alike.
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	err := svc.SetBan(context.Background(), AdminContext{AdminID: adminID}, targetID, true, nil, "password123")
 	if appErrorCode(t, err) != apperror.TargetIsPlatformStaff {
@@ -693,7 +746,7 @@ func TestSetBan_HappyPath_BansAndRevokesSessions(t *testing.T) {
 	}
 	auth := alwaysAllowReauth()
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, auth, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, auth, nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	reason := "fraud"
 	if err := svc.SetBan(context.Background(), AdminContext{AdminID: adminID}, targetID, true, &reason, "password123"); err != nil {
@@ -735,7 +788,7 @@ func TestSetBan_BanRedisFailureIsBestEffort(t *testing.T) {
 	}
 	auth := alwaysAllowReauth()
 	auth.banErr = errors.New("redis unavailable")
-	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, auth, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, auth, nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	if err := svc.SetBan(context.Background(), AdminContext{AdminID: adminID}, targetID, true, nil, "password123"); err != nil {
 		t.Fatalf("SetBan() error = %v, want nil (a Redis ban-cache failure must not fail the request)", err)
@@ -759,7 +812,7 @@ func TestSetBan_UnbanRedisFailurePropagates(t *testing.T) {
 	}
 	auth := alwaysAllowReauth()
 	auth.unbanErr = errors.New("redis unavailable")
-	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, auth, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, auth, nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	err := svc.SetBan(context.Background(), AdminContext{AdminID: adminID}, targetID, false, nil, "password123")
 	if !errors.Is(err, auth.unbanErr) {
@@ -787,7 +840,7 @@ func TestDeleteOrganization_ConfirmMismatch(t *testing.T) {
 		// no-op default is fine here since adminDeleteOrgCalls is what's
 		// asserted, not a custom func.
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, alwaysAllowReauth(), nil, nil, nil)
 
 	err := svc.DeleteOrganization(context.Background(), AdminContext{AdminID: adminID}, orgID, "wrong-slug", "password123")
 	if appErrorCode(t, err) != apperror.OrgConfirmMismatch {
@@ -819,7 +872,7 @@ func TestDeleteOrganization_HappyPath_AuditsBeforeDeleting(t *testing.T) {
 			return nil
 		},
 	}
-	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, alwaysAllowReauth(), nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	svc := NewService(store, &mockCountCache{}, newTestAudit(spy), nil, alwaysAllowReauth(), nil, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	if err := svc.DeleteOrganization(context.Background(), AdminContext{AdminID: adminID}, orgID, "acme-corp", "password123"); err != nil {
 		t.Fatalf("DeleteOrganization() unexpected error: %v", err)
@@ -847,7 +900,7 @@ func TestDeletePlan_PlanInUse(t *testing.T) {
 		// assertion below is on adminDeletePlanCalls, not on a rejection
 		// from a custom func.
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, nil, nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	err := svc.DeletePlan(context.Background(), AdminContext{AdminID: uuid.New()}, planID)
 	if appErrorCode(t, err) != apperror.PlanInUse {
@@ -864,7 +917,7 @@ func TestDeletePlan_NotFound(t *testing.T) {
 			return db.Plan{}, pgx.ErrNoRows
 		},
 	}
-	svc := NewService(store, &mockCountCache{}, nil, nil, nil, nil, nil)
+	svc := NewService(store, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
 
 	err := svc.DeletePlan(context.Background(), AdminContext{AdminID: uuid.New()}, uuid.New())
 	if appErrorCode(t, err) != apperror.NotFound {
@@ -902,7 +955,7 @@ func TestImpersonate_HappyPath(t *testing.T) {
 		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 			return db.User{ID: targetID, Email: "tenant@example.com", DisplayName: &name}, nil
 		},
-	}, &mockCountCache{}, newTestAudit(spy), nil, nil, signer, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	}, &mockCountCache{}, newTestAudit(spy), nil, nil, signer, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	got, err := svc.Impersonate(context.Background(),
 		AdminContext{AdminID: actorID, IP: "10.0.0.1", UserAgent: "console/1.0"},
@@ -973,7 +1026,7 @@ func TestImpersonate_RefusalsMintNoToken(t *testing.T) {
 				getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
 					return tt.user, tt.userErr
 				},
-			}, &mockCountCache{}, nil, nil, nil, signer, nil)
+			}, &mockCountCache{}, nil, nil, nil, signer, nil, nil)
 
 			_, err := svc.Impersonate(context.Background(),
 				AdminContext{AdminID: actorID}, targetID, "a sufficiently long reason")
@@ -1002,7 +1055,7 @@ func TestImpersonate_StaffCheckedBeforeBan(t *testing.T) {
 				BannedAt:     pgtype.Timestamp{Time: time.Now(), Valid: true},
 			}, nil
 		},
-	}, &mockCountCache{}, nil, nil, nil, signer, nil)
+	}, &mockCountCache{}, nil, nil, nil, signer, nil, nil)
 
 	_, err := svc.Impersonate(context.Background(),
 		AdminContext{AdminID: uuid.New()}, uuid.New(), "a sufficiently long reason")

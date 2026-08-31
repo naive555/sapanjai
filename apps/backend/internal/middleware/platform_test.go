@@ -29,6 +29,32 @@ func newTestGuardsForPlatformRole(t *testing.T, userID uuid.UUID, getUserByID fu
 	)
 }
 
+// newTestGuardsForTwoFactor is newTestGuardsForPlatformRole plus control
+// over IsTwoFactorVerified, for the Task 6.3/6.4 step-up tests below.
+func newTestGuardsForTwoFactor(
+	t *testing.T,
+	userID uuid.UUID,
+	getUserByID func(ctx context.Context, id uuid.UUID) (db.User, error),
+	isTwoFactorVerified func(ctx context.Context, userID uuid.UUID) (bool, error),
+) *Guards {
+	t.Helper()
+	g := NewGuards(
+		&mockTokenVerifier{
+			verify: func(token string) (uuid.UUID, string, error) {
+				return userID, "user@example.com", nil
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted:       func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isTwoFactorVerified: isTwoFactorVerified,
+		},
+		&mockMembershipStore{getUserByID: getUserByID},
+		&mockPermissionChecker{},
+	)
+	g.SetAdminRequire2FA(true)
+	return g
+}
+
 func strPtr(s string) *string { return &s }
 
 func TestRequirePlatformRole_MissingToken(t *testing.T) {
@@ -172,5 +198,161 @@ func TestRequirePlatformRole_RejectsImpersonationTokenEvenWhenTargetIsStaff(t *t
 	})
 
 	err := g.RequirePlatformRole("superadmin", "support")(okNext)(c)
+	assertHTTPError(t, err, http.StatusForbidden, "Insufficient permissions")
+}
+
+// ---- end impersonation tests ----
+
+// ---- TOTP step-up (Phase 6, Task 6.3/6.4) ----
+
+// TestRequirePlatformRole_TwoFactorRequired_NoLiveKey confirms
+// ADMIN_REQUIRE_2FA=true (SetAdminRequire2FA(true)) rejects a caller with a
+// valid role but no live admin:2fa:<userId> Redis key.
+func TestRequirePlatformRole_TwoFactorRequired_NoLiveKey(t *testing.T) {
+	userID := uuid.New()
+	g := newTestGuardsForTwoFactor(t, userID,
+		func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: id, PlatformRole: strPtr("superadmin")}, nil
+		},
+		func(ctx context.Context, gotUserID uuid.UUID) (bool, error) {
+			if gotUserID != userID {
+				t.Errorf("IsTwoFactorVerified called with %v, want %v", gotUserID, userID)
+			}
+			return false, nil
+		},
+	)
+	c, _ := newTestContext(http.MethodGet, "/admin/me", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	err := g.RequirePlatformRole("superadmin", "support")(okNext)(c)
+	assertHTTPError(t, err, http.StatusForbidden, "Two-factor authentication required")
+}
+
+// TestRequirePlatformRole_TwoFactorSatisfied_Allowed is the same setup with
+// a live key: the request must proceed.
+func TestRequirePlatformRole_TwoFactorSatisfied_Allowed(t *testing.T) {
+	userID := uuid.New()
+	g := newTestGuardsForTwoFactor(t, userID,
+		func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: id, PlatformRole: strPtr("superadmin")}, nil
+		},
+		func(ctx context.Context, _ uuid.UUID) (bool, error) { return true, nil },
+	)
+	c, rec := newTestContext(http.MethodGet, "/admin/me", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	if err := g.RequirePlatformRole("superadmin", "support")(okNext)(c); err != nil {
+		t.Fatalf("RequirePlatformRole: unexpected error %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// TestRequirePlatformRole_TwoFactorNotEnforced_WhenConfigDisabled confirms
+// SetAdminRequire2FA(false) — ADMIN_REQUIRE_2FA=false, the local-dev
+// setting — bypasses the 2FA check cleanly even when IsTwoFactorVerified
+// would say no. IsTwoFactorVerified must not even be called: local dev
+// shouldn't need a working Redis 2FA cache to boot the console.
+func TestRequirePlatformRole_TwoFactorNotEnforced_WhenConfigDisabled(t *testing.T) {
+	userID := uuid.New()
+	g := NewGuards(
+		&mockTokenVerifier{verify: func(token string) (uuid.UUID, string, error) { return userID, "user@example.com", nil }},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isTwoFactorVerified: func(ctx context.Context, _ uuid.UUID) (bool, error) {
+				t.Fatal("IsTwoFactorVerified must not be called when ADMIN_REQUIRE_2FA is false")
+				return false, nil
+			},
+		},
+		&mockMembershipStore{getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: id, PlatformRole: strPtr("superadmin")}, nil
+		}},
+		&mockPermissionChecker{},
+	)
+	// SetAdminRequire2FA deliberately NOT called: the zero value (false) is
+	// what every deployment gets unless server.go opts in from
+	// ADMIN_REQUIRE_2FA, so this test also stands in for "never configured."
+	c, rec := newTestContext(http.MethodGet, "/admin/me", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	if err := g.RequirePlatformRole("superadmin", "support")(okNext)(c); err != nil {
+		t.Fatalf("RequirePlatformRole: unexpected error %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// TestRequirePlatformRoleNo2FA_BypassesStepUp exercises the guard the three
+// /admin/2fa/{enroll,confirm,verify} routes use: it must succeed with no
+// live 2FA key at all, and must never even ask — that's the escape from the
+// chicken-and-egg the guard's doc comment names.
+func TestRequirePlatformRoleNo2FA_BypassesStepUp(t *testing.T) {
+	userID := uuid.New()
+	g := NewGuards(
+		&mockTokenVerifier{verify: func(token string) (uuid.UUID, string, error) { return userID, "user@example.com", nil }},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+			isTwoFactorVerified: func(ctx context.Context, _ uuid.UUID) (bool, error) {
+				t.Fatal("IsTwoFactorVerified must not be called by RequirePlatformRoleNo2FA")
+				return false, nil
+			},
+		},
+		&mockMembershipStore{getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: id, PlatformRole: strPtr("superadmin")}, nil
+		}},
+		&mockPermissionChecker{},
+	)
+	g.SetAdminRequire2FA(true)
+	c, rec := newTestContext(http.MethodPost, "/admin/2fa/enroll", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	if err := g.RequirePlatformRoleNo2FA("superadmin", "support")(okNext)(c); err != nil {
+		t.Fatalf("RequirePlatformRoleNo2FA: unexpected error %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// TestRequirePlatformRole_DemotedStaffRejectedEvenWithLive2FAKey is the
+// test the execution plan's Task 6.3 explicitly asks for: the 12h
+// admin:2fa:<userId> Redis key is NOT revoked when ChangePlatformRole
+// demotes a staff member (internal/module/admin/service.go's SetBan/
+// ChangePlatformRole doc comments state this is deliberate). This proves
+// the documented mitigation actually holds at the one place that matters —
+// IsTwoFactorVerified returning true for a stale key must NOT be enough to
+// reach an admin route once platform_role is gone: the role check runs
+// first and rejects before the 2FA check is ever consulted.
+//
+// If this test ever fails, the "role check fails first" argument in
+// docs/11-admin-panel.md and the execution plan is wrong and the stale key
+// needs active revocation, not just a comment explaining why it doesn't.
+func TestRequirePlatformRole_DemotedStaffRejectedEvenWithLive2FAKey(t *testing.T) {
+	userID := uuid.New()
+	g := newTestGuardsForTwoFactor(t, userID,
+		// Demoted: platform_role is now nil, exactly what ChangePlatformRole
+		// writes on revoke.
+		func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: id, PlatformRole: nil}, nil
+		},
+		// The stale key from before the demotion is still live in Redis —
+		// ChangePlatformRole never touched it.
+		func(ctx context.Context, _ uuid.UUID) (bool, error) { return true, nil },
+	)
+	c, _ := newTestContext(http.MethodGet, "/admin/me", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	err := g.RequirePlatformRole("superadmin", "support")(okNext)(c)
+	// Must be the role-check's "Insufficient permissions", never the
+	// 2FA-check's "Two-factor authentication required" — the latter would
+	// mean the guard reached the 2FA branch at all, which is exactly what
+	// must not happen for a demoted user.
 	assertHTTPError(t, err, http.StatusForbidden, "Insufficient permissions")
 }

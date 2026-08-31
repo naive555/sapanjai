@@ -47,6 +47,59 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	e.HideBanner = true
 	e.HidePort = true
 
+	// e.IPExtractor governs c.RealIP() everywhere it's read: the
+	// /admin ADMIN_IP_ALLOWLIST check (internal/middleware.AdminIPAllowlist)
+	// and the ip field in every admin audit entry
+	// (internal/module/admin/handler.go's adminContext). Echo's default
+	// (no IPExtractor set) trusts X-Forwarded-For unconditionally, which is
+	// exactly the hole an off-network caller would use to both fabricate
+	// audit evidence and walk through the allowlist by claiming to be an
+	// allowed address.
+	//
+	// TrustLoopback/TrustPrivateNet cover the two hops this deployment
+	// actually has (docs/09-railway-deploy.md): Railway's edge reaches a
+	// container over its private network (IPv6 ULA — "IPv6-only private
+	// network" in that doc), and apps/frontend's own proxy
+	// (app/api/[...path]/route.ts) reaches this API the same way in
+	// docker-compose/k8s. Echo walks the X-Forwarded-For chain from the
+	// right, skipping every hop in those trusted ranges, and returns the
+	// first entry that isn't — see the vendored
+	// github.com/labstack/echo/v4/ip.go for the exact algorithm.
+	//
+	// The half this does NOT solve by itself: route.ts used to forward an
+	// INBOUND X-Forwarded-For/X-Real-IP verbatim, so a caller could inject
+	// a fabricated chain before it ever reached this extractor — no amount
+	// of trust-range configuration here can tell a forged chain from a
+	// genuine one after the fact once attacker input and proxy input share
+	// the same header. route.ts now strips both headers unconditionally on
+	// every request (see its own comment) rather than trying to sanitize
+	// them, which is the fix ip.go's own doc explicitly calls for: "never
+	// forget to configure the outermost proxy... not to pass through
+	// incoming headers."
+	//
+	// The consequence worth stating plainly (also spelled out in
+	// docs/09-railway-deploy.md's "Admin console" section): for every
+	// request that reaches this API through the frontend proxy — which is
+	// 100% of the admin console's browser traffic, since it is same-origin
+	// through /api/admin/* like every other page — c.RealIP() now resolves
+	// to the FRONTEND'S OWN private-network address, not the staff member's
+	// real one. There is no hop left standing between "attacker-controlled"
+	// and this API that could carry that information trustworthily without
+	// either (a) this API trusting a header set by Railway's edge for the
+	// browser-facing hop into the frontend, which cannot be verified from
+	// this codebase and is deliberately not assumed, or (b) the admin
+	// console bypassing the frontend proxy entirely, which is a bigger
+	// architecture change outside this phase's scope. ADMIN_IP_ALLOWLIST is
+	// therefore a real control against internet-wide scanning of this API's
+	// public /admin/* routes (its stated purpose — Task 6.2's off-network
+	// scanner gets a 404), but it is NOT a per-staff-office/VPN control for
+	// traffic through the console's normal path: an operator who needs that
+	// granularity must enforce it at the platform edge in front of the
+	// frontend (Railway access control, a WAF rule, or a VPN requirement),
+	// not through this backend. This is the honest state of the control,
+	// not a bug to fix in a later phase.
+	e.IPExtractor = echo.ExtractIPFromXFFHeader(echo.TrustLoopback(true), echo.TrustPrivateNet(true))
+
 	e.HTTPErrorHandler = newErrorHandler(log)
 	e.Validator = newRequestValidator()
 
@@ -99,11 +152,17 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	if err != nil {
 		return nil, fmt.Errorf("connector master key: %w", err)
 	}
+	// One Encryptor instance, shared by connectorSvc and adminSvc: a
+	// user_totp.secret_encrypted row is sealed under the exact same
+	// CONNECTOR_MASTER_KEY machinery a connector's config is (Phase 6 Task
+	// 6.3 — "no new secret is introduced"), so rotation is already solved
+	// and there is nothing TOTP-specific to configure here.
+	crypto := envelope.New(keyProvider)
 	// googlesheets.NewChecker is the first real health-check adapter
 	// (docs/07-sheets-adapter-decisions.md step 5); every other connector type
 	// still resolves to 501 HEALTH_CHECK_UNSUPPORTED with no Checker
 	// registered.
-	connectorSvc := connector.NewService(store, envelope.New(keyProvider), auditSvc, subSvc, connector.NewRegistry(googlesheets.NewChecker()), log)
+	connectorSvc := connector.NewService(store, crypto, auditSvc, subSvc, connector.NewRegistry(googlesheets.NewChecker()), log)
 	connector.NewHandler(connectorSvc).Register(e.Group("/connectors"), guards)
 
 	mcpKeySvc := mcpkey.NewService(store, log)
@@ -139,8 +198,19 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	// imp/act claims, so it must verify under the very same secret the
 	// guards already check, not a parallel one.
 	adminCache := appredis.NewAdminCount(rdb, cfg.RedisKeyPrefix)
-	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, redisAuth, tokenSvc, log)
-	admin.NewHandler(adminSvc).Register(e.Group("/admin"), guards)
+	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, redisAuth, tokenSvc, crypto, log)
+	// SetAdminRequire2FA wires ADMIN_REQUIRE_2FA into RequirePlatformRole
+	// (Phase 6 Task 6.3) — a setter rather than a NewGuards parameter so
+	// every other module's existing test call sites don't need updating for
+	// one admin-only boolean; see Guards.adminRequire2FA's doc comment.
+	guards.SetAdminRequire2FA(cfg.AdminRequire2FA)
+	// AdminIPAllowlist (Phase 6 Task 6.2) is group middleware, so it runs
+	// BEFORE guards.RequirePlatformRole/RequirePlatformRoleNo2FA on every
+	// route below — an off-network request never reaches RequireAuth, let
+	// alone the platform-role or 2FA checks. See its own doc comment for
+	// the 404-not-403 reasoning and e.IPExtractor above for what c.RealIP()
+	// actually guarantees in this deployment.
+	admin.NewHandler(adminSvc).Register(e.Group("/admin", appmw.AdminIPAllowlist(cfg.AdminIPAllowlist)), guards)
 
 	return e, nil
 }

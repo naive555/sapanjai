@@ -153,6 +153,10 @@ type Querier interface {
 	// containing FOR UPDATE has side effects and is always materialised, so the
 	// lock-and-limit happens exactly once.
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
+	// Backs POST /admin/2fa/confirm: stamps confirmed_at and stores the ten
+	// recovery-code hashes generated at confirm time (never at enroll time,
+	// since enroll may be called repeatedly before a confirm ever lands).
+	ConfirmUserTOTP(ctx context.Context, arg ConfirmUserTOTPParams) error
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
@@ -197,6 +201,7 @@ type Querier interface {
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTotp, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
 	ListMCPKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]McpApiKey, error)
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error)
@@ -249,8 +254,21 @@ type Querier interface {
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	// Backs POST /admin/2fa/verify's recovery-code path: persists the
+	// caller-supplied remaining set after one hash is removed, so a recovery
+	// code is usable exactly once.
+	UpdateUserTOTPRecoveryCodes(ctx context.Context, arg UpdateUserTOTPRecoveryCodesParams) error
 	UpsertOrgSubscription(ctx context.Context, arg UpsertOrgSubscriptionParams) error
 	UpsertPlan(ctx context.Context, arg UpsertPlanParams) error
+	// Backs POST /admin/2fa/enroll (execution plan Task 6.3). Re-callable: a
+	// staff member who lost their authenticator app before confirming (or
+	// wants to re-enroll a new one) can call enroll again, which wipes any
+	// prior confirmation and recovery codes along with the old secret -- an
+	// unconfirmed or replaced secret must never leave a stale confirmed_at or
+	// a set of recovery codes tied to a key that no longer exists.
+	// recovery_codes is NOT NULL with no column default (migration 00012), so
+	// every insert must supply '{}' explicitly here; confirm sets the real ten.
+	UpsertUserTOTPSecret(ctx context.Context, arg UpsertUserTOTPSecretParams) error
 }
 
 var _ Querier = (*Queries)(nil)

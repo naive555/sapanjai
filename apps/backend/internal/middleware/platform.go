@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
+
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // ctxPlatformRole is the context key RequirePlatformRole injects, read back
@@ -14,7 +16,9 @@ import (
 const ctxPlatformRole = "auth.platformRole"
 
 // RequirePlatformRole guards a route with RequireAuth plus a users.platform_role
-// in the allowed set, read fresh from the database on every request.
+// in the allowed set, read fresh from the database on every request, PLUS
+// (when ADMIN_REQUIRE_2FA is true, execution plan Task 6.3) a live
+// admin:2fa:<userId> Redis key from a completed POST /admin/2fa/verify.
 //
 // The role is deliberately NOT a JWT claim: a claim would keep a demoted or
 // revoked staff account privileged for a full access-token lifetime, and the
@@ -25,6 +29,21 @@ const ctxPlatformRole = "auth.platformRole"
 // It injects nothing org-scoped: platform staff typically hold no membership
 // anywhere, so RequireOrg's x-organization-id contract does not apply.
 func (g *Guards) RequirePlatformRole(roles ...string) echo.MiddlewareFunc {
+	return g.requirePlatformRole(roles, true)
+}
+
+// RequirePlatformRoleNo2FA is RequirePlatformRole with the ADMIN_REQUIRE_2FA
+// check skipped. Used ONLY by POST /admin/2fa/{enroll,confirm,verify}: the
+// chicken-and-egg is that a staff member cannot complete step-up through a
+// route step-up itself gates. Every other /admin route goes through
+// RequirePlatformRole. The role check and the impersonation refusal are
+// identical either way — this is not a weaker guard, just one clause
+// narrower.
+func (g *Guards) RequirePlatformRoleNo2FA(roles ...string) echo.MiddlewareFunc {
+	return g.requirePlatformRole(roles, false)
+}
+
+func (g *Guards) requirePlatformRole(roles []string, enforce2FA bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if err := g.verify(c); err != nil {
@@ -55,8 +74,24 @@ func (g *Guards) RequirePlatformRole(roles ...string) echo.MiddlewareFunc {
 
 			if user.PlatformRole == nil || !slices.Contains(roles, *user.PlatformRole) {
 				// Reuse apperror.Forbidden's exact message so the console
-				// cannot be probed for which platform roles exist.
+				// cannot be probed for which platform roles exist. This
+				// check runs, and can reject, BEFORE the 2FA check below —
+				// deliberately: a demoted staff member's platform_role is
+				// gone immediately (D1), so a stale-but-unexpired
+				// admin:2fa:<userId> key from before the demotion is never
+				// even reached. See platform_test.go's demotion test.
 				return echo.NewHTTPError(http.StatusForbidden, "Insufficient permissions")
+			}
+
+			if enforce2FA && g.adminRequire2FA {
+				verified, err := g.blacklist.IsTwoFactorVerified(c.Request().Context(), UserID(c))
+				if err != nil {
+					return err
+				}
+				if !verified {
+					status, message := apperror.Resolve(apperror.TwoFactorRequired)
+					return echo.NewHTTPError(status, message)
+				}
 			}
 
 			c.Set(ctxPlatformRole, *user.PlatformRole)

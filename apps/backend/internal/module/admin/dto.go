@@ -467,3 +467,39 @@ type ImpersonateResponse struct {
 	ExpiresIn   int              `json:"expiresIn"`
 	User        ImpersonatedUser `json:"user"`
 }
+
+// ---- TOTP step-up (execution plan Phase 6, Task 6.3) ----
+//
+// None of the three types below is ever logged as a whole struct, matching
+// the same reasoning CLAUDE.md's redaction rule already states for a
+// Password-carrying request DTO: OtpauthURI and RecoveryCodes are bearer
+// secrets in VALUES, which key-based redaction cannot catch.
+
+// TOTPEnrollResponse is POST /admin/2fa/enroll's body. OtpauthURI is
+// returned exactly once — nothing persists it in cleartext, including logs
+// (see totp.go's package doc comment).
+type TOTPEnrollResponse struct {
+	OtpauthURI string `json:"otpauthUri"`
+}
+
+// TOTPConfirmRequest is POST /admin/2fa/confirm's body: the current code
+// from the authenticator app just enrolled.
+type TOTPConfirmRequest struct {
+	Code string `json:"code" validate:"required,len=6,numeric"`
+}
+
+// TOTPConfirmResponse is POST /admin/2fa/confirm's body: the ten recovery
+// codes, returned exactly once. Only their SHA-256 hashes are ever
+// persisted (user_totp.recovery_codes) — losing this response means losing
+// the codes; there is no "show me again."
+type TOTPConfirmResponse struct {
+	RecoveryCodes []string `json:"recoveryCodes"`
+}
+
+// TOTPVerifyRequest is POST /admin/2fa/verify's body. Unlike Confirm's
+// Code, this accepts either a 6-digit TOTP code or a longer recovery code
+// (VerifyTOTP tries both), so it validates only non-emptiness here rather
+// than a fixed length/charset.
+type TOTPVerifyRequest struct {
+	Code string `json:"code" validate:"required"`
+}

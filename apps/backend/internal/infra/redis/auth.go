@@ -17,6 +17,18 @@ const loginAttemptsTTL = 15 * time.Minute
 // email since the caller is already an authenticated admin.
 const reauthAttemptsTTL = 15 * time.Minute
 
+// twoFactorTTL is how long a successful POST /admin/2fa/verify stays valid
+// (execution plan Task 6.3, docs/11-admin-panel.md). Deliberately NOT tied
+// to the access token's own lifetime: an admin's JWT is refreshed silently
+// every JWT_ACCESS_EXPIRES_IN, and re-prompting for a TOTP code that often
+// would just train staff to stop reading it. 12h covers a working day
+// without requiring step-up again.
+const twoFactorTTL = 12 * time.Hour
+
+// twoFactorAttemptsTTL mirrors reauthAttemptsTTL — the same
+// straight-port-of-the-login-limiter shape, independent counter.
+const twoFactorAttemptsTTL = 15 * time.Minute
+
 // Auth wraps a Redis client with the access-token blacklist and login
 // rate-limit helpers, mirroring RedisAuth in the source app
 // (src/infrastructure/redis/index.ts): same key names and TTLs.
@@ -44,6 +56,14 @@ func (a *Auth) banKey(userID uuid.UUID) string { return a.prefix + "banned:" + u
 
 func (a *Auth) reauthAttemptsKey(userID uuid.UUID) string {
 	return a.prefix + "admin:reauth:attempts:" + userID.String()
+}
+
+func (a *Auth) twoFactorKey(userID uuid.UUID) string {
+	return a.prefix + "admin:2fa:" + userID.String()
+}
+
+func (a *Auth) twoFactorAttemptsKey(userID uuid.UUID) string {
+	return a.prefix + "admin:2fa:attempts:" + userID.String()
 }
 
 // BlacklistToken marks an access token as revoked for ttl, key
@@ -153,6 +173,74 @@ func (a *Auth) ResetReauthAttempts(ctx context.Context, userID uuid.UUID) error 
 // if the key is absent or unparseable — mirrors GetLoginAttempts.
 func (a *Auth) GetReauthAttempts(ctx context.Context, userID uuid.UUID) (int, error) {
 	val, err := a.client.Get(ctx, a.reauthAttemptsKey(userID)).Result()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	attempts, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, nil
+	}
+	return attempts, nil
+}
+
+// SetTwoFactorVerified marks userID as having completed step-up TOTP
+// verification, key "<prefix>admin:2fa:<userId>", TTL twoFactorTTL.
+// internal/middleware.Guards.RequirePlatformRole (when ADMIN_REQUIRE_2FA is
+// true) requires this key on every /admin route except the three
+// enroll/confirm/verify routes themselves.
+func (a *Auth) SetTwoFactorVerified(ctx context.Context, userID uuid.UUID) error {
+	return a.client.Set(ctx, a.twoFactorKey(userID), "1", twoFactorTTL).Err()
+}
+
+// IsTwoFactorVerified reports whether userID currently holds a live
+// admin:2fa:<userId> key. Deliberately NOT revoked by ChangePlatformRole's
+// demotion path (docs/11-admin-panel.md Task 6.3's documented limitation):
+// demotion revokes every session, so the demoted user's access token is
+// dead, and RequirePlatformRole's platform_role check runs and fails BEFORE
+// this one is ever consulted. See
+// internal/middleware/platform_test.go's demotion-vs-stale-2FA-key test.
+func (a *Auth) IsTwoFactorVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	n, err := a.client.Exists(ctx, a.twoFactorKey(userID)).Result()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// IncrementTwoFactorAttempts increments the failed-TOTP-verify counter for
+// userID, key "<prefix>admin:2fa:attempts:<userId>". Mirrors
+// IncrementReauthAttempts exactly: without an independent limiter here,
+// POST /admin/2fa/verify's code field is a 6-digit (1,000,000-value) space
+// an attacker holding a stolen admin access token could brute force in
+// seconds.
+func (a *Auth) IncrementTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int64, error) {
+	key := a.twoFactorAttemptsKey(userID)
+	attempts, err := a.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if attempts == 1 {
+		if err := a.client.Expire(ctx, key, twoFactorAttemptsTTL).Err(); err != nil {
+			return 0, err
+		}
+	}
+	return attempts, nil
+}
+
+// ResetTwoFactorAttempts clears the failed-TOTP-verify counter for userID,
+// called after a successful verify.
+func (a *Auth) ResetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) error {
+	return a.client.Del(ctx, a.twoFactorAttemptsKey(userID)).Err()
+}
+
+// GetTwoFactorAttempts returns the current failed-TOTP-verify count for
+// userID, or 0 if the key is absent or unparseable — mirrors
+// GetReauthAttempts.
+func (a *Auth) GetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int, error) {
+	val, err := a.client.Get(ctx, a.twoFactorAttemptsKey(userID)).Result()
 	if err == redis.Nil {
 		return 0, nil
 	}

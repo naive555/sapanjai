@@ -35,8 +35,9 @@ func (m *mockTokenVerifier) VerifyAccessToken(token string) (authtoken.AccessTok
 }
 
 type mockBlacklist struct {
-	isBlacklisted func(ctx context.Context, token string) (bool, error)
-	isBanned      func(ctx context.Context, userID uuid.UUID) (bool, error)
+	isBlacklisted       func(ctx context.Context, token string) (bool, error)
+	isBanned            func(ctx context.Context, userID uuid.UUID) (bool, error)
+	isTwoFactorVerified func(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 func (m *mockBlacklist) IsBlacklisted(ctx context.Context, token string) (bool, error) {
@@ -48,6 +49,18 @@ func (m *mockBlacklist) IsBanned(ctx context.Context, userID uuid.UUID) (bool, e
 		return false, nil
 	}
 	return m.isBanned(ctx, userID)
+}
+
+// IsTwoFactorVerified defaults to true (verified) rather than false: most
+// existing tests never call SetAdminRequire2FA(true), so the 2FA branch in
+// requirePlatformRole is never reached and this default is inert for them.
+// The handful of tests that DO exercise ADMIN_REQUIRE_2FA set this field
+// explicitly.
+func (m *mockBlacklist) IsTwoFactorVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	if m.isTwoFactorVerified == nil {
+		return true, nil
+	}
+	return m.isTwoFactorVerified(ctx, userID)
 }
 
 type mockMembershipStore struct {

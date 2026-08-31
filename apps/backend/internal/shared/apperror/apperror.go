@@ -109,6 +109,24 @@ const (
 	// no existing code fits "the confirmation value didn't match" (403
 	// ReauthFailed already covers the password half of the same request).
 	OrgConfirmMismatch = "ORG_CONFIRM_MISMATCH"
+
+	// TwoFactorRequired is RequirePlatformRole's response when
+	// ADMIN_REQUIRE_2FA=true and the caller has no live admin:2fa:<userId>
+	// Redis key (execution plan Task 6.3) — every /admin route except
+	// POST /admin/2fa/{enroll,confirm,verify} is gated on it.
+	TwoFactorRequired = "TWO_FACTOR_REQUIRED"
+
+	// TOTPNotEnrolled is POST /admin/2fa/{confirm,verify}'s response when
+	// the caller has no user_totp row (confirm) or no CONFIRMED row
+	// (verify) — enroll must run first.
+	TOTPNotEnrolled = "TOTP_NOT_ENROLLED"
+
+	// InvalidTOTPCode is POST /admin/2fa/{confirm,verify}'s response to a
+	// code that matches neither the current TOTP window nor (verify only)
+	// any unused recovery code. Deliberately one code for both failure
+	// modes — same reasoning as InvalidCredentials: which one is wrong
+	// must not be observable.
+	InvalidTOTPCode = "INVALID_TOTP_CODE"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -155,6 +173,10 @@ var Map = map[string]mapping{
 	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
 	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
 	OrgConfirmMismatch:     {400, "Confirmation does not match the organization's slug"},
+
+	TwoFactorRequired: {403, "Two-factor authentication required"},
+	TOTPNotEnrolled:   {400, "Two-factor authentication not enrolled"},
+	InvalidTOTPCode:   {401, "Invalid two-factor code"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

@@ -133,6 +133,12 @@ type adminStore interface {
 	AdminUpdatePlan(ctx context.Context, arg db.AdminUpdatePlanParams) (db.Plan, error)
 	AdminDeletePlan(ctx context.Context, id uuid.UUID) error
 	AdminCountSubscriptionsByPlan(ctx context.Context, planID uuid.UUID) (int64, error)
+
+	// ---- Phase 6: TOTP step-up (Task 6.3) ----
+	UpsertUserTOTPSecret(ctx context.Context, arg db.UpsertUserTOTPSecretParams) error
+	GetUserTOTP(ctx context.Context, userID uuid.UUID) (db.UserTotp, error)
+	ConfirmUserTOTP(ctx context.Context, arg db.ConfirmUserTOTPParams) error
+	UpdateUserTOTPRecoveryCodes(ctx context.Context, arg db.UpdateUserTOTPRecoveryCodesParams) error
 }
 
 // adminAuth is the subset of *redis.Auth (internal/infra/redis) this
@@ -146,6 +152,12 @@ type adminAuth interface {
 	ResetReauthAttempts(ctx context.Context, userID uuid.UUID) error
 	Ban(ctx context.Context, userID uuid.UUID) error
 	Unban(ctx context.Context, userID uuid.UUID) error
+
+	// ---- Phase 6: TOTP step-up (Task 6.3) ----
+	SetTwoFactorVerified(ctx context.Context, userID uuid.UUID) error
+	GetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int, error)
+	IncrementTwoFactorAttempts(ctx context.Context, userID uuid.UUID) (int64, error)
+	ResetTwoFactorAttempts(ctx context.Context, userID uuid.UUID) error
 }
 
 // subscriptionResolver is the subset of *subscription.Service the
@@ -171,8 +183,20 @@ type impersonationSigner interface {
 	SignImpersonationToken(targetID uuid.UUID, targetEmail string, actorID uuid.UUID, ttl time.Duration) (string, error)
 }
 
+// totpSealer is the subset of *envelope.Encryptor the TOTP step-up routes
+// depend on (Phase 6, Task 6.3) — the exact same shape connector.sealer
+// narrows to, deliberately: user_totp.secret_encrypted is sealed under
+// CONNECTOR_MASTER_KEY, the same envelope machinery and the same KeyProvider
+// instance connectors use (server.go constructs one Encryptor and hands it
+// to both services), so rotation is already solved and no new secret is
+// introduced. See CLAUDE.md's envelope-encryption ground rule.
+type totpSealer interface {
+	Seal(ctx context.Context, plaintext, aad []byte) (json.RawMessage, error)
+	Open(ctx context.Context, raw json.RawMessage, aad []byte) ([]byte, error)
+}
+
 // Service implements the admin module's read surfaces (Phase 2), mutation
-// routes (Phase 3), and impersonation (Phase 4).
+// routes (Phase 3), impersonation (Phase 4), and TOTP step-up (Phase 6).
 type Service struct {
 	store     adminStore
 	cache     countCache
@@ -180,13 +204,14 @@ type Service struct {
 	sub       subscriptionResolver
 	redisAuth adminAuth
 	signer    impersonationSigner
+	crypto    totpSealer
 	log       *slog.Logger
 }
 
 // NewService builds an admin Service from its explicit dependencies — no
 // service locator (execution plan Task 2.9).
-func NewService(store adminStore, cache countCache, audit *auditlog.Service, sub subscriptionResolver, redisAuth adminAuth, signer impersonationSigner, log *slog.Logger) *Service {
-	return &Service{store: store, cache: cache, audit: audit, sub: sub, redisAuth: redisAuth, signer: signer, log: log}
+func NewService(store adminStore, cache countCache, audit *auditlog.Service, sub subscriptionResolver, redisAuth adminAuth, signer impersonationSigner, crypto totpSealer, log *slog.Logger) *Service {
+	return &Service{store: store, cache: cache, audit: audit, sub: sub, redisAuth: redisAuth, signer: signer, crypto: crypto, log: log}
 }
 
 // AdminContext carries the request-scoped values a Phase 3 mutation's audit
@@ -196,11 +221,17 @@ func NewService(store adminStore, cache countCache, audit *auditlog.Service, sub
 // CLAUDE.md's handler->service->sqlc convention: no HTTP concerns inside a
 // service, and echo.Context is an HTTP concern).
 //
-// Caveat inherited from the handler: c.RealIP() trusts the X-Forwarded-For
-// header unconditionally until e.IPExtractor is configured (Phase 6 Task
-// 6.1, not done yet). Until then, IP is attacker-controlled input and this
-// audit metadata is not evidence of where a request actually came from —
-// only of what it claimed.
+// Caveat inherited from the handler, updated now that Phase 6 Task 6.1 is
+// done: server.New sets e.IPExtractor, and apps/frontend's proxy
+// (app/api/[...path]/route.ts) strips any inbound X-Forwarded-For/X-Real-IP
+// before forwarding, so a caller can no longer inject an arbitrary chain.
+// That closes the spoofing hole, but it does not make this field a
+// per-staff-member location: every admin request arrives through that same
+// frontend proxy, so IP resolves to the frontend's own private-network
+// address for all of them, not the individual browser's address. Treat it
+// as "which of our own services relayed this," not "where the staff member
+// physically was" — see server.go's e.IPExtractor comment and
+// docs/09-railway-deploy.md for the full trust chain this depends on.
 type AdminContext struct {
 	AdminID   uuid.UUID
 	IP        string
