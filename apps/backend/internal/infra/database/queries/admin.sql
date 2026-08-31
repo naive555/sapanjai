@@ -220,3 +220,61 @@ FROM plans p
 LEFT JOIN org_subscriptions s ON s.plan_id = p.id
 GROUP BY p.name
 ORDER BY p.name ASC;
+
+-- The remaining queries back Phase 3's mutation routes
+-- (docs/11-admin-panel.md, execution plan Phase 3). CountSuperadmins,
+-- SetUserBan, SetUserPlatformRole, and RevokeAllUserSessions already exist
+-- (queries/users.sql, queries/sessions.sql) and are reused as-is rather
+-- than duplicated here.
+
+-- name: AdminSetOrgCustomLimits :execrows
+-- Touches only org_subscriptions.custom_limits — deliberately narrower
+-- than UpsertOrgSubscription (subscriptions.sql), which also rewrites
+-- plan_id via a full upsert. $2 is nullable: NULL clears back to
+-- plan-only limits. 0 rows affected means the organization has no
+-- org_subscriptions row yet (no plan ever assigned) — admin.Service turns
+-- that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
+-- is NOT NULL and there is nothing here to attach custom_limits to.
+UPDATE org_subscriptions SET custom_limits = $2, updated_at = now() WHERE organization_id = $1;
+
+-- name: AdminDeleteOrganization :exec
+-- memberships/connectors/mcp_api_keys/org_subscriptions all cascade
+-- (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
+-- no FK (00004), so audit rows deliberately survive the org — see
+-- admin.Service.DeleteOrganization's doc comment. The caller has already
+-- loaded the org (to check its slug against the confirmation field), so
+-- there is no existence race worth an :execrows check here.
+DELETE FROM organizations WHERE id = $1;
+
+-- name: AdminGetPlanByID :one
+SELECT * FROM plans WHERE id = $1;
+
+-- name: AdminCreatePlan :one
+-- plans.name carries a UNIQUE constraint; a colliding name surfaces as a
+-- raw constraint-violation error (500), the same tolerance
+-- subscription.Service.AssignPlan documents for a nonexistent plan id —
+-- neither the source app nor this one adds a dedicated
+-- PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
+-- typo caught on the next attempt.
+INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING *;
+
+-- name: AdminUpdatePlan :one
+-- A full replace (name + limits together), not a partial PATCH — mirrors
+-- the shape of POST /admin/plans, and a plan's whole point is that its
+-- limits are reviewed together, not merged field-by-field. 0 rows ->
+-- pgx.ErrNoRows -> admin.Service maps that to 404.
+UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING *;
+
+-- name: AdminDeletePlan :exec
+-- The caller has already loaded the plan (AdminGetPlanByID, for the 404
+-- check) and confirmed no org_subscriptions row references it
+-- (AdminCountSubscriptionsByPlan, for PLAN_IN_USE) before this runs.
+DELETE FROM plans WHERE id = $1;
+
+-- name: AdminCountSubscriptionsByPlan :one
+-- Backs the PLAN_IN_USE guard on plan delete. plans is referenced by
+-- org_subscriptions.plan_id with ON DELETE no action (migration 00005), so
+-- the database would reject the delete anyway — this check exists so the
+-- API can return a real 409 instead of surfacing that constraint
+-- violation as a 500.
+SELECT count(*) FROM org_subscriptions WHERE plan_id = $1;

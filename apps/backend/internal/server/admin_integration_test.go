@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -388,25 +389,61 @@ func TestIntegration_Admin_UsersListAndDetail(t *testing.T) {
 	fx := setupAdminFixture(t, client, ts.URL, store)
 	headers := map[string]string{"Authorization": "Bearer " + fx.superUser.AccessToken}
 
-	t.Run("role=superadmin filter returns only staff", func(t *testing.T) {
-		resp, raw := doAdminGet(t, client, ts.URL, "/admin/users?role=superadmin&limit=100", headers)
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, raw)
+	// Every case below pins ?search= to one fixture user's own email
+	// (uniqueEmail appends a UUID, so it matches exactly one row) rather
+	// than paging the unfiltered list and hunting for the fixture in it.
+	// AdminListUsers orders by created_at ASC, so a bare
+	// ?role=superadmin&limit=100 only finds a just-created fixture while
+	// the database holds fewer than 100 superadmins total — true on a
+	// fresh CI database, and steadily less true on a long-lived dev one
+	// that every run of this suite adds more staff accounts to. Scoping by
+	// email removes the dependency on how much history the database has.
+	//
+	// The pair of role filters against a KNOWN-matching search term is
+	// also what gives the assertion teeth: an empty result only proves the
+	// role filter excluded the row if the same search with the right role
+	// returns it.
+	t.Run("role filter selects staff by platform role", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			role     string
+			email    string
+			wantID   string // "" means the filter must exclude the row entirely
+			wantRole any
+		}{
+			{name: "superadmin matches the fixture superadmin", role: "superadmin", email: fx.superUser.Email, wantID: fx.superUser.UserID, wantRole: "superadmin"},
+			{name: "support matches the fixture support user", role: "support", email: fx.supportU.Email, wantID: fx.supportU.UserID, wantRole: "support"},
+			{name: "superadmin excludes the support user", role: "superadmin", email: fx.supportU.Email, wantID: ""},
+			{name: "none excludes the superadmin", role: "none", email: fx.superUser.Email, wantID: ""},
 		}
-		body := decodeJSONObject(t, raw)
-		items, _ := body["items"].([]any)
-		var found bool
-		for _, it := range items {
-			row, _ := it.(map[string]any)
-			if row["platformRole"] != "superadmin" {
-				t.Errorf("row with role filter applied has platformRole = %v, want %q", row["platformRole"], "superadmin")
-			}
-			if row["id"] == fx.superUser.UserID {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("expected the fixture superadmin in the filtered list: %v", items)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				resp, raw := doAdminGet(t, client, ts.URL,
+					"/admin/users?role="+tc.role+"&search="+url.QueryEscape(tc.email), headers)
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, raw)
+				}
+				body := decodeJSONObject(t, raw)
+				items, _ := body["items"].([]any)
+
+				if tc.wantID == "" {
+					if len(items) != 0 {
+						t.Fatalf("items = %v, want none: role=%q must exclude %s", items, tc.role, tc.email)
+					}
+					return
+				}
+
+				if len(items) != 1 {
+					t.Fatalf("items = %v, want exactly 1 (search pins one unique email)", items)
+				}
+				row, _ := items[0].(map[string]any)
+				if row["id"] != tc.wantID {
+					t.Errorf("id = %v, want %q", row["id"], tc.wantID)
+				}
+				if row["platformRole"] != tc.wantRole {
+					t.Errorf("platformRole = %v, want %v", row["platformRole"], tc.wantRole)
+				}
+			})
 		}
 	})
 

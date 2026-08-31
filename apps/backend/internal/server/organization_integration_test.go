@@ -41,9 +41,10 @@ func jwtSubject(t *testing.T, token string) string {
 
 // registeredUser is the outcome of a successful POST /auth/register.
 type registeredUser struct {
-	Email       string
-	AccessToken string
-	UserID      string
+	Email        string
+	AccessToken  string
+	RefreshToken string
+	UserID       string
 }
 
 func registerUser(t *testing.T, client *http.Client, baseURL, prefix string) registeredUser {
@@ -60,8 +61,12 @@ func registerUser(t *testing.T, client *http.Client, baseURL, prefix string) reg
 	if accessToken == "" {
 		t.Fatalf("register %s: missing accessToken: %v", prefix, body)
 	}
+	refreshToken, _ := body["refreshToken"].(string)
+	if refreshToken == "" {
+		t.Fatalf("register %s: missing refreshToken: %v", prefix, body)
+	}
 
-	return registeredUser{Email: email, AccessToken: accessToken, UserID: jwtSubject(t, accessToken)}
+	return registeredUser{Email: email, AccessToken: accessToken, RefreshToken: refreshToken, UserID: jwtSubject(t, accessToken)}
 }
 
 func uniqueSlug(prefix string) string {

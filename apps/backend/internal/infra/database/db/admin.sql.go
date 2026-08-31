@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -251,6 +252,22 @@ func (q *Queries) AdminCountOrganizationsSince(ctx context.Context, since time.T
 	return count, err
 }
 
+const adminCountSubscriptionsByPlan = `-- name: AdminCountSubscriptionsByPlan :one
+SELECT count(*) FROM org_subscriptions WHERE plan_id = $1
+`
+
+// Backs the PLAN_IN_USE guard on plan delete. plans is referenced by
+// org_subscriptions.plan_id with ON DELETE no action (migration 00005), so
+// the database would reject the delete anyway — this check exists so the
+// API can return a real 409 instead of surfacing that constraint
+// violation as a 500.
+func (q *Queries) AdminCountSubscriptionsByPlan(ctx context.Context, planID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountSubscriptionsByPlan, planID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const adminCountUsers = `-- name: AdminCountUsers :one
 SELECT count(*) FROM users u
 WHERE ($1::text IS NULL
@@ -289,6 +306,60 @@ func (q *Queries) AdminCountUsersSince(ctx context.Context, since time.Time) (in
 	return count, err
 }
 
+const adminCreatePlan = `-- name: AdminCreatePlan :one
+INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING id, name, limits, created_at
+`
+
+type AdminCreatePlanParams struct {
+	Name   string          `json:"name"`
+	Limits json.RawMessage `json:"limits"`
+}
+
+// plans.name carries a UNIQUE constraint; a colliding name surfaces as a
+// raw constraint-violation error (500), the same tolerance
+// subscription.Service.AssignPlan documents for a nonexistent plan id —
+// neither the source app nor this one adds a dedicated
+// PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
+// typo caught on the next attempt.
+func (q *Queries) AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error) {
+	row := q.db.QueryRow(ctx, adminCreatePlan, arg.Name, arg.Limits)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const adminDeleteOrganization = `-- name: AdminDeleteOrganization :exec
+DELETE FROM organizations WHERE id = $1
+`
+
+// memberships/connectors/mcp_api_keys/org_subscriptions all cascade
+// (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
+// no FK (00004), so audit rows deliberately survive the org — see
+// admin.Service.DeleteOrganization's doc comment. The caller has already
+// loaded the org (to check its slug against the confirmation field), so
+// there is no existence race worth an :execrows check here.
+func (q *Queries) AdminDeleteOrganization(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, adminDeleteOrganization, id)
+	return err
+}
+
+const adminDeletePlan = `-- name: AdminDeletePlan :exec
+DELETE FROM plans WHERE id = $1
+`
+
+// The caller has already loaded the plan (AdminGetPlanByID, for the 404
+// check) and confirmed no org_subscriptions row references it
+// (AdminCountSubscriptionsByPlan, for PLAN_IN_USE) before this runs.
+func (q *Queries) AdminDeletePlan(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, adminDeletePlan, id)
+	return err
+}
+
 const adminGetOrganizationByID = `-- name: AdminGetOrganizationByID :one
 
 SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1
@@ -313,6 +384,22 @@ func (q *Queries) AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (O
 		&i.Slug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const adminGetPlanByID = `-- name: AdminGetPlanByID :one
+SELECT id, name, limits, created_at FROM plans WHERE id = $1
+`
+
+func (q *Queries) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error) {
+	row := q.db.QueryRow(ctx, adminGetPlanByID, id)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -737,4 +824,60 @@ func (q *Queries) AdminQueryAuditLogs(ctx context.Context, arg AdminQueryAuditLo
 		return nil, err
 	}
 	return items, nil
+}
+
+const adminSetOrgCustomLimits = `-- name: AdminSetOrgCustomLimits :execrows
+
+UPDATE org_subscriptions SET custom_limits = $2, updated_at = now() WHERE organization_id = $1
+`
+
+type AdminSetOrgCustomLimitsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	CustomLimits   []byte    `json:"custom_limits"`
+}
+
+// The remaining queries back Phase 3's mutation routes
+// (docs/11-admin-panel.md, execution plan Phase 3). CountSuperadmins,
+// SetUserBan, SetUserPlatformRole, and RevokeAllUserSessions already exist
+// (queries/users.sql, queries/sessions.sql) and are reused as-is rather
+// than duplicated here.
+// Touches only org_subscriptions.custom_limits — deliberately narrower
+// than UpsertOrgSubscription (subscriptions.sql), which also rewrites
+// plan_id via a full upsert. $2 is nullable: NULL clears back to
+// plan-only limits. 0 rows affected means the organization has no
+// org_subscriptions row yet (no plan ever assigned) — admin.Service turns
+// that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
+// is NOT NULL and there is nothing here to attach custom_limits to.
+func (q *Queries) AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCustomLimitsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, adminSetOrgCustomLimits, arg.OrganizationID, arg.CustomLimits)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const adminUpdatePlan = `-- name: AdminUpdatePlan :one
+UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING id, name, limits, created_at
+`
+
+type AdminUpdatePlanParams struct {
+	ID     uuid.UUID       `json:"id"`
+	Name   string          `json:"name"`
+	Limits json.RawMessage `json:"limits"`
+}
+
+// A full replace (name + limits together), not a partial PATCH — mirrors
+// the shape of POST /admin/plans, and a plan's whole point is that its
+// limits are reviewed together, not merged field-by-field. 0 rows ->
+// pgx.ErrNoRows -> admin.Service maps that to 404.
+func (q *Queries) AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error) {
+	row := q.db.QueryRow(ctx, adminUpdatePlan, arg.ID, arg.Name, arg.Limits)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
+	)
+	return i, err
 }

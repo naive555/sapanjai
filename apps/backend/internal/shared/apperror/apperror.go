@@ -100,6 +100,15 @@ const (
 	// CannotImpersonateStaff guards against impersonating a platform staff
 	// account, closing off impersonation as a privilege-escalation ladder.
 	CannotImpersonateStaff = "CANNOT_IMPERSONATE_STAFF"
+
+	// OrgConfirmMismatch is DELETE /admin/organizations/:orgId's response
+	// when the request body's confirm field doesn't equal the target org's
+	// own slug (docs/11-admin-panel.md D4) — typing the slug out correctly
+	// is the deliberate friction on an otherwise-irreversible delete. Not
+	// in the original execution plan's Task 1.8 table; added here because
+	// no existing code fits "the confirmation value didn't match" (403
+	// ReauthFailed already covers the password half of the same request).
+	OrgConfirmMismatch = "ORG_CONFIRM_MISMATCH"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -145,6 +154,7 @@ var Map = map[string]mapping{
 	PlanInUse:              {409, "Plan has active subscriptions"},
 	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
 	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
+	OrgConfirmMismatch:     {400, "Confirmation does not match the organization's slug"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

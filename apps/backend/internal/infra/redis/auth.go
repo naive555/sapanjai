@@ -11,6 +11,12 @@ import (
 
 const loginAttemptsTTL = 15 * time.Minute
 
+// reauthAttemptsTTL matches loginAttemptsTTL — the admin password re-auth
+// limiter (docs/11-admin-panel.md D4, execution plan Task 3.2) is a
+// straight port of the login limiter's shape, keyed by userId instead of
+// email since the caller is already an authenticated admin.
+const reauthAttemptsTTL = 15 * time.Minute
+
 // Auth wraps a Redis client with the access-token blacklist and login
 // rate-limit helpers, mirroring RedisAuth in the source app
 // (src/infrastructure/redis/index.ts): same key names and TTLs.
@@ -35,6 +41,10 @@ func (a *Auth) blacklistKey(token string) string { return a.prefix + "blacklist:
 func (a *Auth) loginAttemptsKey(email string) string { return a.prefix + "login:attempts:" + email }
 
 func (a *Auth) banKey(userID uuid.UUID) string { return a.prefix + "banned:" + userID.String() }
+
+func (a *Auth) reauthAttemptsKey(userID uuid.UUID) string {
+	return a.prefix + "admin:reauth:attempts:" + userID.String()
+}
 
 // BlacklistToken marks an access token as revoked for ttl, key
 // "<prefix>blacklist:<token>".
@@ -100,6 +110,49 @@ func (a *Auth) IsBanned(ctx context.Context, userID uuid.UUID) (bool, error) {
 // the key is absent or unparseable.
 func (a *Auth) GetLoginAttempts(ctx context.Context, email string) (int, error) {
 	val, err := a.client.Get(ctx, a.loginAttemptsKey(email)).Result()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	attempts, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, nil
+	}
+	return attempts, nil
+}
+
+// IncrementReauthAttempts increments the failed-reauth counter for userID,
+// key "<prefix>admin:reauth:attempts:<userId>". Mirrors
+// IncrementLoginAttempts exactly (execution plan Task 3.2): without an
+// independent limiter here, the password field on every destructive admin
+// endpoint would be an online password oracle against the highest-value
+// accounts in the system.
+func (a *Auth) IncrementReauthAttempts(ctx context.Context, userID uuid.UUID) (int64, error) {
+	key := a.reauthAttemptsKey(userID)
+	attempts, err := a.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if attempts == 1 {
+		if err := a.client.Expire(ctx, key, reauthAttemptsTTL).Err(); err != nil {
+			return 0, err
+		}
+	}
+	return attempts, nil
+}
+
+// ResetReauthAttempts clears the failed-reauth counter for userID, called
+// after a successful re-authentication.
+func (a *Auth) ResetReauthAttempts(ctx context.Context, userID uuid.UUID) error {
+	return a.client.Del(ctx, a.reauthAttemptsKey(userID)).Err()
+}
+
+// GetReauthAttempts returns the current failed-reauth count for userID, or 0
+// if the key is absent or unparseable — mirrors GetLoginAttempts.
+func (a *Auth) GetReauthAttempts(ctx context.Context, userID uuid.UUID) (int, error) {
+	val, err := a.client.Get(ctx, a.reauthAttemptsKey(userID)).Result()
 	if err == redis.Nil {
 		return 0, nil
 	}

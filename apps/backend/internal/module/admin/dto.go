@@ -357,3 +357,82 @@ type PlansListResponse struct {
 	Items []PlanItem `json:"items"`
 	Total int64      `json:"total"`
 }
+
+// ---- Mutations (execution plan Phase 3) ----
+//
+// Every request DTO below that embeds a Password field is bound by
+// httpx.BindAndValidate/BindBodyAndValidate straight off the wire — it must
+// never be logged as a whole struct (CLAUDE.md's "log individual fields,
+// never a whole request/body struct" rule, which centralized redaction in
+// internal/shared/logger/redact.go cannot rescue here since it only matches
+// attribute *keys*, and a struct logged via slog.Any("body", req) would
+// serialize Password in full regardless of key-based redaction elsewhere).
+// No admin handler in this package logs a bound request struct.
+
+// SuccessResponse is the response body for every admin mutation that has
+// no more interesting result to report than "it happened" — mirrors the
+// SuccessResponse shape organization/subscription/mcpkey already use for
+// the same kind of route.
+type SuccessResponse struct {
+	Success bool `json:"success"`
+}
+
+// AssignPlanRequest is the POST /admin/organizations/:orgId/plan body.
+type AssignPlanRequest struct {
+	PlanID string `json:"planId" validate:"required,uuid"`
+}
+
+// SetLimitsRequest is the PUT /admin/organizations/:orgId/limits body.
+// CustomLimits is a pointer so JSON null (or an absent field — Go's
+// encoding/json treats the two identically for a pointer target) and a
+// present object are both representable: nil clears back to plan-only
+// limits, non-nil sets/replaces the override.
+//
+// A present object goes through validateCustomLimits in the handler —
+// every value must be a whole number, though (unlike a plan's own limits)
+// no particular key is required, since this is a partial overlay.
+type SetLimitsRequest struct {
+	CustomLimits *map[string]any `json:"customLimits"`
+}
+
+// DeleteOrganizationRequest is the DELETE /admin/organizations/:orgId body.
+// Confirm must equal the target organization's slug — typing it out is the
+// friction that is deliberately the feature on an irreversible delete
+// (docs/11-admin-panel.md D4). Password is the caller's own, re-verified by
+// reauth before anything destructive happens.
+type DeleteOrganizationRequest struct {
+	Confirm  string `json:"confirm" validate:"required"`
+	Password string `json:"password" validate:"required"`
+}
+
+// PlatformRoleRequest is the PATCH /admin/users/:userId/platform-role body.
+// Role is nil to revoke platform staff status entirely (cmd/grantadmin's
+// "-role none" as a JSON null/absent field), or "superadmin"/"support" to
+// grant it.
+type PlatformRoleRequest struct {
+	Role     *string `json:"role" validate:"omitempty,oneof=superadmin support"`
+	Password string  `json:"password" validate:"required"`
+}
+
+// BanRequest is the PATCH /admin/users/:userId/ban body. Reason is optional
+// on unban (Banned: false) and conventionally set on ban, but nothing
+// enforces that at the type level — the service doesn't care which
+// direction Reason travels with.
+type BanRequest struct {
+	Banned   bool    `json:"banned"`
+	Reason   *string `json:"reason" validate:"omitempty,max=500"`
+	Password string  `json:"password" validate:"required"`
+}
+
+// PlanCreateRequest is the POST /admin/plans body.
+type PlanCreateRequest struct {
+	Name   string         `json:"name" validate:"required,min=1,max=100"`
+	Limits map[string]any `json:"limits" validate:"required"`
+}
+
+// PlanUpdateRequest is the PUT /admin/plans/:planId body — a full replace
+// of name+limits together (admin.sql's AdminUpdatePlan doc comment).
+type PlanUpdateRequest struct {
+	Name   string         `json:"name" validate:"required,min=1,max=100"`
+	Limits map[string]any `json:"limits" validate:"required"`
+}

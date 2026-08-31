@@ -39,9 +39,33 @@ type Querier interface {
 	// admin.Service.cachedCount for GET /admin/organizations.
 	AdminCountOrganizations(ctx context.Context, search *string) (int64, error)
 	AdminCountOrganizationsSince(ctx context.Context, since time.Time) (int64, error)
+	// Backs the PLAN_IN_USE guard on plan delete. plans is referenced by
+	// org_subscriptions.plan_id with ON DELETE no action (migration 00005), so
+	// the database would reject the delete anyway — this check exists so the
+	// API can return a real 409 instead of surfacing that constraint
+	// violation as a 500.
+	AdminCountSubscriptionsByPlan(ctx context.Context, planID uuid.UUID) (int64, error)
 	// Mirrors AdminListUsers's WHERE exactly.
 	AdminCountUsers(ctx context.Context, arg AdminCountUsersParams) (int64, error)
 	AdminCountUsersSince(ctx context.Context, since time.Time) (int64, error)
+	// plans.name carries a UNIQUE constraint; a colliding name surfaces as a
+	// raw constraint-violation error (500), the same tolerance
+	// subscription.Service.AssignPlan documents for a nonexistent plan id —
+	// neither the source app nor this one adds a dedicated
+	// PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
+	// typo caught on the next attempt.
+	AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error)
+	// memberships/connectors/mcp_api_keys/org_subscriptions all cascade
+	// (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
+	// no FK (00004), so audit rows deliberately survive the org — see
+	// admin.Service.DeleteOrganization's doc comment. The caller has already
+	// loaded the org (to check its slug against the confirmation field), so
+	// there is no existence race worth an :execrows check here.
+	AdminDeleteOrganization(ctx context.Context, id uuid.UUID) error
+	// The caller has already loaded the plan (AdminGetPlanByID, for the 404
+	// check) and confirmed no org_subscriptions row references it
+	// (AdminCountSubscriptionsByPlan, for PLAN_IN_USE) before this runs.
+	AdminDeletePlan(ctx context.Context, id uuid.UUID) error
 	// Queries backing internal/module/admin, the cross-org platform staff
 	// console (docs/11-admin-panel.md). Every query here deliberately has NO
 	// organization_id predicate the way the tenant-facing queries do — that is
@@ -53,6 +77,7 @@ type Querier interface {
 	// mcp_api_keys.key_hash; column lists are explicit rather than SELECT *
 	// specifically to keep it that way as the schema evolves.
 	AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
+	AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
 	// Cross-org connector metadata only — no encrypted_config column in this
 	// SELECT, ever (docs/11-admin-panel.md §7). Also used, filtered by
 	// organization_id alone, to populate the connector list nested in
@@ -93,6 +118,24 @@ type Querier interface {
 	// zone (see QueryAuditLogs's comment); callers must normalize any RFC3339
 	// input to UTC before binding here, same as there.
 	AdminQueryAuditLogs(ctx context.Context, arg AdminQueryAuditLogsParams) ([]AdminQueryAuditLogsRow, error)
+	// The remaining queries back Phase 3's mutation routes
+	// (docs/11-admin-panel.md, execution plan Phase 3). CountSuperadmins,
+	// SetUserBan, SetUserPlatformRole, and RevokeAllUserSessions already exist
+	// (queries/users.sql, queries/sessions.sql) and are reused as-is rather
+	// than duplicated here.
+	// Touches only org_subscriptions.custom_limits — deliberately narrower
+	// than UpsertOrgSubscription (subscriptions.sql), which also rewrites
+	// plan_id via a full upsert. $2 is nullable: NULL clears back to
+	// plan-only limits. 0 rows affected means the organization has no
+	// org_subscriptions row yet (no plan ever assigned) — admin.Service turns
+	// that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
+	// is NOT NULL and there is nothing here to attach custom_limits to.
+	AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCustomLimitsParams) (int64, error)
+	// A full replace (name + limits together), not a partial PATCH — mirrors
+	// the shape of POST /admin/plans, and a plan's whole point is that its
+	// limits are reviewed together, not merged field-by-field. 0 rows ->
+	// pgx.ErrNoRows -> admin.Service maps that to 404.
+	AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies

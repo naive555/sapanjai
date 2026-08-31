@@ -3,6 +3,7 @@
 package httpx
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -15,6 +16,24 @@ import (
 // return the result directly.
 func BindAndValidate(c echo.Context, req any) error {
 	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+	if err := c.Validate(req); err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "Validation failed")
+	}
+	return nil
+}
+
+// BindBodyAndValidate behaves exactly like BindAndValidate, except it
+// always parses the request body regardless of HTTP method. Echo's default
+// binder (DefaultBinder.Bind) skips BindBody entirely for GET/DELETE/HEAD —
+// reasonable for the vast majority of routes, but wrong for
+// DELETE /admin/organizations/:orgId, whose body carries the confirmation
+// slug and re-auth password (docs/11-admin-panel.md D4). Use this instead
+// of BindAndValidate for any route that needs a body on one of those three
+// methods.
+func BindBodyAndValidate(c echo.Context, req any) error {
+	if err := json.NewDecoder(c.Request().Body).Decode(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
 	}
 	if err := c.Validate(req); err != nil {

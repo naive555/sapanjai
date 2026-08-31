@@ -131,11 +131,14 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant
-	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission. This
-	// phase wires only the read surfaces; the token service Phase 4
-	// (impersonation) needs is not added yet, per the execution plan.
+	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission.
+	// Phases 1-3 are wired here (reads plus the superadmin-only mutation
+	// routes); the token service Phase 4 (impersonation) needs is not
+	// added yet. redisAuth is reused as-is for the reauth rate limiter and
+	// the durable-ban cache (D3) — the same *redis.Auth every login-path
+	// check already goes through.
 	adminCache := appredis.NewAdminCount(rdb, cfg.RedisKeyPrefix)
-	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, log)
+	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, redisAuth, log)
 	admin.NewHandler(adminSvc).Register(e.Group("/admin"), guards)
 
 	return e, nil
