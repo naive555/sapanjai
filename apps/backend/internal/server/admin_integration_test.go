@@ -297,7 +297,15 @@ func TestIntegration_Admin_OrganizationsListAndDetail(t *testing.T) {
 		// whole integration suite's history, so search by the fixture's
 		// own slug prefix rather than relying on it falling within an
 		// unfiltered page.
-		resp, raw := doAdminGet(t, client, ts.URL, "/admin/organizations?search=admin-fixture&limit=100", headers)
+		// Search on the fixture org's OWN slug, not the shared
+		// "admin-fixture" prefix: uniqueSlug appends a UUID, so this matches
+		// exactly one row. The prefix alone matches every past run's fixture
+		// org too, and since AdminListOrganizations orders created_at ASC the
+		// just-created one drops off the first page once a long-lived dev
+		// database accumulates more than ?limit= of them — the same
+		// history-dependent trap the users-list test above documents.
+		resp, raw := doAdminGet(t, client, ts.URL,
+			"/admin/organizations?search="+url.QueryEscape(fx.org.Slug), headers)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, raw)
 		}

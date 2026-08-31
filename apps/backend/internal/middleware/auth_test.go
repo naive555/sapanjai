@@ -12,16 +12,26 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/shared/authtoken"
 )
 
 // ---- hand-mocked dependencies ----
 
+// mockTokenVerifier keeps the pre-impersonation (userID, email, error)
+// triple as its common-case knob so every existing test reads unchanged,
+// and adds verifyClaims for the handful that need to express the imp/act
+// claims a triple cannot carry. verifyClaims wins when both are set.
 type mockTokenVerifier struct {
-	verify func(token string) (uuid.UUID, string, error)
+	verify       func(token string) (uuid.UUID, string, error)
+	verifyClaims func(token string) (authtoken.AccessToken, error)
 }
 
-func (m *mockTokenVerifier) VerifyAccessToken(token string) (uuid.UUID, string, error) {
-	return m.verify(token)
+func (m *mockTokenVerifier) VerifyAccessToken(token string) (authtoken.AccessToken, error) {
+	if m.verifyClaims != nil {
+		return m.verifyClaims(token)
+	}
+	userID, email, err := m.verify(token)
+	return authtoken.AccessToken{UserID: userID, Email: email}, err
 }
 
 type mockBlacklist struct {
@@ -561,5 +571,123 @@ func TestRequirePermission_Success(t *testing.T) {
 	}
 	if gotMembership.Role != "member" {
 		t.Errorf("MembershipFromContext(c).Role = %q, want %q", gotMembership.Role, "member")
+	}
+}
+
+// ---- Impersonation (execution plan Phase 4, docs/11-admin-panel.md §5) ----
+
+// impersonationGuards builds a Guards whose verifier returns an
+// impersonation token for the given target/actor, with nothing blacklisted
+// or banned.
+func impersonationGuards(targetID, actorID uuid.UUID, store userStore) *Guards {
+	return NewGuards(
+		&mockTokenVerifier{
+			verifyClaims: func(token string) (authtoken.AccessToken, error) {
+				return authtoken.AccessToken{
+					UserID:       targetID,
+					Email:        "target@example.com",
+					ActorID:      actorID,
+					Impersonated: true,
+				}, nil
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+		},
+		store,
+		&mockPermissionChecker{},
+	)
+}
+
+// The read-only rule is enforced by method, at the guard, so that a route
+// added later is covered without anyone remembering to add it to a list.
+func TestRequireAuth_ImpersonationRejectsUnsafeMethods(t *testing.T) {
+	g := impersonationGuards(uuid.New(), uuid.New(), &mockMembershipStore{})
+
+	for _, method := range []string{
+		http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
+	} {
+		t.Run(method, func(t *testing.T) {
+			c, _ := newTestContext(method, "/", map[string]string{
+				"Authorization": "Bearer impersonation.jwt.token",
+			})
+			err := g.RequireAuth()(okNext)(c)
+			assertHTTPError(t, err, http.StatusForbidden, "Impersonated sessions are read-only")
+		})
+	}
+}
+
+func TestRequireAuth_ImpersonationAllowsSafeMethods(t *testing.T) {
+	targetID, actorID := uuid.New(), uuid.New()
+	g := impersonationGuards(targetID, actorID, &mockMembershipStore{})
+
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		t.Run(method, func(t *testing.T) {
+			c, _ := newTestContext(method, "/", map[string]string{
+				"Authorization": "Bearer impersonation.jwt.token",
+			})
+
+			var gotUser, gotActor uuid.UUID
+			var gotImpersonated bool
+			next := func(c echo.Context) error {
+				gotUser, gotActor, gotImpersonated = UserID(c), ActorID(c), IsImpersonated(c)
+				return c.String(http.StatusOK, "ok")
+			}
+
+			if err := g.RequireAuth()(next)(c); err != nil {
+				t.Fatalf("RequireAuth: unexpected error %v", err)
+			}
+			// The request authenticates AS the target, with the staff member
+			// recorded alongside rather than in place of them.
+			if gotUser != targetID {
+				t.Errorf("UserID(c) = %v, want the target %v", gotUser, targetID)
+			}
+			if gotActor != actorID {
+				t.Errorf("ActorID(c) = %v, want the actor %v", gotActor, actorID)
+			}
+			if !gotImpersonated {
+				t.Error("IsImpersonated(c) = false, want true")
+			}
+		})
+	}
+}
+
+// An ordinary token must leave both impersonation values at their zero
+// state, so nothing downstream can mistake a normal request for an
+// impersonated one.
+func TestRequireAuth_OrdinaryTokenIsNotImpersonated(t *testing.T) {
+	userID := uuid.New()
+	g := NewGuards(
+		&mockTokenVerifier{
+			verify: func(token string) (uuid.UUID, string, error) {
+				return userID, "user@example.com", nil
+			},
+		},
+		&mockBlacklist{
+			isBlacklisted: func(ctx context.Context, token string) (bool, error) { return false, nil },
+		},
+		&mockMembershipStore{},
+		&mockPermissionChecker{},
+	)
+	// A POST, to prove the read-only rule does not fire for a normal token.
+	c, _ := newTestContext(http.MethodPost, "/", map[string]string{
+		"Authorization": "Bearer valid.jwt.token",
+	})
+
+	var gotActor uuid.UUID
+	var gotImpersonated bool
+	next := func(c echo.Context) error {
+		gotActor, gotImpersonated = ActorID(c), IsImpersonated(c)
+		return c.String(http.StatusOK, "ok")
+	}
+
+	if err := g.RequireAuth()(next)(c); err != nil {
+		t.Fatalf("RequireAuth: unexpected error %v", err)
+	}
+	if gotImpersonated {
+		t.Error("IsImpersonated(c) = true for an ordinary token")
+	}
+	if gotActor != uuid.Nil {
+		t.Errorf("ActorID(c) = %v, want uuid.Nil for an ordinary token", gotActor)
 	}
 }

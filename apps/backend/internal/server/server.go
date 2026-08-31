@@ -132,13 +132,14 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant
 	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission.
-	// Phases 1-3 are wired here (reads plus the superadmin-only mutation
-	// routes); the token service Phase 4 (impersonation) needs is not
-	// added yet. redisAuth is reused as-is for the reauth rate limiter and
-	// the durable-ban cache (D3) — the same *redis.Auth every login-path
-	// check already goes through.
+	// redisAuth is reused as-is for the reauth rate limiter and the
+	// durable-ban cache (D3) — the same *redis.Auth every login-path check
+	// already goes through. tokenSvc is the same signer the /auth module
+	// uses: an impersonation token is an ordinary access token carrying
+	// imp/act claims, so it must verify under the very same secret the
+	// guards already check, not a parallel one.
 	adminCache := appredis.NewAdminCount(rdb, cfg.RedisKeyPrefix)
-	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, redisAuth, log)
+	adminSvc := admin.NewService(store, adminCache, auditSvc, subSvc, redisAuth, tokenSvc, log)
 	admin.NewHandler(adminSvc).Register(e.Group("/admin"), guards)
 
 	return e, nil

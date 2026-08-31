@@ -18,7 +18,7 @@ import (
 // §4's role matrix: support reads everything. Mutations are guarded by a
 // separate RequirePlatformRole("superadmin") instance — support mutates
 // nothing, so a compromised support account cannot destroy anything.
-// Impersonation (Phase 4) is not registered here.
+// Impersonation (Phase 4) sits on the read guard — see Register.
 type Handler struct {
 	service *Service
 }
@@ -32,7 +32,7 @@ func NewHandler(service *Service) *Handler {
 // under g. Two separate RequirePlatformRole instances back the two groups —
 // not one shared guard with a per-handler role check — so the route table
 // itself is the source of truth for which routes support may reach; see
-// docs/11-admin-panel.md §4. Impersonation (Phase 4) is not registered here.
+// docs/11-admin-panel.md §4.
 func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	read := guards.RequirePlatformRole("superadmin", "support")
 	write := guards.RequirePlatformRole("superadmin")
@@ -56,6 +56,12 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/plans", h.createPlan, write)
 	g.PUT("/plans/:planId", h.updatePlan, write)
 	g.DELETE("/plans/:planId", h.deletePlan, write)
+
+	// Impersonation is on the READ guard, not write: it grants only what
+	// support already has (docs/11-admin-panel.md §4's matrix lists it for
+	// both roles), and the token it mints is itself read-only. It is a POST
+	// purely because it has a body and a side effect worth auditing.
+	g.POST("/users/:userId/impersonate", h.impersonate, read)
 }
 
 // adminContext builds the AdminContext every Phase 3 mutation passes to its
@@ -671,4 +677,36 @@ func parseOptionalRFC3339(s *string) (*time.Time, error) {
 	}
 	utc := t.UTC()
 	return &utc, nil
+}
+
+// impersonate mints a short-lived read-only token authenticating as the
+// target user.
+// @Summary  Start impersonating a tenant user (read-only, 10 minutes)
+// @Tags     admin
+// @Security BearerAuth
+// @Accept   json
+// @Produce  json
+// @Param    userId  path      string              true  "User ID to impersonate"
+// @Param    body    body      ImpersonateRequest  true  "Mandatory reason, minimum 10 characters"
+// @Success  200     {object}  ImpersonateResponse
+// @Failure  401     {object}  httpx.ErrorResponse  "Unauthorized"
+// @Failure  403     {object}  httpx.ErrorResponse  "Insufficient permissions, or the target is platform staff / suspended"
+// @Failure  404     {object}  httpx.ErrorResponse  "User not found"
+// @Failure  422     {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /admin/users/{userId}/impersonate [post]
+func (h *Handler) impersonate(c echo.Context) error {
+	targetID, err := userIDParam(c)
+	if err != nil {
+		return err
+	}
+	var req ImpersonateRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	resp, err := h.service.Impersonate(c.Request().Context(), adminContext(c), targetID, req.Reason)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
 }

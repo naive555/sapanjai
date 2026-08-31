@@ -142,12 +142,30 @@ What makes it containable:
    `imp: true` is rejected on any request whose method is not `GET` / `HEAD` /
    `OPTIONS`, inside `Guards.verify()`. A route added next year is covered
    automatically; a per-route allowlist would not be.
+
+   The exception worth knowing: routes that never run `verify()` at all are
+   not covered by it, and `POST /auth/logout` is the only unauthenticated
+   route with a write effect. It identifies the session by the refresh token
+   in its body (it must work for a caller whose access token has already
+   expired), so no guard runs on it. That is safe rather than merely
+   tolerated: logout's destructive half needs the *target's refresh token*,
+   which impersonation never issues, so the call is a no-op success. It is
+   pinned by a test — see `TestIntegration_Admin_Impersonation`'s "logout is
+   unguarded but harmless" case. Any future unauthenticated write route needs
+   the same reasoning done explicitly; it will not inherit the guard's rule.
 2. **Short-lived and non-refreshable.** 10-minute TTL, no refresh token, no
    `sessions` row. It cannot be extended, only re-issued — and a re-issue
    writes a fresh audit entry.
 3. **Staff cannot be impersonated.** A target holding any `platform_role` is
    refused (`CANNOT_IMPERSONATE_STAFF`), so impersonation cannot become a
-   privilege-escalation ladder.
+   privilege-escalation ladder. That check runs at issuance, and `platform_role`
+   is a mutable row — promoting the impersonated user during the token's ten
+   minutes would defeat it on its own. So `RequirePlatformRole` *separately*
+   refuses any token carrying `imp`, before it reads the user row at all: the
+   console is unreachable under impersonation regardless of what the target's
+   role becomes mid-flight. A banned target is refused too, checked after the
+   staff test so a banned staff account reports the staff refusal rather than
+   leaking its ban state.
 4. **A reason is mandatory** (minimum 10 characters) and lands in the audit
    metadata alongside the actor, target, IP and user agent.
 5. **The MCP gateway is untouched.** PATs are authenticated by

@@ -16,6 +16,7 @@ import (
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	appmw "github.com/sapanjai/backend/internal/middleware"
+	"github.com/sapanjai/backend/internal/shared/authtoken"
 )
 
 // testPermActionPattern mirrors internal/server/validator.go's unexported
@@ -52,8 +53,8 @@ type fakeTokenVerifier struct {
 	userID uuid.UUID
 }
 
-func (f *fakeTokenVerifier) VerifyAccessToken(token string) (uuid.UUID, string, error) {
-	return f.userID, "caller@example.com", nil
+func (f *fakeTokenVerifier) VerifyAccessToken(token string) (authtoken.AccessToken, error) {
+	return authtoken.AccessToken{UserID: f.userID, Email: "caller@example.com"}, nil
 }
 
 type fakeBlacklistChecker struct{}

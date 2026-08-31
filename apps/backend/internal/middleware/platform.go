@@ -31,6 +31,18 @@ func (g *Guards) RequirePlatformRole(roles ...string) echo.MiddlewareFunc {
 				return err
 			}
 
+			// An impersonation token never reaches the admin console, and
+			// this check is NOT redundant with "the target had no
+			// platform_role at issuance". That was true when the token was
+			// minted; platform_role is a mutable row, so promoting the
+			// impersonated user during the token's 10-minute life would
+			// otherwise hand the impersonator a staff session. Refusing on
+			// the token's own immutable imp claim closes that window
+			// without depending on the target's current role at all.
+			if IsImpersonated(c) {
+				return echo.NewHTTPError(http.StatusForbidden, "Insufficient permissions")
+			}
+
 			user, err := g.store.GetUserByID(c.Request().Context(), UserID(c))
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {

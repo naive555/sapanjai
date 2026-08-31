@@ -77,6 +77,7 @@ func uniqueSlug(prefix string) string {
 // owner's own credentials for use as the caller in later requests.
 type createdOrg struct {
 	ID    string
+	Slug  string
 	Owner registeredUser
 }
 
@@ -85,8 +86,9 @@ func createOrgWithOwner(t *testing.T, client *http.Client, baseURL, slugPrefix s
 
 	owner := registerUser(t, client, baseURL, slugPrefix+"-owner")
 
+	slug := uniqueSlug(slugPrefix)
 	resp, body := doJSON(t, client, baseURL, http.MethodPost, "/organizations",
-		map[string]any{"name": "Test Org", "slug": uniqueSlug(slugPrefix)},
+		map[string]any{"name": "Test Org", "slug": slug},
 		map[string]string{"Authorization": "Bearer " + owner.AccessToken})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create org: status = %d, want 200; body = %v", resp.StatusCode, body)
@@ -97,7 +99,7 @@ func createOrgWithOwner(t *testing.T, client *http.Client, baseURL, slugPrefix s
 		t.Fatalf("create org: missing id: %v", body)
 	}
 
-	return createdOrg{ID: orgID, Owner: owner}
+	return createdOrg{ID: orgID, Slug: slug, Owner: owner}
 }
 
 // inviteMember invites email into org with role, using org's owner as the

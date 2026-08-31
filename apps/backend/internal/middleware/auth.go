@@ -4,21 +4,26 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/authtoken"
 )
 
 // Context keys for values the guards inject, read back via the typed
 // getters below (UserID, UserEmail, OrgID, MembershipFromContext).
 const (
-	ctxUserID     = "auth.userID"
-	ctxUserEmail  = "auth.userEmail"
-	ctxOrgID      = "auth.orgID"
-	ctxMembership = "auth.membership"
+	ctxUserID       = "auth.userID"
+	ctxUserEmail    = "auth.userEmail"
+	ctxOrgID        = "auth.orgID"
+	ctxMembership   = "auth.membership"
+	ctxActorID      = "auth.actorID"
+	ctxImpersonated = "auth.impersonated"
 )
 
 // OrgHeader is the request header carrying the active organization for
@@ -27,8 +32,12 @@ const OrgHeader = "x-organization-id"
 
 // tokenVerifier is the subset of *auth.TokenService the guards depend on.
 type tokenVerifier interface {
-	VerifyAccessToken(token string) (uuid.UUID, string, error)
+	VerifyAccessToken(token string) (authtoken.AccessToken, error)
 }
+
+// safeMethods are the HTTP methods an impersonation token may use. Anything
+// outside this set is refused in verify() — see its doc comment.
+var safeMethods = []string{http.MethodGet, http.MethodHead, http.MethodOptions}
 
 // blacklistChecker is the subset of *redis.Auth the guards depend on: the
 // access-token blacklist and the ban cache behind Guards.verify's durable
@@ -113,12 +122,22 @@ func (g *Guards) verify(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Token revoked")
 	}
 
-	userID, email, err := g.token.VerifyAccessToken(token)
+	claims, err := g.token.VerifyAccessToken(token)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
 	}
 
-	banned, err := g.blacklist.IsBanned(c.Request().Context(), userID)
+	// An impersonation token is read-only, enforced here rather than per
+	// route (docs/11-admin-panel.md §5): a route added next year is covered
+	// automatically, where an allowlist would silently not cover it. The
+	// check sits before the ban lookup only because it needs no I/O — the
+	// ordering has no security significance either way.
+	if claims.Impersonated && !slices.Contains(safeMethods, c.Request().Method) {
+		status, message := apperror.Resolve(apperror.ImpersonationReadOnly)
+		return echo.NewHTTPError(status, message)
+	}
+
+	banned, err := g.blacklist.IsBanned(c.Request().Context(), claims.UserID)
 	if err != nil {
 		return err
 	}
@@ -126,8 +145,10 @@ func (g *Guards) verify(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "Account suspended")
 	}
 
-	c.Set(ctxUserID, userID)
-	c.Set(ctxUserEmail, email)
+	c.Set(ctxUserID, claims.UserID)
+	c.Set(ctxUserEmail, claims.Email)
+	c.Set(ctxImpersonated, claims.Impersonated)
+	c.Set(ctxActorID, claims.ActorID)
 	return nil
 }
 
@@ -263,6 +284,21 @@ func UserID(c echo.Context) uuid.UUID {
 // (POST /auth/refresh).
 func UserEmail(c echo.Context) string {
 	v, _ := c.Get(ctxUserEmail).(string)
+	return v
+}
+
+// IsImpersonated reports whether the caller's token was minted by
+// POST /admin/users/:userId/impersonate, set by verify().
+func IsImpersonated(c echo.Context) bool {
+	v, _ := c.Get(ctxImpersonated).(bool)
+	return v
+}
+
+// ActorID returns the platform-staff user who started an impersonation, set
+// by verify(). uuid.Nil on an ordinary token — always pair it with
+// IsImpersonated rather than treating a non-nil value as the only signal.
+func ActorID(c echo.Context) uuid.UUID {
+	v, _ := c.Get(ctxActorID).(uuid.UUID)
 	return v
 }
 

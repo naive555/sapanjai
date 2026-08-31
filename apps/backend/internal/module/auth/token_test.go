@@ -170,15 +170,15 @@ func TestVerifyAccessToken_RoundTrip(t *testing.T) {
 		t.Fatalf("SignAccessToken: %v", err)
 	}
 
-	gotID, gotEmail, err := ts.VerifyAccessToken(tokenString)
+	got, err := ts.VerifyAccessToken(tokenString)
 	if err != nil {
 		t.Fatalf("VerifyAccessToken: %v", err)
 	}
-	if gotID != userID {
-		t.Errorf("VerifyAccessToken id = %v, want %v", gotID, userID)
+	if got.UserID != userID {
+		t.Errorf("VerifyAccessToken id = %v, want %v", got.UserID, userID)
 	}
-	if gotEmail != "user@example.com" {
-		t.Errorf("VerifyAccessToken email = %q, want %q", gotEmail, "user@example.com")
+	if got.Email != "user@example.com" {
+		t.Errorf("VerifyAccessToken email = %q, want %q", got.Email, "user@example.com")
 	}
 }
 
@@ -193,21 +193,21 @@ func TestVerifyAccessToken_EmptyEmail(t *testing.T) {
 		t.Fatalf("SignAccessToken: %v", err)
 	}
 
-	gotID, gotEmail, err := ts.VerifyAccessToken(tokenString)
+	got, err := ts.VerifyAccessToken(tokenString)
 	if err != nil {
 		t.Fatalf("VerifyAccessToken: %v", err)
 	}
-	if gotID != userID {
-		t.Errorf("VerifyAccessToken id = %v, want %v", gotID, userID)
+	if got.UserID != userID {
+		t.Errorf("VerifyAccessToken id = %v, want %v", got.UserID, userID)
 	}
-	if gotEmail != "" {
-		t.Errorf("VerifyAccessToken email = %q, want empty", gotEmail)
+	if got.Email != "" {
+		t.Errorf("VerifyAccessToken email = %q, want empty", got.Email)
 	}
 }
 
 func TestVerifyAccessToken_Garbage(t *testing.T) {
 	ts := NewTokenService(testTokenConfig())
-	if _, _, err := ts.VerifyAccessToken("not-a-jwt"); err == nil {
+	if _, err := ts.VerifyAccessToken("not-a-jwt"); err == nil {
 		t.Fatal("expected an error for a garbage token")
 	}
 }
@@ -224,7 +224,7 @@ func TestVerifyAccessToken_WrongSecret(t *testing.T) {
 		JWTRefreshSecret:   testTokenConfig().JWTRefreshSecret,
 		JWTAccessExpiresIn: 15 * time.Minute,
 	})
-	if _, _, err := verifier.VerifyAccessToken(tokenString); err == nil {
+	if _, err := verifier.VerifyAccessToken(tokenString); err == nil {
 		t.Fatal("expected an error for a token signed with a different secret")
 	}
 }
@@ -237,7 +237,7 @@ func TestVerifyAccessToken_RejectsRefreshTokenSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignRefreshToken: %v", err)
 	}
-	if _, _, err := ts.VerifyAccessToken(refreshToken); err == nil {
+	if _, err := ts.VerifyAccessToken(refreshToken); err == nil {
 		t.Fatal("expected an error verifying a refresh token as an access token")
 	}
 }
@@ -252,7 +252,76 @@ func TestVerifyAccessToken_Expired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignAccessToken: %v", err)
 	}
-	if _, _, err := ts.VerifyAccessToken(tokenString); err == nil {
+	if _, err := ts.VerifyAccessToken(tokenString); err == nil {
 		t.Fatal("expected an error for an expired access token")
+	}
+}
+
+// ---- Impersonation tokens (execution plan Phase 4) ----
+
+func TestSignImpersonationToken_RoundTrip(t *testing.T) {
+	ts := NewTokenService(testTokenConfig())
+	targetID, actorID := uuid.New(), uuid.New()
+
+	tokenString, err := ts.SignImpersonationToken(targetID, "target@example.com", actorID, 10*time.Minute)
+	if err != nil {
+		t.Fatalf("SignImpersonationToken: %v", err)
+	}
+
+	got, err := ts.VerifyAccessToken(tokenString)
+	if err != nil {
+		t.Fatalf("VerifyAccessToken: %v", err)
+	}
+	// The token authenticates AS the target: sub is the target, not the
+	// staff member who minted it.
+	if got.UserID != targetID {
+		t.Errorf("UserID = %v, want the target %v", got.UserID, targetID)
+	}
+	if got.ActorID != actorID {
+		t.Errorf("ActorID = %v, want the actor %v", got.ActorID, actorID)
+	}
+	if !got.Impersonated {
+		t.Error("Impersonated = false, want true")
+	}
+	if got.Email != "target@example.com" {
+		t.Errorf("Email = %q, want the target's", got.Email)
+	}
+}
+
+// An ordinary access token must never come back looking impersonated —
+// this is what keeps the guard's read-only rule from firing on normal
+// traffic, and what keeps ActorID meaningless unless Impersonated is set.
+func TestSignAccessToken_IsNotImpersonated(t *testing.T) {
+	ts := NewTokenService(testTokenConfig())
+
+	tokenString, err := ts.SignAccessToken(uuid.New(), "user@example.com")
+	if err != nil {
+		t.Fatalf("SignAccessToken: %v", err)
+	}
+
+	got, err := ts.VerifyAccessToken(tokenString)
+	if err != nil {
+		t.Fatalf("VerifyAccessToken: %v", err)
+	}
+	if got.Impersonated {
+		t.Error("Impersonated = true for an ordinary access token")
+	}
+	if got.ActorID != uuid.Nil {
+		t.Errorf("ActorID = %v, want uuid.Nil for an ordinary access token", got.ActorID)
+	}
+}
+
+// An impersonation token is bounded by its own ttl, not the configured
+// access-token lifetime — the containment argument in
+// docs/11-admin-panel.md §5 rests on that.
+func TestSignImpersonationToken_HonoursItsOwnTTL(t *testing.T) {
+	ts := NewTokenService(testTokenConfig())
+
+	tokenString, err := ts.SignImpersonationToken(uuid.New(), "target@example.com", uuid.New(), -time.Minute)
+	if err != nil {
+		t.Fatalf("SignImpersonationToken: %v", err)
+	}
+	if _, err := ts.VerifyAccessToken(tokenString); err == nil {
+		t.Fatal("expected an already-expired impersonation token to fail verification")
 	}
 }

@@ -148,3 +148,29 @@ func TestRequirePlatformRole_SuperadminAllowed(t *testing.T) {
 		t.Errorf("PlatformRole(c) = %q, want %q", gotRole, "superadmin")
 	}
 }
+
+// ---- Impersonation cannot reach the admin console (Phase 4, Task 4.3) ----
+
+// The escalation this closes: impersonation refuses a target who holds a
+// platform_role AT ISSUANCE, but platform_role is a mutable row. Promote
+// the impersonated user during the token's 10-minute life and a check that
+// only consulted the database would now say "yes, superadmin" — handing the
+// impersonator a staff session. RequirePlatformRole therefore refuses on
+// the token's own immutable imp claim, before the row is ever read.
+func TestRequirePlatformRole_RejectsImpersonationTokenEvenWhenTargetIsStaff(t *testing.T) {
+	targetID, actorID := uuid.New(), uuid.New()
+	g := impersonationGuards(targetID, actorID, &mockMembershipStore{
+		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			t.Fatal("GetUserByID must not be reached: the imp claim decides this before any row is read")
+			return db.User{}, nil
+		},
+	})
+	// GET, so the read-only rule in verify() is NOT what rejects this —
+	// otherwise the test would pass for the wrong reason.
+	c, _ := newTestContext(http.MethodGet, "/admin/me", map[string]string{
+		"Authorization": "Bearer impersonation.jwt.token",
+	})
+
+	err := g.RequirePlatformRole("superadmin", "support")(okNext)(c)
+	assertHTTPError(t, err, http.StatusForbidden, "Insufficient permissions")
+}

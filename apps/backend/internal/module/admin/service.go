@@ -11,8 +11,8 @@
 // This file implements the read surfaces (execution plan
 // (.claude/plans/2026-08-28-admin-panel.md) Phase 2, Tasks 2.1-2.10) and
 // the mutation routes (Phase 3, Tasks 3.1-3.5): plan/limit changes,
-// org delete, platform-role grant/revoke, ban/unban, and plan CRUD.
-// Impersonation (Phase 4) is a later phase and is not implemented here.
+// org delete, platform-role grant/revoke, ban/unban, plan CRUD, and
+// impersonation (Phase 4).
 //
 // Decrypted connector config never appears anywhere in this package —
 // ConnectorItem is metadata only (id, organizationId, organizationName,
@@ -163,22 +163,30 @@ type subscriptionResolver interface {
 	AssignPlan(ctx context.Context, organizationID, planID uuid.UUID) error
 }
 
-// Service implements the admin module's read surfaces (Phase 2) and
-// mutation routes (Phase 3).
+// impersonationSigner is the subset of *auth.TokenService the impersonation
+// endpoint depends on (Phase 4). Narrowed to the one method so the admin
+// module cannot accidentally reach for SignAccessToken/SignRefreshToken and
+// mint an ordinary, refreshable session for a tenant user.
+type impersonationSigner interface {
+	SignImpersonationToken(targetID uuid.UUID, targetEmail string, actorID uuid.UUID, ttl time.Duration) (string, error)
+}
+
+// Service implements the admin module's read surfaces (Phase 2), mutation
+// routes (Phase 3), and impersonation (Phase 4).
 type Service struct {
 	store     adminStore
 	cache     countCache
 	audit     *auditlog.Service
 	sub       subscriptionResolver
 	redisAuth adminAuth
+	signer    impersonationSigner
 	log       *slog.Logger
 }
 
 // NewService builds an admin Service from its explicit dependencies — no
-// service locator (execution plan Task 2.9). The token service Phase 4
-// (impersonation) needs is not wired in yet.
-func NewService(store adminStore, cache countCache, audit *auditlog.Service, sub subscriptionResolver, redisAuth adminAuth, log *slog.Logger) *Service {
-	return &Service{store: store, cache: cache, audit: audit, sub: sub, redisAuth: redisAuth, log: log}
+// service locator (execution plan Task 2.9).
+func NewService(store adminStore, cache countCache, audit *auditlog.Service, sub subscriptionResolver, redisAuth adminAuth, signer impersonationSigner, log *slog.Logger) *Service {
+	return &Service{store: store, cache: cache, audit: audit, sub: sub, redisAuth: redisAuth, signer: signer, log: log}
 }
 
 // AdminContext carries the request-scoped values a Phase 3 mutation's audit
@@ -205,6 +213,14 @@ type AdminContext struct {
 // password oracle against the highest-value accounts in the system
 // (execution plan Task 3.2).
 const maxReauthAttempts = 5
+
+// impersonationTTL is how long a token from
+// POST /admin/users/:userId/impersonate stays valid (docs/11-admin-panel.md
+// §5). Deliberately far shorter than JWT_ACCESS_EXPIRES_IN and not
+// configurable: the containment argument for impersonation rests on this
+// number, so it belongs in code beside that argument rather than in an env
+// var an operator could quietly raise to eight hours.
+const impersonationTTL = 10 * time.Minute
 
 // superadminCap bounds how many accounts may simultaneously hold
 // platform_role = 'superadmin' (execution plan Task 3.4). Staff is 2-5
@@ -1199,4 +1215,71 @@ func buildActionPatterns(actions []string) []string {
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// ==== Impersonation (execution plan Phase 4) ====
+
+// Impersonate mints a short-lived, read-only token authenticating AS
+// targetID, on behalf of the staff member in actx (docs/11-admin-panel.md
+// §5). Available to support as well as superadmin: it grants no more than
+// support already has — read access — and reading as the user is often the
+// only way to reproduce a "my MCP client 401s" report.
+//
+// No password re-auth, deliberately (execution plan Task 4.4): the
+// operation is read-only, and prompting for a password on a routine support
+// action trains staff to type it reflexively, which makes the prompts on
+// the operations that DO need it (delete-org, ban, role change) worth less.
+//
+// Refusals, in order: unknown user, then platform staff, then banned. Staff
+// is checked before banned so that a banned staff account reports
+// CANNOT_IMPERSONATE_STAFF rather than leaking that the account is banned
+// — the staff refusal is the stronger statement and the one the caller
+// must act on (demote first).
+func (s *Service) Impersonate(ctx context.Context, actx AdminContext, targetID uuid.UUID, reason string) (ImpersonateResponse, error) {
+	target, err := s.store.GetUserByID(ctx, targetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ImpersonateResponse{}, apperror.New(apperror.UserNotFound)
+		}
+		return ImpersonateResponse{}, err
+	}
+
+	// Impersonation must never be a privilege-escalation ladder: a staff
+	// account is off limits regardless of which role it holds, so support
+	// cannot borrow a superadmin's identity and superadmins cannot quietly
+	// act as one another.
+	if target.PlatformRole != nil {
+		return ImpersonateResponse{}, apperror.New(apperror.CannotImpersonateStaff)
+	}
+
+	// A banned user's own credentials are dead (Guards.verify 401s them);
+	// minting a working token for that identity would route around the ban.
+	if target.BannedAt.Valid {
+		return ImpersonateResponse{}, apperror.New(apperror.AccountSuspended)
+	}
+
+	token, err := s.signer.SignImpersonationToken(target.ID, target.Email, actx.AdminID, impersonationTTL)
+	if err != nil {
+		return ImpersonateResponse{}, err
+	}
+
+	// Audited with the mandatory reason: the control on impersonation is
+	// detection, not prevention (docs/11-admin-panel.md §5), so this write
+	// is the entire accountability story for the next 10 minutes.
+	s.audit.Record(ctx, auditlog.ActionAdminImpersonationStarted, &actx.AdminID, nil,
+		adminAuditMetadata(actx, map[string]any{
+			"targetUserId": targetID,
+			"targetEmail":  target.Email,
+			"reason":       reason,
+		}))
+
+	return ImpersonateResponse{
+		AccessToken: token,
+		ExpiresIn:   int(impersonationTTL.Seconds()),
+		User: ImpersonatedUser{
+			ID:          target.ID,
+			Email:       target.Email,
+			DisplayName: target.DisplayName,
+		},
+	}, nil
 }

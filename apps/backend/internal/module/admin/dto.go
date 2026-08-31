@@ -436,3 +436,34 @@ type PlanUpdateRequest struct {
 	Name   string         `json:"name" validate:"required,min=1,max=100"`
 	Limits map[string]any `json:"limits" validate:"required"`
 }
+
+// ---- Impersonation (execution plan Phase 4) ----
+
+// ImpersonateRequest is the POST /admin/users/:userId/impersonate body.
+// Reason is mandatory and minimum 10 characters (docs/11-admin-panel.md
+// §5): impersonation is controlled by detection rather than prevention, so
+// a reason that is actually written down is the control. The minimum length
+// exists to make "x" or "-" fail rather than sail through as a reason.
+type ImpersonateRequest struct {
+	Reason string `json:"reason" validate:"required,min=10,max=500"`
+}
+
+// ImpersonatedUser is the target identity echoed back so the console can
+// show who the staff member is now acting as. Metadata only — the same
+// fields GET /admin/users already returns.
+type ImpersonatedUser struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName *string   `json:"displayName"`
+}
+
+// ImpersonateResponse carries the minted token. There is deliberately NO
+// refreshToken field: an impersonation token cannot be extended, only
+// re-issued through this endpoint, and each re-issue writes its own audit
+// entry (docs/11-admin-panel.md §5). ExpiresIn is seconds, matching the
+// units POST /auth/login already uses on the wire.
+type ImpersonateResponse struct {
+	AccessToken string           `json:"accessToken"`
+	ExpiresIn   int              `json:"expiresIn"`
+	User        ImpersonatedUser `json:"user"`
+}
