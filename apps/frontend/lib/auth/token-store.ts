@@ -26,11 +26,13 @@ export function getRefreshToken(): string | null {
 
 export function clearTokens(): void {
   accessToken = null;
+  impersonating = false;
   if (typeof window !== "undefined") {
     window.localStorage.removeItem(REFRESH_TOKEN_KEY);
     window.localStorage.removeItem(ACTIVE_ORG_KEY);
   }
   notifyActiveOrgChange();
+  notifyImpersonationChange();
 }
 
 // Plain pub-sub so useActiveOrgId() (lib/org/active-org.ts) can subscribe via
@@ -64,4 +66,48 @@ export function setActiveOrgId(orgId: string | null): void {
     window.localStorage.removeItem(ACTIVE_ORG_KEY);
   }
   notifyActiveOrgChange();
+}
+
+// ---- Impersonation ----
+//
+// Starting impersonation swaps the in-memory access token for a short-lived
+// one that authenticates as the target tenant user (docs/11-admin-panel.md
+// §5) — the admin's own refresh token in localStorage is never touched, so
+// "exit" is just "drop this token and let the ordinary single-flight
+// refresh (lib/api/client.ts) restore the real session from that untouched
+// refresh token." The flag lives here, next to the token itself, because
+// client.ts's 401 handler needs to read it synchronously with no dependency
+// on React — same reasoning as colocating the active-org pub-sub above.
+let impersonating = false;
+
+export function isImpersonating(): boolean {
+  return impersonating;
+}
+
+// beginImpersonation overwrites the in-memory access token with the
+// impersonation token and flips the flag. Deliberately does NOT touch
+// localStorage — that is the whole point of this client model (see
+// lib/api/client.ts's doc comment on the 401-while-impersonating path).
+export function beginImpersonation(impersonationAccessToken: string): void {
+  accessToken = impersonationAccessToken;
+  impersonating = true;
+  notifyImpersonationChange();
+}
+
+// endImpersonation only clears the flag. It deliberately does not restore
+// the admin's own token itself — that requires an actual network round trip
+// (lib/api/client.ts's restoreAdminSession), which has no business in a
+// module that otherwise only ever touches local state.
+export function endImpersonation(): void {
+  impersonating = false;
+  notifyImpersonationChange();
+}
+
+const impersonationListeners = new Set<Listener>();
+function notifyImpersonationChange(): void {
+  impersonationListeners.forEach((listener) => listener());
+}
+export function subscribeImpersonation(listener: Listener): () => void {
+  impersonationListeners.add(listener);
+  return () => impersonationListeners.delete(listener);
 }
