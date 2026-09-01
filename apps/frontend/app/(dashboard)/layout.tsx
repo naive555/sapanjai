@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { ShieldIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { FullPageSkeleton } from "@/components/full-page-skeleton";
+import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { ScopeChain } from "@/components/scope-chain";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -63,6 +65,29 @@ const NAV_GROUPS: {
     ],
   },
 ];
+
+// Deliberately outside NAV_GROUPS's grey/violet vocabulary — amber, the
+// same accent the admin console itself uses (app/(admin)/admin/layout.tsx),
+// so the entry point into "outside the tenant boundary" already looks like
+// it before it's even clicked. Reads useSession directly rather than taking
+// isPlatformStaff as a prop so it can sit in two places (desktop sidebar,
+// mobile nav row) without threading it through NavLinks too.
+function AdminNavEntry() {
+  const { isPlatformStaff } = useSession();
+  if (!isPlatformStaff) return null;
+
+  return (
+    <Link
+      href="/admin"
+      className="flex items-center gap-2 rounded-md border border-amber-600/30 bg-amber-500/10 px-2.5 py-1.5
+        text-sm font-medium whitespace-nowrap text-amber-800 transition-colors hover:bg-amber-500/20
+        focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none dark:text-amber-300"
+    >
+      <ShieldIcon className="size-3.5 shrink-0" aria-hidden />
+      Admin
+    </Link>
+  );
+}
 
 function NavLinks({ className }: { className?: string }) {
   const pathname = usePathname();
@@ -168,6 +193,9 @@ export default function DashboardLayout({
         <nav className="flex flex-col gap-6">
           <NavLinks />
         </nav>
+        <div className="mt-auto">
+          <AdminNavEntry />
+        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -185,10 +213,12 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <nav className="flex gap-1 overflow-x-auto border-b px-3 py-2 md:hidden">
+        <nav className="flex items-center gap-1 overflow-x-auto border-b px-3 py-2 md:hidden">
           <NavLinks className="contents" />
+          <AdminNavEntry />
         </nav>
 
+        <ImpersonationBanner />
         <VerificationBanner />
 
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-7 sm:px-6 sm:py-9">

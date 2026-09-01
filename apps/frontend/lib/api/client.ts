@@ -1,8 +1,10 @@
 import {
   clearTokens,
+  endImpersonation,
   getAccessToken,
   getActiveOrgId,
   getRefreshToken,
+  isImpersonating,
   setTokens,
 } from "@/lib/auth/token-store";
 
@@ -106,11 +108,90 @@ function ensureRefreshed(): Promise<void> {
   return refreshing;
 }
 
+// ---- Impersonation expiry ----
+//
+// A 401 under an impersonation token means exactly one thing: the 10-minute
+// TTL is up (docs/11-admin-panel.md §5) — never "stale access token, go
+// refresh it". The ordinary retry path a few lines down exists to smooth
+// over the ADMIN's own stale access token by silently swapping in a fresh
+// one (via the refresh token sitting untouched in localStorage) and
+// retrying the original call. Taking that same path here would restore the
+// admin's own session invisibly and hand the admin's OWN data back to a
+// screen that is still labelled "Viewing as <tenant>" — the one genuinely
+// dangerous frontend bug this feature can produce (execution plan Task
+// 5.2). So this path is handled separately below: end impersonation,
+// restore the admin's session for real (so the app isn't left
+// half-logged-out), but never retry *this* request under the restored
+// identity — whatever screen made the call is left to fail and re-render
+// once `impersonating` flips to false, and notifyImpersonationExpired() is
+// what lets it also toast about *why*.
+const impersonationExpiredListeners = new Set<() => void>();
+
+export function subscribeImpersonationExpired(listener: () => void): () => void {
+  impersonationExpiredListeners.add(listener);
+  return () => impersonationExpiredListeners.delete(listener);
+}
+
+function notifyImpersonationExpired(): void {
+  impersonationExpiredListeners.forEach((listener) => listener());
+}
+
+// Ends impersonation and runs the ordinary single-flight refresh against the
+// refresh token in localStorage (never touched while impersonating), which
+// restores the admin's own access token.
+async function restoreAdminSession(): Promise<void> {
+  endImpersonation();
+  try {
+    await ensureRefreshed();
+  } catch {
+    // No usable refresh token, or the backend rejected it — doRefresh has
+    // already cleared tokens itself in that case; the session layer's own
+    // bootstrap effect will observe that on its next read and settle on
+    // "anon". Nothing more to do here.
+  }
+}
+
+// Single-flighted the same way doRefresh is: several queries can 401 under
+// the same expiring impersonation token within the same tick (a page that
+// fires four queries on mount, say), and this must restore the admin's
+// session — and fire the toast — exactly once for that whole cluster, not
+// once per failed request.
+let restoringFromExpiry: Promise<void> | null = null;
+function restoreFromExpiry(): Promise<void> {
+  if (!restoringFromExpiry) {
+    restoringFromExpiry = restoreAdminSession()
+      .then(() => notifyImpersonationExpired())
+      .finally(() => {
+        restoringFromExpiry = null;
+      });
+  }
+  return restoringFromExpiry;
+}
+
+// Used by the "Exit" banner button (lib/auth/use-session.tsx) — restores the
+// admin's own session the same way an expiry does, minus the toast: the
+// admin knows they're exiting, it isn't a surprise.
+export async function exitImpersonation(): Promise<void> {
+  await restoreAdminSession();
+}
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  // Captured before the request runs, not re-read in the catch block below:
+  // several requests can be in flight together, and re-checking after an
+  // `await` would race a concurrent request's restoreAdminSession() call
+  // flipping the flag back to false first — which would send *this*
+  // request's retry out under the just-restored ADMIN token instead of
+  // taking the safe branch. Tying the branch to what this specific request
+  // was actually authenticated with when it was sent closes that race.
+  const wasImpersonating = isImpersonating();
   try {
     return await rawRequest<T>(path, options);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401 && !options.noRetry) {
+      if (wasImpersonating) {
+        await restoreFromExpiry();
+        throw err;
+      }
       await ensureRefreshed();
       return rawRequest<T>(path, options);
     }

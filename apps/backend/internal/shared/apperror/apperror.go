@@ -66,6 +66,70 @@ const (
 	// builds a CallToolResult carrying the concrete retry-after instead of
 	// this generic message.
 	RateLimited = "RATE_LIMITED"
+
+	// AccountSuspended is POST /auth/login's response to a banned
+	// credential: 403, since the login attempt never issues a token.
+	// Contrast the 401 "Account suspended" that internal/middleware.Guards
+	// .verify returns for an already-issued, now-banned token — that
+	// asymmetry is intentional (docs/11-admin-panel.md §4) and is not
+	// unified with this code.
+	AccountSuspended = "ACCOUNT_SUSPENDED"
+
+	// ReauthFailed is returned when a destructive admin operation's
+	// password-confirmation step (docs/11-admin-panel.md D4) fails.
+	ReauthFailed = "REAUTH_FAILED"
+
+	// CannotTargetSelf guards admin mutations a staff member must not be
+	// able to perform on their own account (ban, platform-role change).
+	CannotTargetSelf = "CANNOT_TARGET_SELF"
+
+	// TargetIsPlatformStaff guards against banning or deleting a platform
+	// staff account directly — it must be demoted first.
+	TargetIsPlatformStaff = "TARGET_IS_PLATFORM_STAFF"
+
+	// SuperadminLimit caps how many accounts may simultaneously hold
+	// platform_role = 'superadmin' (admin.superadminCap, currently 10) —
+	// a scripting-mistake guard on PATCH /admin/users/:userId/platform-role,
+	// not a floor on the last superadmin.
+	SuperadminLimit = "SUPERADMIN_LIMIT"
+
+	// PlanInUse guards against deleting a plan with active subscriptions.
+	PlanInUse = "PLAN_IN_USE"
+
+	// ImpersonationReadOnly is returned when an impersonated session (see
+	// docs/11-admin-panel.md §5) attempts a non-GET/HEAD/OPTIONS request.
+	ImpersonationReadOnly = "IMPERSONATION_READ_ONLY"
+
+	// CannotImpersonateStaff guards against impersonating a platform staff
+	// account, closing off impersonation as a privilege-escalation ladder.
+	CannotImpersonateStaff = "CANNOT_IMPERSONATE_STAFF"
+
+	// OrgConfirmMismatch is DELETE /admin/organizations/:orgId's response
+	// when the request body's confirm field doesn't equal the target org's
+	// own slug (docs/11-admin-panel.md D4) — typing the slug out correctly
+	// is the deliberate friction on an otherwise-irreversible delete. Not
+	// in the original execution plan's Task 1.8 table; added here because
+	// no existing code fits "the confirmation value didn't match" (403
+	// ReauthFailed already covers the password half of the same request).
+	OrgConfirmMismatch = "ORG_CONFIRM_MISMATCH"
+
+	// TwoFactorRequired is RequirePlatformRole's response when
+	// ADMIN_REQUIRE_2FA=true and the caller has no live admin:2fa:<userId>
+	// Redis key (execution plan Task 6.3) — every /admin route except
+	// POST /admin/2fa/{enroll,confirm,verify} is gated on it.
+	TwoFactorRequired = "TWO_FACTOR_REQUIRED"
+
+	// TOTPNotEnrolled is POST /admin/2fa/{confirm,verify}'s response when
+	// the caller has no user_totp row (confirm) or no CONFIRMED row
+	// (verify) — enroll must run first.
+	TOTPNotEnrolled = "TOTP_NOT_ENROLLED"
+
+	// InvalidTOTPCode is POST /admin/2fa/{confirm,verify}'s response to a
+	// code that matches neither the current TOTP window nor (verify only)
+	// any unused recovery code. Deliberately one code for both failure
+	// modes — same reasoning as InvalidCredentials: which one is wrong
+	// must not be observable.
+	InvalidTOTPCode = "INVALID_TOTP_CODE"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -102,6 +166,20 @@ var Map = map[string]mapping{
 	VerificationResendTooSoon: {429, "Verification email already sent, try again in a few minutes"},
 
 	InvalidResetToken: {400, "Invalid or expired password reset token"},
+
+	AccountSuspended:       {403, "Account suspended"},
+	ReauthFailed:           {403, "Password confirmation failed"},
+	CannotTargetSelf:       {403, "Cannot perform this action on your own account"},
+	TargetIsPlatformStaff:  {409, "Demote this account before banning or deleting it"},
+	SuperadminLimit:        {409, "Too many superadmin accounts"},
+	PlanInUse:              {409, "Plan has active subscriptions"},
+	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
+	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
+	OrgConfirmMismatch:     {400, "Confirmation does not match the organization's slug"},
+
+	TwoFactorRequired: {403, "Two-factor authentication required"},
+	TOTPNotEnrolled:   {400, "Two-factor authentication not enrolled"},
+	InvalidTOTPCode:   {401, "Invalid two-factor code"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

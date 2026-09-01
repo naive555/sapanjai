@@ -9,12 +9,24 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countSuperadmins = `-- name: CountSuperadmins :one
+SELECT count(*) FROM users WHERE platform_role = 'superadmin'
+`
+
+func (q *Queries) CountSuperadmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countSuperadmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash, display_name)
 VALUES ($1, $2, $3)
-RETURNING id, email, password_hash, display_name, is_verified, created_at, updated_at
+RETURNING id, email, password_hash, display_name, is_verified, created_at, updated_at, platform_role, banned_at, ban_reason
 `
 
 type CreateUserParams struct {
@@ -34,12 +46,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.IsVerified,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PlatformRole,
+		&i.BannedAt,
+		&i.BanReason,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, display_name, is_verified, created_at, updated_at FROM users WHERE email = $1
+SELECT id, email, password_hash, display_name, is_verified, created_at, updated_at, platform_role, banned_at, ban_reason FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -53,12 +68,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.IsVerified,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PlatformRole,
+		&i.BannedAt,
+		&i.BanReason,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, display_name, is_verified, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, password_hash, display_name, is_verified, created_at, updated_at, platform_role, banned_at, ban_reason FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -72,6 +90,9 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.IsVerified,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PlatformRole,
+		&i.BannedAt,
+		&i.BanReason,
 	)
 	return i, err
 }
@@ -82,6 +103,41 @@ UPDATE users SET is_verified = true, updated_at = now() WHERE id = $1
 
 func (q *Queries) MarkUserVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markUserVerified, id)
+	return err
+}
+
+const setUserBan = `-- name: SetUserBan :exec
+UPDATE users SET banned_at = $2, ban_reason = $3, updated_at = now() WHERE id = $1
+`
+
+type SetUserBanParams struct {
+	ID        uuid.UUID        `json:"id"`
+	BannedAt  pgtype.Timestamp `json:"banned_at"`
+	BanReason *string          `json:"ban_reason"`
+}
+
+// Both $2 and $3 are nullable; an unban passes NULL/NULL. users.banned_at
+// is the durable source of truth behind the Redis banned:<userId> cache
+// (see internal/infra/redis/auth.go and internal/middleware.Guards.verify).
+func (q *Queries) SetUserBan(ctx context.Context, arg SetUserBanParams) error {
+	_, err := q.db.Exec(ctx, setUserBan, arg.ID, arg.BannedAt, arg.BanReason)
+	return err
+}
+
+const setUserPlatformRole = `-- name: SetUserPlatformRole :exec
+UPDATE users SET platform_role = $2, updated_at = now() WHERE id = $1
+`
+
+type SetUserPlatformRoleParams struct {
+	ID           uuid.UUID `json:"id"`
+	PlatformRole *string   `json:"platform_role"`
+}
+
+// $2 is nullable: NULL revokes platform staff status (cmd/grantadmin's
+// "-role none"), 'superadmin'/'support' grants it. Enforced by the
+// users_platform_role_check CHECK constraint from migration 00011.
+func (q *Queries) SetUserPlatformRole(ctx context.Context, arg SetUserPlatformRoleParams) error {
+	_, err := q.db.Exec(ctx, setUserPlatformRole, arg.ID, arg.PlatformRole)
 	return err
 }
 

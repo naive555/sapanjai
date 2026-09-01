@@ -41,9 +41,10 @@ func jwtSubject(t *testing.T, token string) string {
 
 // registeredUser is the outcome of a successful POST /auth/register.
 type registeredUser struct {
-	Email       string
-	AccessToken string
-	UserID      string
+	Email        string
+	AccessToken  string
+	RefreshToken string
+	UserID       string
 }
 
 func registerUser(t *testing.T, client *http.Client, baseURL, prefix string) registeredUser {
@@ -60,8 +61,12 @@ func registerUser(t *testing.T, client *http.Client, baseURL, prefix string) reg
 	if accessToken == "" {
 		t.Fatalf("register %s: missing accessToken: %v", prefix, body)
 	}
+	refreshToken, _ := body["refreshToken"].(string)
+	if refreshToken == "" {
+		t.Fatalf("register %s: missing refreshToken: %v", prefix, body)
+	}
 
-	return registeredUser{Email: email, AccessToken: accessToken, UserID: jwtSubject(t, accessToken)}
+	return registeredUser{Email: email, AccessToken: accessToken, RefreshToken: refreshToken, UserID: jwtSubject(t, accessToken)}
 }
 
 func uniqueSlug(prefix string) string {
@@ -72,6 +77,7 @@ func uniqueSlug(prefix string) string {
 // owner's own credentials for use as the caller in later requests.
 type createdOrg struct {
 	ID    string
+	Slug  string
 	Owner registeredUser
 }
 
@@ -80,8 +86,9 @@ func createOrgWithOwner(t *testing.T, client *http.Client, baseURL, slugPrefix s
 
 	owner := registerUser(t, client, baseURL, slugPrefix+"-owner")
 
+	slug := uniqueSlug(slugPrefix)
 	resp, body := doJSON(t, client, baseURL, http.MethodPost, "/organizations",
-		map[string]any{"name": "Test Org", "slug": uniqueSlug(slugPrefix)},
+		map[string]any{"name": "Test Org", "slug": slug},
 		map[string]string{"Authorization": "Bearer " + owner.AccessToken})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("create org: status = %d, want 200; body = %v", resp.StatusCode, body)
@@ -92,7 +99,7 @@ func createOrgWithOwner(t *testing.T, client *http.Client, baseURL, slugPrefix s
 		t.Fatalf("create org: missing id: %v", body)
 	}
 
-	return createdOrg{ID: orgID, Owner: owner}
+	return createdOrg{ID: orgID, Slug: slug, Owner: owner}
 }
 
 // inviteMember invites email into org with role, using org's owner as the

@@ -6,11 +6,136 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 type Querier interface {
+	AdminCountActiveMCPKeys(ctx context.Context) (int64, error)
+	AdminCountActiveSessions(ctx context.Context) (int64, error)
+	AdminCountActiveSessionsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
+	AdminCountAllAuditLogs(ctx context.Context) (int64, error)
+	AdminCountAllConnectors(ctx context.Context) (int64, error)
+	AdminCountAllMCPKeys(ctx context.Context) (int64, error)
+	// The remaining queries back GET /admin/system/stats. Each is cached
+	// individually under its own fixed filter key (admin.Service.SystemStats) —
+	// there is no user-supplied filter, but they still go through
+	// admin.Service.cachedCount for the same "don't COUNT(*) on every staff
+	// page load" reason as the paged lists above.
+	AdminCountAllOrganizations(ctx context.Context) (int64, error)
+	AdminCountAllUsers(ctx context.Context) (int64, error)
+	// Mirrors AdminQueryAuditLogs's WHERE exactly.
+	AdminCountAuditLogs(ctx context.Context, arg AdminCountAuditLogsParams) (int64, error)
+	// Mirrors AdminListConnectors's WHERE exactly.
+	AdminCountConnectors(ctx context.Context, arg AdminCountConnectorsParams) (int64, error)
+	// A rising 'failed' count is the single best early warning that Resend or
+	// the EMAIL_FROM domain is misconfigured (CLAUDE.md's Background worker
+	// bullet).
+	AdminCountEmailOutboxByStatus(ctx context.Context) ([]AdminCountEmailOutboxByStatusRow, error)
+	// Mirrors AdminListMCPKeys's WHERE exactly.
+	AdminCountMCPKeys(ctx context.Context, arg AdminCountMCPKeysParams) (int64, error)
+	// Mirrors AdminListOrganizations's WHERE exactly — the pair behind
+	// admin.Service.cachedCount for GET /admin/organizations.
+	AdminCountOrganizations(ctx context.Context, search *string) (int64, error)
+	AdminCountOrganizationsSince(ctx context.Context, since time.Time) (int64, error)
+	// Backs the PLAN_IN_USE guard on plan delete. plans is referenced by
+	// org_subscriptions.plan_id with ON DELETE no action (migration 00005), so
+	// the database would reject the delete anyway — this check exists so the
+	// API can return a real 409 instead of surfacing that constraint
+	// violation as a 500.
+	AdminCountSubscriptionsByPlan(ctx context.Context, planID uuid.UUID) (int64, error)
+	// Mirrors AdminListUsers's WHERE exactly.
+	AdminCountUsers(ctx context.Context, arg AdminCountUsersParams) (int64, error)
+	AdminCountUsersSince(ctx context.Context, since time.Time) (int64, error)
+	// plans.name carries a UNIQUE constraint; a colliding name surfaces as a
+	// raw constraint-violation error (500), the same tolerance
+	// subscription.Service.AssignPlan documents for a nonexistent plan id —
+	// neither the source app nor this one adds a dedicated
+	// PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
+	// typo caught on the next attempt.
+	AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error)
+	// memberships/connectors/mcp_api_keys/org_subscriptions all cascade
+	// (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
+	// no FK (00004), so audit rows deliberately survive the org — see
+	// admin.Service.DeleteOrganization's doc comment. The caller has already
+	// loaded the org (to check its slug against the confirmation field), so
+	// there is no existence race worth an :execrows check here.
+	AdminDeleteOrganization(ctx context.Context, id uuid.UUID) error
+	// The caller has already loaded the plan (AdminGetPlanByID, for the 404
+	// check) and confirmed no org_subscriptions row references it
+	// (AdminCountSubscriptionsByPlan, for PLAN_IN_USE) before this runs.
+	AdminDeletePlan(ctx context.Context, id uuid.UUID) error
+	// Queries backing internal/module/admin, the cross-org platform staff
+	// console (docs/11-admin-panel.md). Every query here deliberately has NO
+	// organization_id predicate the way the tenant-facing queries do — that is
+	// the whole point of /admin, not an oversight. See the module's own
+	// doc comment for the authorization boundary (RequirePlatformRole, not
+	// RequireOrg/RequirePermission).
+	//
+	// None of these ever select connectors.encrypted_config or
+	// mcp_api_keys.key_hash; column lists are explicit rather than SELECT *
+	// specifically to keep it that way as the schema evolves.
+	AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
+	AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
+	// Cross-org connector metadata only — no encrypted_config column in this
+	// SELECT, ever (docs/11-admin-panel.md §7). Also used, filtered by
+	// organization_id alone, to populate the connector list nested in
+	// GET /admin/organizations/:orgId (admin.Service.OrganizationDetail).
+	AdminListConnectors(ctx context.Context, arg AdminListConnectorsParams) ([]AdminListConnectorsRow, error)
+	// Cross-org MCP key metadata only — no key_hash column in this SELECT,
+	// ever (docs/11-admin-panel.md §7). search matches the key's own name or
+	// its owner's email. Also used, filtered by organization_id alone, to
+	// populate the MCP key list nested in GET /admin/organizations/:orgId.
+	AdminListMCPKeys(ctx context.Context, arg AdminListMCPKeysParams) ([]AdminListMCPKeysRow, error)
+	// search matches name or slug (case-insensitive substring). member/
+	// connector/mcp-key counts are correlated subqueries rather than a
+	// three-way JOIN + GROUP BY, which would multiply the plan row per
+	// member*connector*key combination. plan_name is NULL for an org with no
+	// subscription row.
+	AdminListOrganizations(ctx context.Context, arg AdminListOrganizationsParams) ([]AdminListOrganizationsRow, error)
+	// search matches email or display_name. role is nullable text taking
+	// 'superadmin', 'support', 'none' (meaning platform_role IS NULL), or NULL
+	// (no filter) — a single text param rather than a separate bool so the
+	// three-way choice stays one WHERE clause. banned is a nullable bool.
+	AdminListUsers(ctx context.Context, arg AdminListUsersParams) ([]AdminListUsersRow, error)
+	// LEFT JOIN so a plan with zero subscribers still shows a 0 row rather
+	// than disappearing from the breakdown entirely.
+	AdminPlanBreakdown(ctx context.Context) ([]AdminPlanBreakdownRow, error)
+	// Cross-org: unlike QueryAuditLogs (internal/infra/database/queries/auditlog.sql),
+	// which mandates organization_id as a tenant-isolation guarantee, this one
+	// deliberately carries no such predicate — see admin.sql's file header.
+	// Two queries, two guarantees; do not widen QueryAuditLogs to cover this.
+	//
+	// action_patterns is a nullable text[] of LIKE patterns: the handler turns
+	// a bare action into a literal (with '%'/'_' escaped) and a trailing '*'
+	// into a '<prefix>%' pattern, so "admin.*" matches by prefix while an exact
+	// action matches by equality (LIKE with no wildcard characters behaves as
+	// equality). `LIKE ANY (array)` matches if any pattern in the array
+	// matches.
+	//
+	// from/to are nullable naive timestamps — audit_logs.created_at has no time
+	// zone (see QueryAuditLogs's comment); callers must normalize any RFC3339
+	// input to UTC before binding here, same as there.
+	AdminQueryAuditLogs(ctx context.Context, arg AdminQueryAuditLogsParams) ([]AdminQueryAuditLogsRow, error)
+	// The remaining queries back Phase 3's mutation routes
+	// (docs/11-admin-panel.md, execution plan Phase 3). CountSuperadmins,
+	// SetUserBan, SetUserPlatformRole, and RevokeAllUserSessions already exist
+	// (queries/users.sql, queries/sessions.sql) and are reused as-is rather
+	// than duplicated here.
+	// Touches only org_subscriptions.custom_limits — deliberately narrower
+	// than UpsertOrgSubscription (subscriptions.sql), which also rewrites
+	// plan_id via a full upsert. $2 is nullable: NULL clears back to
+	// plan-only limits. 0 rows affected means the organization has no
+	// org_subscriptions row yet (no plan ever assigned) — admin.Service turns
+	// that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
+	// is NOT NULL and there is nothing here to attach custom_limits to.
+	AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCustomLimitsParams) (int64, error)
+	// A full replace (name + limits together), not a partial PATCH — mirrors
+	// the shape of POST /admin/plans, and a plan's whole point is that its
+	// limits are reviewed together, not merged field-by-field. 0 rows ->
+	// pgx.ErrNoRows -> admin.Service maps that to 404.
+	AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies
@@ -28,8 +153,13 @@ type Querier interface {
 	// containing FOR UPDATE has side effects and is always materialised, so the
 	// lock-and-limit happens exactly once.
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
+	// Backs POST /admin/2fa/confirm: stamps confirmed_at and stores the ten
+	// recovery-code hashes generated at confirm time (never at enroll time,
+	// since enroll may be called repeatedly before a confirm ever lands).
+	ConfirmUserTOTP(ctx context.Context, arg ConfirmUserTOTPParams) error
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
+	CountSuperadmins(ctx context.Context) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
 	// scopes ($6) is nullable: a nil slice binds NULL (no independent
@@ -55,7 +185,12 @@ type Querier interface {
 	// Looks up a presented PAT by its SHA-256 hash (internal/middleware.RequireMCPKey).
 	// key_hash carries a unique index (migration 00008), so this is a single
 	// indexed read — no Redis cache in front of it, per Decision 1.
-	GetMCPKeyByHash(ctx context.Context, keyHash string) (McpApiKey, error)
+	//
+	// Joined against users for owner_banned_at: an MCP PAT has no expiry of its
+	// own, so a banned owner's key would otherwise keep authenticating forever
+	// (docs/11-admin-panel.md §4). Extending this query rather than adding a
+	// sibling keeps exactly one gateway auth path.
+	GetMCPKeyByHash(ctx context.Context, keyHash string) (GetMCPKeyByHashRow, error)
 	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
@@ -66,6 +201,7 @@ type Querier interface {
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTotp, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
 	ListMCPKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]McpApiKey, error)
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error)
@@ -103,6 +239,14 @@ type Querier interface {
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	// Both $2 and $3 are nullable; an unban passes NULL/NULL. users.banned_at
+	// is the durable source of truth behind the Redis banned:<userId> cache
+	// (see internal/infra/redis/auth.go and internal/middleware.Guards.verify).
+	SetUserBan(ctx context.Context, arg SetUserBanParams) error
+	// $2 is nullable: NULL revokes platform staff status (cmd/grantadmin's
+	// "-role none"), 'superadmin'/'support' grants it. Enforced by the
+	// users_platform_role_check CHECK constraint from migration 00011.
+	SetUserPlatformRole(ctx context.Context, arg SetUserPlatformRoleParams) error
 	// Best-effort bookkeeping: called after a successful RequireMCPKey
 	// authentication. A failure to stamp must never fail the MCP request, so
 	// the caller logs and swallows any error from this query.
@@ -110,8 +254,21 @@ type Querier interface {
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
+	// Backs POST /admin/2fa/verify's recovery-code path: persists the
+	// caller-supplied remaining set after one hash is removed, so a recovery
+	// code is usable exactly once.
+	UpdateUserTOTPRecoveryCodes(ctx context.Context, arg UpdateUserTOTPRecoveryCodesParams) error
 	UpsertOrgSubscription(ctx context.Context, arg UpsertOrgSubscriptionParams) error
 	UpsertPlan(ctx context.Context, arg UpsertPlanParams) error
+	// Backs POST /admin/2fa/enroll (execution plan Task 6.3). Re-callable: a
+	// staff member who lost their authenticator app before confirming (or
+	// wants to re-enroll a new one) can call enroll again, which wipes any
+	// prior confirmation and recovery codes along with the old secret -- an
+	// unconfirmed or replaced secret must never leave a stale confirmed_at or
+	// a set of recovery codes tied to a key that no longer exists.
+	// recovery_codes is NOT NULL with no column default (migration 00012), so
+	// every insert must supply '{}' explicitly here; confirm sets the real ten.
+	UpsertUserTOTPSecret(ctx context.Context, arg UpsertUserTOTPSecretParams) error
 }
 
 var _ Querier = (*Queries)(nil)

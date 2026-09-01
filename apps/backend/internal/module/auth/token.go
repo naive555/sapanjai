@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sapanjai/backend/internal/config"
+	"github.com/sapanjai/backend/internal/shared/authtoken"
 )
 
 // TokenService signs and verifies the access/refresh JWT pair, HS256, using
@@ -30,11 +31,23 @@ func NewTokenService(cfg *config.Config) *TokenService {
 	}
 }
 
-// accessClaims is the access-token payload: { sub, email? }. email is
-// omitted when empty — POST /auth/refresh issues an access token with sub
-// only, per docs/02-api-contract.md.
+// accessClaims is the access-token payload: { sub, email?, act?, imp? }.
+// email is omitted when empty — POST /auth/refresh issues an access token
+// with sub only, per docs/02-api-contract.md.
+//
+// act/imp are present only on impersonation tokens (docs/11-admin-panel.md
+// §5). They look like they contradict D1 ("roles are not claims"), and the
+// distinction is worth stating: act/imp describe *this token* — immutable
+// for its lifetime and gone in 10 minutes, so there is no stale state for
+// them to hold. platform_role describes a mutable database row, which is
+// exactly why it is re-read per request instead.
 type accessClaims struct {
 	Email string `json:"email,omitempty"`
+	// Actor is the platform-staff user id on whose behalf this token was
+	// issued (RFC 8693's "act"). Present only on impersonation tokens.
+	Actor string `json:"act,omitempty"`
+	// Impersonated marks the token read-only at the guard.
+	Impersonated bool `json:"imp,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -55,6 +68,32 @@ func (t *TokenService) SignAccessToken(userID uuid.UUID, email string) (string, 
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(t.accessTTL)),
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(t.accessSecret)
+}
+
+// SignImpersonationToken signs a short-lived access token that authenticates
+// AS targetID while recording actorID (the platform staff member) in the
+// "act" claim. ttl is passed explicitly rather than read from config's
+// access TTL: an impersonation token is deliberately much shorter-lived
+// than an ordinary one, and the caller owns that policy.
+//
+// There is no matching refresh token by design — the token cannot be
+// extended, only re-issued, and a re-issue writes a fresh audit entry
+// (docs/11-admin-panel.md §5). No sessions row is created either, which is
+// what makes POST /auth/refresh reject it: the refresh path looks the token
+// up in sessions and finds nothing.
+func (t *TokenService) SignImpersonationToken(targetID uuid.UUID, targetEmail string, actorID uuid.UUID, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := accessClaims{
+		Email:        targetEmail,
+		Actor:        actorID.String(),
+		Impersonated: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   targetID.String(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(t.accessSecret)
@@ -101,27 +140,42 @@ func (t *TokenService) VerifyRefreshToken(tokenString string) (uuid.UUID, error)
 }
 
 // VerifyAccessToken parses and validates an access token's HS256 signature
-// with the access secret and returns its subject (user id) and embedded
-// email. Any parse/signature/expiry failure or missing subject is returned
-// as an error; the auth guard maps it to 401 "Unauthorized".
-func (t *TokenService) VerifyAccessToken(tokenString string) (uuid.UUID, string, error) {
+// with the access secret and returns its claims. Any parse/signature/expiry
+// failure or missing subject is returned as an error; the auth guard maps
+// it to 401 "Unauthorized".
+//
+// An impersonation token whose "act" claim is unparseable is rejected
+// rather than downgraded to a normal token: imp and act are set together
+// at signing, so a token carrying one without a usable other has been
+// tampered with or mis-minted, and silently treating it as an ordinary
+// token would strip exactly the marker that makes it read-only.
+func (t *TokenService) VerifyAccessToken(tokenString string) (authtoken.AccessToken, error) {
 	claims := &accessClaims{}
 	_, err := jwt.ParseWithClaims(tokenString, claims, func(*jwt.Token) (any, error) {
 		return t.accessSecret, nil
 	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil {
-		return uuid.Nil, "", err
+		return authtoken.AccessToken{}, err
 	}
 
 	sub, err := claims.GetSubject()
 	if err != nil || sub == "" {
-		return uuid.Nil, "", errors.New("access token missing subject")
+		return authtoken.AccessToken{}, errors.New("access token missing subject")
 	}
 
 	userID, err := uuid.Parse(sub)
 	if err != nil {
-		return uuid.Nil, "", err
+		return authtoken.AccessToken{}, err
 	}
 
-	return userID, claims.Email, nil
+	out := authtoken.AccessToken{UserID: userID, Email: claims.Email, Impersonated: claims.Impersonated}
+	if claims.Impersonated {
+		actorID, err := uuid.Parse(claims.Actor)
+		if err != nil {
+			return authtoken.AccessToken{}, errors.New("impersonation token missing a valid actor claim")
+		}
+		out.ActorID = actorID
+	}
+
+	return out, nil
 }

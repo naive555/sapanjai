@@ -13,6 +13,7 @@ vi.mock("sonner", () => ({
 
 import { ApiError } from "@/lib/api/client";
 import { me, resendVerification, type MeResponse } from "@/lib/api/endpoints";
+import { SessionProvider } from "@/lib/auth/use-session";
 import { toast } from "sonner";
 import { VerificationBanner } from "./verification-banner";
 
@@ -27,6 +28,7 @@ function makeUser(overrides: Partial<MeResponse> = {}): MeResponse {
     email: "user@example.com",
     displayName: null,
     isVerified: false,
+    platformRole: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -38,7 +40,14 @@ function renderBanner() {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <VerificationBanner />
+      {/* VerificationBanner now reads `impersonating` off useSession (to hide
+          itself under a read-only impersonation token — see its own doc
+          comment), which throws outside a SessionProvider. No refresh token
+          is ever seeded in these tests, so SessionProvider settles on
+          status "anon" without calling any of the auth endpoints itself. */}
+      <SessionProvider>
+        <VerificationBanner />
+      </SessionProvider>
     </QueryClientProvider>,
   );
 }

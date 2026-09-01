@@ -64,6 +64,30 @@ const (
 	// connector_id, file_id, and mime_type — never the file's own bytes,
 	// the signature, or the connector's decrypted config.
 	ActionMCPFileDownloaded = "mcp.file.downloaded"
+
+	// Admin console mutation actions (internal/module/admin,
+	// docs/11-admin-panel.md, execution plan Phase 3). Every admin
+	// mutation writes exactly one of these, best-effort like every other
+	// action here — except ActionAdminOrgDeleted, whose write is
+	// deliberately attempted BEFORE the destructive DELETE statement (see
+	// admin.Service.DeleteOrganization's doc comment): a best-effort write
+	// that fails after the org is already gone would leave no trace of who
+	// deleted it, which is a worse failure mode than an audit entry for a
+	// delete that (vanishingly rarely) then errors.
+	ActionAdminPlanAssigned        = "admin.plan.assigned"
+	ActionAdminLimitsSet           = "admin.limits.set"
+	ActionAdminOrgDeleted          = "admin.org.deleted"
+	ActionAdminPlatformRoleChanged = "admin.platform_role.changed"
+	ActionAdminUserBanned          = "admin.user.banned"
+	ActionAdminUserUnbanned        = "admin.user.unbanned"
+	ActionAdminPlanCreated         = "admin.plan.created"
+	ActionAdminPlanUpdated         = "admin.plan.updated"
+	ActionAdminPlanDeleted         = "admin.plan.deleted"
+
+	// ActionAdminImpersonationStarted is declared now but not yet written —
+	// Phase 4 (impersonation) is the only caller, and is out of this
+	// phase's scope.
+	ActionAdminImpersonationStarted = "admin.impersonation.started"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

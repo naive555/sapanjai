@@ -1,6 +1,71 @@
 # Admin Panel (platform staff console) — execution plan
 
-> **Status:** DRAFT — not started. Owner-approved scope decisions are in §0.2; do not re-litigate them.
+> **Status: complete (planned 2026-08-28, finished 2026-09-01).** All 8 phases
+> shipped. Owner-approved scope decisions are in §0.2; they were not
+> re-litigated during execution.
+>
+> - [x] Phase 0 — Baseline green, design doc `docs/11-admin-panel.md` (`b6aeb68`)
+> - [x] Phase 1 — Migration `00011_platform_roles_bans.sql`, widened guards,
+>   ban enforcement at `verify()`/login/MCP gateway, `RequirePlatformRole`,
+>   error codes, and the `make admin-grant` bootstrap CLI (`be65183`)
+> - [x] Phase 2 — Read surfaces: `admin.sql` queries, count cache, all ten
+>   `GET /admin/*` routes, and the anti-leak integration test (`cb002ad`)
+> - [x] Phase 3 — Mutations: password re-auth, org/user/plan writes, audit
+>   actions (`c69029a`)
+> - [x] Phase 4 — Impersonation: `imp`/`act` claims, read-only guard
+>   enforcement, `POST /admin/users/:userId/impersonate` (`2e96205`), plus
+>   `platformRole` in `MeResponse` for the tenant nav entry (`c5052cf`)
+> - [x] Phase 5 — Frontend console: `(admin)` route group, layout, eight pages
+>   (`ae62e37`)
+> - [x] Phase 6 — Hardening: migration `00012_user_totp.sql`, `ADMIN_IP_ALLOWLIST`,
+>   TOTP step-up (`1523369`), proxy header-spoofing defence in the frontend
+>   proxy (`cb2b068`), lockout/trust-model docs (`7cf8f36`)
+> - [x] Phase 7 — Docs, contract, release: `docs/02-api-contract.md` Admin
+>   section rewritten for the full shipped surface, `CLAUDE.md` module bullet +
+>   Redis keys + env vars + DTO ground rule, swagger regenerated
+>
+> **Deviations from the plan as written, all deliberate:**
+>
+> - Password re-auth (§3.2) covers **three** mutations, not all eight:
+>   `DELETE /admin/organizations/:orgId`, `PATCH …/platform-role`, and
+>   `PATCH …/ban`. Plan/limit changes and plan CRUD are neither irreversible
+>   nor access-granting, and prompting there would train staff to type their
+>   password reflexively — cheapening it on the routes that matter.
+> - `SUPERADMIN_LIMIT` is a **ceiling** (`admin.superadminCap` = 10, a
+>   scripting-mistake guard), not the "last superadmin" floor the original
+>   `apperror` comment described. The comment was corrected in Phase 7; the
+>   behaviour was always the cap.
+> - Unban's Redis clear is **not** best-effort, unlike ban's priming.
+>   `banned:<userId>` carries no TTL, so a failed clear has no self-healing
+>   path anywhere else — the error is surfaced instead of logged.
+> - The plan's Task 4.3 called for a per-request method guard on impersonation
+>   tokens. Shipped as that **plus** `RequirePlatformRole` refusing any token
+>   carrying `imp` before it reads the caller's user row, so an impersonation
+>   token can never reach `/admin` regardless of the target's `platform_role`.
+> - Phase 6 needed a third guard variant the plan didn't name,
+>   `RequirePlatformRoleNo2FA`, for the three `/admin/2fa/*` routes — step-up
+>   cannot gate the routes that perform step-up.
+> - Task 6.1's trusted-proxy work landed partly in the **frontend** proxy
+>   (`app/api/[...path]/route.ts` strips inbound `X-Forwarded-For`/`X-Real-IP`),
+>   not only in the backend's `IPExtractor`.
+> - Phase 2's count cache added a **fifth** Redis key-construction file
+>   (`internal/infra/redis/admincount.go`). CLAUDE.md's "exactly four places"
+>   sentence was corrected in Phase 7.
+>
+> **Not done — owner-blocked, not forgotten:** Task 7.4's eight-step manual
+> browser smoke (grant admin → tenant 403 → support read-only → ban/unban across
+> login, access token and MCP key → demotion takes effect immediately → org
+> delete re-auth and confirm-slug → impersonation banner and read-only enforcement
+> → `admin.*` audit trail). Everything automatable around it was run on
+> 2026-09-01 against live postgres+redis: `make lint` (0 issues), the full
+> backend suite including all 23 `TestIntegration_Admin_*` integration tests,
+> frontend `pnpm lint`/`tsc --noEmit`/`pnpm test` (16 files, 94 tests), and
+> `docker compose up -d --build` with all five services healthy and 19 `/admin`
+> paths served from the container's baked swagger spec.
+>
+> **Follow-ups:** admin **reads** are still not audit-logged — a known gap
+> recorded in `docs/02-api-contract.md`, not an oversight. Mutations and
+> impersonation starts are.
 >
 > **Read first:** `CLAUDE.md`, `docs/02-api-contract.md` (conventions + the endpoint table), `internal/middleware/auth.go`, `internal/module/mcpkey/` (the cleanest end-to-end module to copy), `internal/module/auditlog/service.go`.
 >
@@ -67,6 +132,11 @@ cd apps/frontend && pnpm lint && pnpm exec tsc --noEmit && pnpm test
 
 **Done when:** all green, with the backend test count recorded in the phase notes.
 
+**Baseline recorded 2026-08-28** (commit `eaaefbc`, branch `dev`) — all green:
+`make lint` 0 issues · `make test` all packages ok, **548 passing Go tests**
+(including subtests) · frontend `pnpm lint` clean · `pnpm exec tsc --noEmit`
+clean · `pnpm test` **84 passing across 14 files**.
+
 ### Task 0.2 — Write the design doc
 
 **Create:** `docs/11-admin-panel.md`.
@@ -74,6 +144,12 @@ cd apps/frontend && pnpm lint && pnpm exec tsc --noEmit && pnpm test
 Content: §0 of this plan (framing, the seven-finding table, non-goals), the role/permission matrix from §2.1, the impersonation threat model from §4.1, and the "explicitly deferred" list from §8. This is the document a future reader is pointed at from `CLAUDE.md`; this plan file is the throwaway execution script.
 
 **Done when:** doc exists and `docs/` numbering is contiguous (`11-` follows `10-transactional-email.md`).
+
+**Done 2026-08-28** — `docs/11-admin-panel.md` written with §1 framing, §2 the
+locked decisions, §3 the seven-finding table, §4 the role/permission matrix
+(plus the three places a ban is enforced), §5 the impersonation threat model,
+§6 the deferred list, §7 the hard non-goals. Task 4.1's "write the threat model
+into the doc first" is therefore already satisfied.
 
 > **GATE — stop and confirm with the owner before Phase 1.**
 

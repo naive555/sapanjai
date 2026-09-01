@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
@@ -89,6 +91,8 @@ type mockLimiter struct {
 	incErr      error
 	resetCalls  int
 	resetErr    error
+	banCalls    []uuid.UUID
+	banErr      error
 }
 
 func (m *mockLimiter) GetLoginAttempts(ctx context.Context, email string) (int, error) {
@@ -103,6 +107,11 @@ func (m *mockLimiter) IncrementLoginAttempts(ctx context.Context, email string) 
 func (m *mockLimiter) ResetLoginAttempts(ctx context.Context, email string) error {
 	m.resetCalls++
 	return m.resetErr
+}
+
+func (m *mockLimiter) Ban(ctx context.Context, userID uuid.UUID) error {
+	m.banCalls = append(m.banCalls, userID)
+	return m.banErr
 }
 
 var _ loginLimiter = (*mockLimiter)(nil)
@@ -398,5 +407,36 @@ func TestService_Login_Success(t *testing.T) {
 	}
 	if len(spy.auditCalls) != 1 || spy.auditCalls[0].Action != auditlog.ActionUserLogin {
 		t.Fatalf("expected one user.login audit call, got %+v", spy.auditCalls)
+	}
+}
+
+func TestService_Login_BannedUser(t *testing.T) {
+	password := "correct-password"
+	user := newLoginTestUser(t, password)
+	user.BannedAt = pgtype.Timestamp{Time: time.Now().Add(-time.Hour), Valid: true}
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			return user, nil
+		},
+	}
+	limiter := &mockLimiter{attempts: 1}
+	spy := &spyQuerier{}
+	svc := NewService(store, limiter, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL)
+
+	_, err := svc.Login(context.Background(), user.Email, password)
+	if code := appErrorCode(t, err); code != apperror.AccountSuspended {
+		t.Fatalf("code = %q, want %q", code, apperror.AccountSuspended)
+	}
+	// Correct credentials for a banned user still reset the failed-attempt
+	// counter (the password check itself succeeded) but must never emit a
+	// user.login audit record — the login is refused, not granted.
+	if limiter.resetCalls != 1 {
+		t.Fatalf("resetCalls = %d, want 1", limiter.resetCalls)
+	}
+	if len(limiter.banCalls) != 1 || limiter.banCalls[0] != user.ID {
+		t.Fatalf("banCalls = %v, want exactly [%v] (re-priming the Redis ban cache is what makes a flush self-heal)", limiter.banCalls, user.ID)
+	}
+	if len(spy.auditCalls) != 0 {
+		t.Fatalf("expected no user.login audit call for a banned user, got %+v", spy.auditCalls)
 	}
 }

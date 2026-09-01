@@ -17,7 +17,7 @@ POST /mcp/:connectorId          ← one Streamable HTTP MCP endpoint per connect
                            (today: Google Sheets + Drive, read only)
 ```
 
-Everything a B2B product needs around that — accounts, organizations, roles, plans, audit logs, transactional email — is here as well, because a gateway that cannot answer *"who did that, under which key, and can I switch it off"* is not a product. Those parts began as a reusable platform core and are still general enough to build another domain on.
+Everything a B2B product needs around that — accounts, organizations, roles, plans, audit logs, transactional email, a staff console — is here as well, because a gateway that cannot answer *"who did that, under which key, and can I switch it off"* is not a product. Those parts began as a reusable platform core and are still general enough to build another domain on.
 
 The name: *sà-pan-jai* (สะพานใจ), a bridge of hearts — the gateway sits between two parties that do not otherwise trust each other with a credential.
 
@@ -39,8 +39,8 @@ Each was a finding from the spike in [`spikes/mcp-gateway/`](spikes/mcp-gateway/
 | MCP keys — mint / list / revoke org-scoped PATs, raw token shown once | **shipped** |
 | `google_sheets` connector — six read tools over allowlisted Sheets + Drive, OAuth refresh, health probe, signed short-lived file downloads | **shipped** |
 | Platform core — auth, email verification, password reset, organizations, RBAC, audit logs, plans, background worker | **shipped** |
+| Staff console (`/admin`) — cross-org read views for support | **backend read routes only; no dashboard UI, no impersonation yet** ([`docs/11`](docs/11-admin-panel.md)) |
 | Write tools (append a row, upload a file) | not built — [`docs/07`](docs/07-sheets-adapter-decisions.md) §3 |
-| A staff console for cross-org support | not built |
 | OAuth consent flow in the dashboard | not built — onboarding is a manual credential paste ([MCP client setup](#mcp-client-setup)) |
 | OAuth 2.1 / dynamic client registration for Claude Desktop's connector picker | not built |
 | A second adapter (FlowAccount, PEAK, LINE, …) | not built — the connector-agnostic boundary it would land on is drawn in [`docs/08`](docs/08-gateway-core.md) |
@@ -89,14 +89,15 @@ apps/backend/
     worker/        background job runner entrypoint
     migrate/       goose CLI wrapper (up / down / status)
     seed/          idempotent default-plan seeder
+    grantadmin/    promote/demote an existing user's platform_role (make admin-grant)
     healthcheck/   tiny binary for the distroless image's HEALTHCHECK
   internal/
     config/        env parsing + validation (fails fast at boot)
     server/        Echo wiring: middleware stack, error handler, route mounting
     middleware/    RequireAuth, RequireOrg, RequirePermission, RequireMCPKey,
-                   request ID
+                   RequirePlatformRole, request ID
     module/        one package per domain: auth, organization, rbac, auditlog,
-                   subscription, connector, health, mcpkey, mcp
+                   subscription, connector, health, mcpkey, mcp, admin
     adapter/       per-connector-type upstream integrations (googlesheets/ — the
                    first, Sheets + Drive; imports connector for the Checker
                    interface, not the reverse)
@@ -136,7 +137,7 @@ The dashboard's, which is an ordinary REST stack:
 browser → /api/* (same-origin, Next.js Route Handler proxy)
         → Echo router
         → middleware:  Recover → RequestID → request logger
-        → guard:       RequireAuth | RequireOrg | RequirePermission(action)
+        → guard:       RequireAuth | RequireOrg | RequirePermission(action) | RequirePlatformRole
         → handler:     bind + validate DTO, no business logic
         → service:     business logic, returns apperror codes — no HTTP types
         → sqlc queries / Redis
@@ -183,6 +184,7 @@ MCP keys are hashed with SHA-256, not bcrypt. A PAT is 256 bits of CSPRNG output
 | `RequireOrg` | `RequireAuth` + `x-organization-id` header + caller is a member of that org |
 | `RequirePermission(action)` | `RequireOrg` + the caller's roles grant `action` (owners bypass) |
 | `RequireMCPKey` | a live, unrevoked MCP key (`Authorization: Bearer sk_live_…`) — no JWT, no org header; the key names the org |
+| `RequirePlatformRole(…)` | `RequireAuth` + `users.platform_role` ∈ the listed roles, read **fresh from the database** on every request. Deliberately not a JWT claim: a claim would keep a demoted account privileged for a full access-token lifetime |
 
 Permission matching: `*` grants everything; then an exact `resource:verb` match; then a `resource:*` wildcard on that resource.
 
@@ -230,6 +232,7 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | Revoke a key (`revoked_at`) |
 | `POST /mcp/:connectorId` | MCP key² | Not REST — one Streamable HTTP MCP JSON-RPC endpoint per connector. See [MCP client setup](#mcp-client-setup) below. |
 | `GET /mcp/files/:connectorId/:fileId` | signed link³ | Downloads a Drive file handed out by `drive_get_file` |
+| `GET /admin/{me,organizations,organizations/:orgId,users,users/:userId,connectors,mcp-keys,audit-logs,system/stats,plans}` | platform role | Cross-organization **read** views for platform staff — outside the tenant boundary, no `x-organization-id`. See [Staff console](#staff-console). |
 
 ¹ reads `Authorization` if present, but does not require it.
 ² `Authorization: Bearer sk_live_...` — an MCP key from `POST /mcp-keys` above, not a JWT access token.
@@ -337,7 +340,7 @@ With `make up` and `make api` running:
 make web   # cd apps/frontend && pnpm dev — Next.js on :4000
 ```
 
-`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
+`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. There is no `/admin` UI yet; the staff console is backend-only so far. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
 
 **Same-origin only.** The browser never calls the Go API directly — it calls `/api/*` on the Next.js origin, and `app/api/[...path]/route.ts` proxies to `BACKEND_URL`. This is a Route Handler rather than a `next.config.ts` `rewrites()` entry on purpose: `next.config.ts` resolves once at build time, so a rewrite destination gets baked into the image, whereas the handler reads `process.env.BACKEND_URL` fresh on every request. The same production image therefore works in dev (`http://localhost:3000`) and in compose (`http://api:3000`) unchanged. A consequence worth knowing: **the backend has no CORS middleware and needs none.**
 
@@ -384,6 +387,30 @@ claude mcp list   # -> sapanjai: ... - ✔ Connected
 (`--header` is variadic and swallows anything after it, so the URL must come *before* `--header` — a real gotcha hit during development.) `claude mcp list` should show the connection, and asking the agent to list its available tools should surface the six `google_sheets` tools — `sheets_list_spreadsheets`, `sheets_describe_spreadsheet`, `sheets_query_rows`, `sheets_read_range`, `drive_list_folder`, `drive_get_file` — plus two connector-type-agnostic ones, `sapanjai_describe_connector` and `sapanjai_whoami`, which let an agent orient itself and let you debug "why can't it see that tool" from the client side. All of it is filtered to whatever `sheets:read`/`drive:read` the key's creator actually holds, intersected with the key's own `scopes`. A tool call against a spreadsheet outside the connector's allowlist is rejected every time, even if the underlying Google account could otherwise reach it.
 
 **What's not here yet:** write tools (append/update a sheet, upload to Drive), a LINE adapter, an OAuth consent flow in the dashboard (hence step 1's manual paste), and OAuth 2.1 / dynamic client registration for Claude Desktop's own connector-picker UI — see `docs/07-sheets-adapter-decisions.md` §3 "Out of scope" for the full list. This walkthrough has been verified against the code and its tests but **not** re-run end to end against a real Google account as part of this documentation pass — treat step 1 onward as the intended path, not a confirmed transcript.
+
+## Staff console
+
+`/admin` is the platform-staff surface, and the one place in the codebase that deliberately crosses the tenant boundary: every other route is scoped by `RequireOrg` / `RequirePermission`, while these read **across all organizations**. Staff typically hold no membership anywhere, so `x-organization-id` has no meaning here. Full design, threat model, and the decisions behind it: [`docs/11-admin-panel.md`](docs/11-admin-panel.md).
+
+The product being supported is a gateway, so a support ticket is almost always *"my MCP client returns 401"* or *"the sheets connector says unhealthy"*. A console that could only see organizations and users would answer neither, which is why cross-org read views of connectors, MCP keys, and gateway audit traffic are in v1 rather than a later phase.
+
+**Shipped today** — the read surfaces (`/admin/me`, `organizations`, `organizations/:orgId`, `users`, `users/:userId`, `connectors`, `mcp-keys`, `audit-logs`, `system/stats`, `plans`), the `RequirePlatformRole` guard, the `platform_role` / `banned_at` / `ban_reason` columns, and ban *enforcement* everywhere a credential is checked — `RequireAuth` (401 `Account suspended`), login, and the MCP key guard, so a banned owner's agent keys stop working even though a PAT has no expiry of its own.
+
+**Not shipped yet** — any admin write route (including the ban and role-grant endpoints themselves), impersonation, the IP allowlist and TOTP step-up, and a dashboard UI. `/admin` is API-only for now.
+
+Two decisions worth repeating here because they are easy to "optimize" back into a bug:
+
+- **`platform_role` is never a JWT claim.** The guard reads `users.platform_role` fresh from the database on every admin request. A claim would keep a demoted account privileged for a full access-token lifetime, and the usual patch for that — a Redis override key — is a second source of truth. One indexed primary-key lookup buys instant revocation. The same call was already made for `is_verified`.
+- **Bans are durable.** `users.banned_at` is the source of truth; `banned:<userId>` in Redis is a fast-path cache that can be flushed without unbanning anyone.
+
+There is no way to *create* an admin through the API. Promotion is an operator action against an existing account:
+
+```bash
+make admin-grant EMAIL=you@example.com ROLE=superadmin   # or ROLE=support
+make admin-grant EMAIL=you@example.com ROLE=none         # revoke
+```
+
+It never creates a user and never sets a password — the account must already exist and have registered normally.
 
 ## Background worker
 
@@ -449,18 +476,20 @@ Redis keys used, all written with `REDIS_KEY_PREFIX` in front:
 | --- | --- |
 | `blacklist:<accessToken>` | logged-out access tokens, 15 min |
 | `login:attempts:<email>` | 5 failures per 15 min |
+| `banned:<userId>` | fast-path ban cache — `users.banned_at` is the source of truth |
 | `verify:email:<sha256hex(token)>` | email-verification token → userId, 24h, `GETDEL` |
 | `verify:resend:<userId>` | resend cooldown, `SET EX 300 NX` |
 | `reset:password:<sha256hex(token)>` | password-reset token → userId, 1h, `GETDEL` |
 | `reset:request:<email>` | reset cooldown, 15 min — keyed by **email, not userId**, because `forgot-password` runs before the address is known to belong to a user, and an id-keyed cooldown could not cover the unknown-address path identically |
 | `worker:lock:<jobName>` | job lock, TTL ≈ one interval |
 | `mcp:ratelimit:<connectorId>` | per-connector token bucket, idle TTL 2 min |
+| `admin:count:<hash>` | short-TTL cache for admin list counts |
 
-Both token namespaces store `sha256hex(32 random bytes)`, never the raw token, so a `KEYS` / `MONITOR` / RDB dump yields nothing redeemable. Key construction lives behind a small helper in each of `internal/infra/redis/{auth,email,ratelimit}.go` and `internal/worker/lock.go`, so the prefix cannot be applied on the write path and forgotten on the read path. It namespaces the *keyspace*, not the instance — `maxmemory` and eviction stay instance-wide, so a noisy co-tenant can still evict our locks and tokens.
+Both token namespaces store `sha256hex(32 random bytes)`, never the raw token, so a `KEYS` / `MONITOR` / RDB dump yields nothing redeemable. Key construction lives behind a small helper in each of `internal/infra/redis/{auth,email,ratelimit,admincount}.go` and `internal/worker/lock.go`, so the prefix cannot be applied on the write path and forgotten on the read path. It namespaces the *keyspace*, not the instance — `maxmemory` and eviction stay instance-wide, so a noisy co-tenant can still evict our locks and tokens.
 
 ## Docker
 
-`apps/backend/Dockerfile` is a multi-stage build: a `golang:1.26-alpine` builder compiles all five binaries — `api`, `worker`, `migrate`, `seed`, and `healthcheck` — into one image, and which one runs is chosen by overriding the container **command**. The runner is [`gcr.io/distroless/static-debian12:nonroot`](https://github.com/GoogleContainerTools/distroless); distroless has no shell, which is why `HEALTHCHECK` runs the dedicated `healthcheck` binary rather than `curl`. The `worker` service reuses that same image with `command: ["/app/worker"]` and `HEALTHCHECK_PORT=3001`, so the shared healthcheck probes the worker's port instead of the API's.
+`apps/backend/Dockerfile` is a multi-stage build: a `golang:1.26-alpine` builder compiles every binary — `api`, `worker`, `migrate`, `seed`, `grantadmin`, `healthcheck` — into one image, and which one runs is chosen by overriding the container **command**. The runner is [`gcr.io/distroless/static-debian12:nonroot`](https://github.com/GoogleContainerTools/distroless); distroless has no shell, which is why `HEALTHCHECK` runs the dedicated `healthcheck` binary rather than `curl`. The `worker` service reuses that same image with `command: ["/app/worker"]` and `HEALTHCHECK_PORT=3001`, so the shared healthcheck probes the worker's port instead of the API's.
 
 The image ends in `CMD ["/app/api"]` and deliberately sets **no `ENTRYPOINT`**. An exec-form entrypoint would make a command override *append* to `/app/api` rather than replace it, so the worker, migrate, and seed services would each silently start a second API — and hosts that expose only a "start command" (Railway, see [`docs/09`](docs/09-railway-deploy.md)) give you no way to reset the entrypoint.
 
@@ -521,6 +550,8 @@ make migrate-down    # roll back the most recent migration
 make migrate-status  # show migration status
 make seed            # seed default plans (free/pro/enterprise) — idempotent
 
+make admin-grant EMAIL=you@example.com ROLE=superadmin   # or ROLE=support / ROLE=none
+
 make api             # run the Go API
 make web             # run the Next.js dev server
 make worker          # run the background job runner
@@ -552,5 +583,6 @@ make swagger         # regenerate the OpenAPI spec (requires swag)
 | [`docs/08-gateway-core.md`](docs/08-gateway-core.md) | The connector-agnostic boundary: which parts of the gateway belong to every connector and which belong to the one that happened to be first. Read before adding a second adapter |
 | [`docs/09-railway-deploy.md`](docs/09-railway-deploy.md) | How this monorepo is deployed on Railway, and the two settings that are easy to get wrong |
 | [`docs/10-transactional-email.md`](docs/10-transactional-email.md) | The outbox + Redis-token design behind verification and password reset, and the token-logging rule |
+| [`docs/11-admin-panel.md`](docs/11-admin-panel.md) | Staff console design: the authorization boundary, the impersonation threat model, and what was deliberately left out |
 | [`apps/frontend/README.md`](apps/frontend/README.md) | Frontend proxy, token model, page map |
 | [`k8s/README.md`](k8s/README.md) | Manifest layout and apply instructions |

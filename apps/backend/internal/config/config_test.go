@@ -33,6 +33,7 @@ func setBaselineEnv(t *testing.T) {
 		"RESEND_API_KEY", "EMAIL_FROM", "APP_PUBLIC_URL",
 		"EMAIL_DISPATCH_INTERVAL", "EMAIL_DISPATCH_BATCH_SIZE",
 		"EMAIL_MAX_ATTEMPTS", "EMAIL_OUTBOX_RETENTION",
+		"ADMIN_IP_ALLOWLIST", "ADMIN_REQUIRE_2FA",
 	} {
 		t.Setenv(k, "")
 	}
@@ -265,6 +266,85 @@ func TestLoad_ExistingDefaultsUnchanged(t *testing.T) {
 	}
 	if cfg.SessionCleanupBatchSize != 1000 {
 		t.Errorf("SessionCleanupBatchSize = %d, want 1000", cfg.SessionCleanupBatchSize)
+	}
+	if cfg.AdminIPAllowlist != nil {
+		t.Errorf("AdminIPAllowlist = %v, want nil (unset disables the check)", cfg.AdminIPAllowlist)
+	}
+	if !cfg.AdminRequire2FA {
+		t.Errorf("AdminRequire2FA = false, want true (the required default — see .env.example for the local-dev override)")
+	}
+}
+
+// Task 6.2: a malformed ADMIN_IP_ALLOWLIST entry must fail Load — the whole
+// point is that a typo is caught at boot, not discovered when staff are
+// locked out of /admin with no in-app recovery path.
+func TestLoad_AdminIPAllowlist_MalformedEntryFailsLoad(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("ADMIN_IP_ALLOWLIST", "10.0.0.0/8,not-a-cidr")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() succeeded, want an error for the malformed CIDR")
+	}
+	if !strings.Contains(err.Error(), "ADMIN_IP_ALLOWLIST") {
+		t.Errorf("error = %q, want it to mention ADMIN_IP_ALLOWLIST", err.Error())
+	}
+}
+
+// Empty/unset is Task 6.2's required default, exercised again here
+// explicitly (TestLoad_ExistingDefaultsUnchanged covers it as one assertion
+// among many) because an operator setting the var to "" deliberately (e.g.
+// templating it from an unset upstream secret) must get the same disabled
+// behavior as never setting it at all.
+func TestLoad_AdminIPAllowlist_EmptyDisablesCheck(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("ADMIN_IP_ALLOWLIST", "")
+
+	cfg := mustLoad(t)
+	if cfg.AdminIPAllowlist != nil {
+		t.Errorf("AdminIPAllowlist = %v, want nil", cfg.AdminIPAllowlist)
+	}
+}
+
+// A valid list parses into the same number of *net.IPNet entries, order
+// preserved (internal/middleware.AdminIPAllowlist just walks the slice, so
+// order has no behavioral meaning, but a silently-dropped entry would).
+func TestLoad_AdminIPAllowlist_ParsesValidList(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("ADMIN_IP_ALLOWLIST", " 10.0.0.0/8 , 192.168.1.0/24,fc00::/7 ")
+
+	cfg := mustLoad(t)
+	if len(cfg.AdminIPAllowlist) != 3 {
+		t.Fatalf("AdminIPAllowlist has %d entries, want 3: %v", len(cfg.AdminIPAllowlist), cfg.AdminIPAllowlist)
+	}
+	want := []string{"10.0.0.0/8", "192.168.1.0/24", "fc00::/7"}
+	for i, n := range cfg.AdminIPAllowlist {
+		if got := n.String(); got != want[i] {
+			t.Errorf("AdminIPAllowlist[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+func TestLoad_AdminRequire2FA_ParsesFalseForLocalDev(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("ADMIN_REQUIRE_2FA", "false")
+
+	cfg := mustLoad(t)
+	if cfg.AdminRequire2FA {
+		t.Errorf("AdminRequire2FA = true, want false")
+	}
+}
+
+func TestLoad_AdminRequire2FA_RejectsNonBoolean(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("ADMIN_REQUIRE_2FA", "yes-please")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() succeeded, want an error for a non-boolean ADMIN_REQUIRE_2FA")
+	}
+	if !strings.Contains(err.Error(), "ADMIN_REQUIRE_2FA") {
+		t.Errorf("error = %q, want it to mention ADMIN_REQUIRE_2FA", err.Error())
 	}
 }
 

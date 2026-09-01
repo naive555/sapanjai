@@ -317,11 +317,12 @@ func (h *Handler) me(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, MeResponse{
-		ID:          user.ID,
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		IsVerified:  user.IsVerified,
-		CreatedAt:   user.CreatedAt,
+		ID:           user.ID,
+		Email:        user.Email,
+		DisplayName:  user.DisplayName,
+		IsVerified:   user.IsVerified,
+		PlatformRole: user.PlatformRole,
+		CreatedAt:    user.CreatedAt,
 	})
 }
 

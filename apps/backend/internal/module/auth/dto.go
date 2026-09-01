@@ -51,13 +51,19 @@ type SuccessResponse struct {
 
 // MeResponse is the response body for GET /auth/me. IsVerified is read
 // fresh from the database on every call rather than carried in the access
-// token — see the handler's doc comment.
+// token — see the handler's doc comment. PlatformRole is nil for every
+// tenant user; it exists here (duplicating a field GET /admin/me also
+// returns) purely so the tenant nav can decide whether to render an "Admin"
+// entry at all — /admin/me is the admin console guard's own call, this one
+// is the nav's, and they are deliberately not merged into one DTO
+// (docs/11-admin-panel.md §1, execution plan Task 2.3's exception note).
 type MeResponse struct {
-	ID          uuid.UUID `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName *string   `json:"displayName"`
-	IsVerified  bool      `json:"isVerified"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID           uuid.UUID `json:"id"`
+	Email        string    `json:"email"`
+	DisplayName  *string   `json:"displayName"`
+	IsVerified   bool      `json:"isVerified"`
+	PlatformRole *string   `json:"platformRole"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 // ForgotPasswordRequest is the POST /auth/forgot-password body.

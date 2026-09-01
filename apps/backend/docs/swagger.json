@@ -8,6 +8,1376 @@
     },
     "basePath": "/",
     "paths": {
+        "/admin/2fa/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Confirm TOTP enrollment (returns ten recovery codes once)",
+                "parameters": [
+                    {
+                        "description": "6-digit code from the authenticator app",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.TOTPConfirmRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.TOTPConfirmResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "TOTP_NOT_ENROLLED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "INVALID_TOTP_CODE / Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/2fa/enroll": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Enroll a fresh TOTP secret (returns the otpauth:// URI once)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.TOTPEnrollResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/2fa/verify": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Verify a TOTP or recovery code (step-up, 12h)",
+                "parameters": [
+                    {
+                        "description": "TOTP code or an unused recovery code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.TOTPVerifyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "TOTP_NOT_ENROLLED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "INVALID_TOTP_CODE / Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/audit-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Query audit logs (cross-org)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by organization ID",
+                        "name": "organizationId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by user ID",
+                        "name": "userId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "Filter by action; repeatable, trailing '*' means prefix match",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only logs at or after this RFC3339 timestamp",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only logs at or before this RFC3339 timestamp",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-200, default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.AuditLogsListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connectors": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List connectors (cross-org, metadata only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by organization ID",
+                        "name": "organizationId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by connector type",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status: active, inactive, error",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Match against connector name",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-100, default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.ConnectorsListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/mcp-keys": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List MCP keys (cross-org, metadata only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by organization ID",
+                        "name": "organizationId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by owner user ID",
+                        "name": "userId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Match against key name or owner email",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-100, default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.MCPKeysListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get the calling staff account's admin profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.MeResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/organizations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List organizations (cross-org)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Match against name or slug",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-100, default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.OrganizationsListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/organizations/{orgId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get one organization's detail view (cross-org)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.OrganizationDetailResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Delete an organization",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "confirm must equal the organization's slug; password re-verifies the caller",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.DeleteOrganizationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "ORG_CONFIRM_MISMATCH",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "REAUTH_FAILED / Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/organizations/{orgId}/limits": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Set an organization's custom subscription limits",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "customLimits payload; null clears back to plan-only limits",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SetLimitsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Organization has no subscription to set limits on",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/organizations/{orgId}/plan": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Assign an organization's subscription plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Plan payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.AssignPlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/plans": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List subscription plans",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlansListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Create a subscription plan",
+                "parameters": [
+                    {
+                        "description": "Plan payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/plans/{planId}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Update a subscription plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Plan payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Delete a subscription plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "PLAN_IN_USE",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/system/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get platform-wide system stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.StatsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List users (cross-org)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Match against email or display name",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by platform role: superadmin, support, or none",
+                        "name": "role",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by ban status",
+                        "name": "banned",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (1-100, default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.UsersListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{userId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get one user's detail view (cross-org)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.UserDetailResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{userId}/ban": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Ban or unban a user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "banned toggles the ban; reason is stored on ban; password re-verifies the caller",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.BanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "REAUTH_FAILED / CANNOT_TARGET_SELF / Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "USER_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "TARGET_IS_PLATFORM_STAFF",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{userId}/impersonate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Start impersonating a tenant user (read-only, 10 minutes)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID to impersonate",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Mandatory reason, minimum 10 characters",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.ImpersonateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.ImpersonateResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions, or the target is platform staff / suspended",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "User not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/{userId}/platform-role": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Grant or revoke a user's platform role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "User ID",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "role is null to revoke; password re-verifies the caller",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlatformRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.SuccessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "REAUTH_FAILED / CANNOT_TARGET_SELF / Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "USER_NOT_FOUND",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "SUPERADMIN_LIMIT",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/audit-logs": {
             "get": {
                 "security": [
@@ -1692,6 +3062,708 @@
                 }
             }
         },
+        "internal_module_admin.AssignPlanRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "planId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.AuditLogItem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "organizationName": {
+                    "type": "string"
+                },
+                "userEmail": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.AuditLogsListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.AuditLogItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.BanRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "banned": {
+                    "type": "boolean"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                }
+            }
+        },
+        "internal_module_admin.ConnectorItem": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastHealthCheckAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "organizationName": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.ConnectorsListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.ConnectorItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.DeleteOrganizationRequest": {
+            "type": "object",
+            "required": [
+                "confirm",
+                "password"
+            ],
+            "properties": {
+                "confirm": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.EmailOutboxStats": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "sent": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.ImpersonateRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 10
+                }
+            }
+        },
+        "internal_module_admin.ImpersonateResponse": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "user": {
+                    "$ref": "#/definitions/internal_module_admin.ImpersonatedUser"
+                }
+            }
+        },
+        "internal_module_admin.ImpersonatedUser": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.MCPKeyItem": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastUsedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "organizationName": {
+                    "type": "string"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "userEmail": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.MCPKeysListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.MCPKeyItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.MeResponse": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "platformRole": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.OrgAuditLogItem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.OrgMemberItem": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "joinedAt": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.OrganizationDetailResponse": {
+            "type": "object",
+            "properties": {
+                "connectors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.ConnectorItem"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "effectiveLimits": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mcpKeys": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.MCPKeyItem"
+                    }
+                },
+                "members": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.OrgMemberItem"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "planName": {
+                    "type": "string"
+                },
+                "recentAuditLogs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.OrgAuditLogItem"
+                    }
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.OrganizationListItem": {
+            "type": "object",
+            "properties": {
+                "connectorCount": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mcpKeyCount": {
+                    "type": "integer"
+                },
+                "memberCount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "planName": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.OrganizationsListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.OrganizationListItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.PlanBreakdownItem": {
+            "type": "object",
+            "properties": {
+                "orgCount": {
+                    "type": "integer"
+                },
+                "planName": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.PlanCreateRequest": {
+            "type": "object",
+            "required": [
+                "limits",
+                "name"
+            ],
+            "properties": {
+                "limits": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                }
+            }
+        },
+        "internal_module_admin.PlanItem": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "limits": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.PlanUpdateRequest": {
+            "type": "object",
+            "required": [
+                "limits",
+                "name"
+            ],
+            "properties": {
+                "limits": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                }
+            }
+        },
+        "internal_module_admin.PlansListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.PlanItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.PlatformRoleRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "superadmin",
+                        "support"
+                    ]
+                }
+            }
+        },
+        "internal_module_admin.SetLimitsRequest": {
+            "type": "object",
+            "properties": {
+                "customLimits": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "internal_module_admin.StatsResponse": {
+            "type": "object",
+            "properties": {
+                "auditLogs": {
+                    "type": "integer"
+                },
+                "connectors": {
+                    "type": "integer"
+                },
+                "emailOutbox": {
+                    "$ref": "#/definitions/internal_module_admin.EmailOutboxStats"
+                },
+                "mcpKeysActive": {
+                    "type": "integer"
+                },
+                "mcpKeysTotal": {
+                    "type": "integer"
+                },
+                "organizations": {
+                    "type": "integer"
+                },
+                "organizationsLast7d": {
+                    "type": "integer"
+                },
+                "planBreakdown": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.PlanBreakdownItem"
+                    }
+                },
+                "redisUsedMemoryHuman": {
+                    "type": "string"
+                },
+                "sessionsActive": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "integer"
+                },
+                "usersLast7d": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.SuccessResponse": {
+            "type": "object",
+            "properties": {
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_admin.TOTPConfirmRequest": {
+            "type": "object",
+            "required": [
+                "code"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.TOTPConfirmResponse": {
+            "type": "object",
+            "properties": {
+                "recoveryCodes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_module_admin.TOTPEnrollResponse": {
+            "type": "object",
+            "properties": {
+                "otpauthUri": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.TOTPVerifyRequest": {
+            "type": "object",
+            "required": [
+                "code"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.UserDetailResponse": {
+            "type": "object",
+            "properties": {
+                "activeSessions": {
+                    "type": "integer"
+                },
+                "banReason": {
+                    "type": "string"
+                },
+                "bannedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isVerified": {
+                    "type": "boolean"
+                },
+                "memberships": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.UserMembershipItem"
+                    }
+                },
+                "platformRole": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.UserListItem": {
+            "type": "object",
+            "properties": {
+                "bannedAt": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isVerified": {
+                    "type": "boolean"
+                },
+                "orgCount": {
+                    "type": "integer"
+                },
+                "platformRole": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.UserMembershipItem": {
+            "type": "object",
+            "properties": {
+                "joinedAt": {
+                    "type": "string"
+                },
+                "organizationId": {
+                    "type": "string"
+                },
+                "organizationName": {
+                    "type": "string"
+                },
+                "organizationSlug": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.UsersListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.UserListItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_module_auditlog.LogResponse": {
             "type": "object",
             "properties": {
@@ -1769,6 +3841,9 @@
                 },
                 "isVerified": {
                     "type": "boolean"
+                },
+                "platformRole": {
+                    "type": "string"
                 }
             }
         },

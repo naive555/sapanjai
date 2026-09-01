@@ -267,3 +267,60 @@ func TestListPlans_DatabaseErrorPropagates(t *testing.T) {
 		t.Fatalf("expected the raw db error to propagate, got %v", err)
 	}
 }
+
+// EffectiveLimits backs internal/module/admin's organization-detail view
+// (execution plan Task 2.4), which calls into it rather than reimplementing
+// GetLimit's custom-over-plan merge. These lock in the same three cases
+// GetLimit's own tests already cover for a single key, but for the full map.
+
+func TestEffectiveLimits_NoSubscriptionReturnsNil(t *testing.T) {
+	svc := NewService(&mockSubStore{
+		getOrgSubscriptionWithPlan: func(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error) {
+			return db.GetOrgSubscriptionWithPlanRow{}, pgx.ErrNoRows
+		},
+	})
+
+	limits, err := svc.EffectiveLimits(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if limits != nil {
+		t.Fatalf("limits = %v, want nil for an org with no subscription", limits)
+	}
+}
+
+func TestEffectiveLimits_CustomOverridesPlanPerKey(t *testing.T) {
+	svc := NewService(&mockSubStore{
+		getOrgSubscriptionWithPlan: func(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error) {
+			return db.GetOrgSubscriptionWithPlanRow{
+				PlanLimits:   mustMarshal(t, map[string]float64{"max_members": 5, "max_connectors": 2}),
+				CustomLimits: mustMarshal(t, map[string]float64{"max_members": 100}),
+			}, nil
+		},
+	})
+
+	limits, err := svc.EffectiveLimits(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if limits["max_members"] != 100 {
+		t.Errorf("max_members = %v, want 100 (custom overrides plan)", limits["max_members"])
+	}
+	if limits["max_connectors"] != 2 {
+		t.Errorf("max_connectors = %v, want 2 (untouched plan value)", limits["max_connectors"])
+	}
+}
+
+func TestEffectiveLimits_DatabaseErrorPropagates(t *testing.T) {
+	dbErr := errors.New("connection reset")
+	svc := NewService(&mockSubStore{
+		getOrgSubscriptionWithPlan: func(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error) {
+			return db.GetOrgSubscriptionWithPlanRow{}, dbErr
+		},
+	})
+
+	_, err := svc.EffectiveLimits(context.Background(), uuid.New())
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected the raw db error to propagate, got %v", err)
+	}
+}

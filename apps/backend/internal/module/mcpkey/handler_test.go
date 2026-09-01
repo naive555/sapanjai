@@ -16,6 +16,7 @@ import (
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	appmw "github.com/sapanjai/backend/internal/middleware"
+	"github.com/sapanjai/backend/internal/shared/authtoken"
 )
 
 // testPermActionPattern mirrors internal/server/validator.go's unexported
@@ -52,8 +53,8 @@ type fakeTokenVerifier struct {
 	userID uuid.UUID
 }
 
-func (f *fakeTokenVerifier) VerifyAccessToken(token string) (uuid.UUID, string, error) {
-	return f.userID, "caller@example.com", nil
+func (f *fakeTokenVerifier) VerifyAccessToken(token string) (authtoken.AccessToken, error) {
+	return authtoken.AccessToken{UserID: f.userID, Email: "caller@example.com"}, nil
 }
 
 type fakeBlacklistChecker struct{}
@@ -62,10 +63,22 @@ func (f *fakeBlacklistChecker) IsBlacklisted(ctx context.Context, token string) 
 	return false, nil
 }
 
+func (f *fakeBlacklistChecker) IsBanned(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeBlacklistChecker) IsTwoFactorVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 type fakeMembershipStore struct{}
 
 func (f *fakeMembershipStore) GetMembership(ctx context.Context, arg db.GetMembershipParams) (db.Membership, error) {
 	return db.Membership{ID: uuid.New(), UserID: arg.UserID, OrganizationID: arg.OrganizationID, Role: "member"}, nil
+}
+
+func (f *fakeMembershipStore) GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error) {
+	return db.User{ID: id}, nil
 }
 
 type fakePermissionChecker struct {
