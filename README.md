@@ -39,7 +39,7 @@ Each was a finding from the spike in [`spikes/mcp-gateway/`](spikes/mcp-gateway/
 | MCP keys — mint / list / revoke org-scoped PATs, raw token shown once | **shipped** |
 | `google_sheets` connector — six read tools over allowlisted Sheets + Drive, OAuth refresh, health probe, signed short-lived file downloads | **shipped** |
 | Platform core — auth, email verification, password reset, organizations, RBAC, audit logs, plans, background worker | **shipped** |
-| Staff console (`/admin`) — cross-org read views for support | **backend read routes only; no dashboard UI, no impersonation yet** ([`docs/11`](docs/11-admin-panel.md)) |
+| Staff console (`/admin`) — cross-org reads, superadmin-only mutations, read-only impersonation, IP allowlist + TOTP step-up, dashboard UI | **shipped** ([`docs/11`](docs/11-admin-panel.md)) |
 | Write tools (append a row, upload a file) | not built — [`docs/07`](docs/07-sheets-adapter-decisions.md) §3 |
 | OAuth consent flow in the dashboard | not built — onboarding is a manual credential paste ([MCP client setup](#mcp-client-setup)) |
 | OAuth 2.1 / dynamic client registration for Claude Desktop's connector picker | not built |
@@ -114,6 +114,8 @@ apps/frontend/
   app/(auth)/      login, register, verify-email, forgot-password, reset-password
   app/(dashboard)/ overview, organizations, members, roles, activity (audit log),
                    subscription, mcp-keys, connectors (+ the google_sheets form)
+  app/(admin)/     platform-staff console: overview, organizations, users, plans,
+                   audit-logs, system — outside the tenant boundary
   app/api/[...path]/route.ts   runtime reverse proxy to the backend
   lib/api/         fetch client with single-flight 401 refresh
   lib/auth/        token store + session provider
@@ -232,7 +234,10 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | Revoke a key (`revoked_at`) |
 | `POST /mcp/:connectorId` | MCP key² | Not REST — one Streamable HTTP MCP JSON-RPC endpoint per connector. See [MCP client setup](#mcp-client-setup) below. |
 | `GET /mcp/files/:connectorId/:fileId` | signed link³ | Downloads a Drive file handed out by `drive_get_file` |
-| `GET /admin/{me,organizations,organizations/:orgId,users,users/:userId,connectors,mcp-keys,audit-logs,system/stats,plans}` | platform role | Cross-organization **read** views for platform staff — outside the tenant boundary, no `x-organization-id`. See [Staff console](#staff-console). |
+| `GET /admin/{me,organizations,organizations/:orgId,users,users/:userId,connectors,mcp-keys,audit-logs,system/stats,plans}` | platform:`superadmin,support` | Cross-organization **read** views for platform staff — outside the tenant boundary, no `x-organization-id`. See [Staff console](#staff-console). |
+| `POST /admin/organizations/:orgId/plan`, `PUT …/limits`, `DELETE /admin/organizations/:orgId`, `PATCH /admin/users/:userId/{platform-role,ban}`, `POST/PUT/DELETE /admin/plans[/:planId]` | platform:`superadmin` | Staff mutations. The three destructive ones (org delete, role grant, ban) re-verify the caller's own password |
+| `POST /admin/users/:userId/impersonate` | platform:`superadmin,support` | Mints a 10-minute, non-refreshable, **read-only** token for a tenant user. Refuses any staff target |
+| `POST /admin/2fa/{enroll,confirm,verify}` | platform:`superadmin,support` | TOTP step-up enrollment and verification — the only `/admin` routes exempt from the `ADMIN_REQUIRE_2FA` gate |
 
 ¹ reads `Authorization` if present, but does not require it.
 ² `Authorization: Bearer sk_live_...` — an MCP key from `POST /mcp-keys` above, not a JWT access token.
@@ -340,7 +345,7 @@ With `make up` and `make api` running:
 make web   # cd apps/frontend && pnpm dev — Next.js on :4000
 ```
 
-`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. There is no `/admin` UI yet; the staff console is backend-only so far. MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
+`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. An account holding a `platform_role` also sees an Admin nav entry into the staff console at `/admin` ([Staff console](#staff-console)). MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
 
 **Same-origin only.** The browser never calls the Go API directly — it calls `/api/*` on the Next.js origin, and `app/api/[...path]/route.ts` proxies to `BACKEND_URL`. This is a Route Handler rather than a `next.config.ts` `rewrites()` entry on purpose: `next.config.ts` resolves once at build time, so a rewrite destination gets baked into the image, whereas the handler reads `process.env.BACKEND_URL` fresh on every request. The same production image therefore works in dev (`http://localhost:3000`) and in compose (`http://api:3000`) unchanged. A consequence worth knowing: **the backend has no CORS middleware and needs none.**
 
@@ -394,23 +399,27 @@ claude mcp list   # -> sapanjai: ... - ✔ Connected
 
 The product being supported is a gateway, so a support ticket is almost always *"my MCP client returns 401"* or *"the sheets connector says unhealthy"*. A console that could only see organizations and users would answer neither, which is why cross-org read views of connectors, MCP keys, and gateway audit traffic are in v1 rather than a later phase.
 
-**Shipped today** — the read surfaces (`/admin/me`, `organizations`, `organizations/:orgId`, `users`, `users/:userId`, `connectors`, `mcp-keys`, `audit-logs`, `system/stats`, `plans`), the `RequirePlatformRole` guard, the `platform_role` / `banned_at` / `ban_reason` columns, and ban *enforcement* everywhere a credential is checked — `RequireAuth` (401 `Account suspended`), login, and the MCP key guard, so a banned owner's agent keys stop working even though a PAT has no expiry of its own.
+**Two roles.** `support` reads everything and mutates nothing; `superadmin` additionally holds every mutation. That split is enforced by two *separate* `RequirePlatformRole` guard instances on the route table — not a role branch inside a handler — so a compromised support account cannot destroy anything, and the routing itself is the source of truth for who may reach what. Starting an impersonation is on the read guard, because the token it mints is itself read-only.
 
-**Not shipped yet** — any admin write route (including the ban and role-grant endpoints themselves), impersonation, the IP allowlist and TOTP step-up, and a dashboard UI. `/admin` is API-only for now.
+**Shipped** — the ten read surfaces; eight superadmin mutations (assign plan, set custom limits, delete organization, grant/revoke `platform_role`, ban/unban, plan CRUD); read-only impersonation; the `ADMIN_IP_ALLOWLIST` network gate and the TOTP step-up; and the dashboard UI at `/admin` (overview, organizations, users, plans, audit logs, system stats).
 
-Two decisions worth repeating here because they are easy to "optimize" back into a bug:
+Four decisions worth repeating here because they are easy to "optimize" back into a bug:
 
 - **`platform_role` is never a JWT claim.** The guard reads `users.platform_role` fresh from the database on every admin request. A claim would keep a demoted account privileged for a full access-token lifetime, and the usual patch for that — a Redis override key — is a second source of truth. One indexed primary-key lookup buys instant revocation. The same call was already made for `is_verified`.
-- **Bans are durable.** `users.banned_at` is the source of truth; `banned:<userId>` in Redis is a fast-path cache that can be flushed without unbanning anyone.
+- **Bans are durable.** `users.banned_at` is the source of truth; `banned:<userId>` in Redis is a fast-path cache that can be flushed without unbanning anyone. Enforcement sits everywhere a credential is checked — `RequireAuth` (401 `Account suspended`), login (403), and the MCP key guard — so a banned owner's agent keys stop working even though a PAT has no expiry of its own.
+- **The destructive three re-verify a password.** Deleting an organization, changing a platform role, and banning a user each take the caller's own password in the request body, rate-limited independently of login (`admin:reauth:attempts:<userId>`, 5 per 15 min). A session left open on an unlocked laptop is not by itself enough. Plan and limit changes deliberately do *not* prompt — making staff type a password for a reversible edit only trains them to type it reflexively on the routes that matter.
+- **Impersonation is read-only and bounded.** The minted token lasts 10 minutes, cannot be refreshed, carries an `imp` claim that the auth guard turns into a 403 on any non-`GET`/`HEAD`/`OPTIONS` request, and can never reach `/admin` itself. Any platform-staff target is refused outright, closing off impersonation as a privilege-escalation ladder. Every start is audited with the operator's stated reason.
 
-There is no way to *create* an admin through the API. Promotion is an operator action against an existing account:
+**Off-network callers get a 404, not a 403.** `ADMIN_IP_ALLOWLIST` gates the whole group *before* `RequireAuth` runs, so a scanner never learns there is anything here to be denied from. It is unset by default, which disables the check; a wrong value locks every staff account out with no in-app recovery path, so change it in staging first ([`docs/09`](docs/09-railway-deploy.md)).
+
+There is no way to *create* an admin through the API. The **first** platform role has to come from the operator CLI — a chicken-and-egg `PATCH /admin/users/:userId/platform-role` cannot solve on its own, since calling it already requires being a superadmin:
 
 ```bash
 make admin-grant EMAIL=you@example.com ROLE=superadmin   # or ROLE=support
 make admin-grant EMAIL=you@example.com ROLE=none         # revoke
 ```
 
-It never creates a user and never sets a password — the account must already exist and have registered normally.
+It never creates a user and never sets a password — the account must already exist and have registered normally. Once one superadmin exists, the console's own role-grant route handles every subsequent promotion or revocation; the CLI stays available for bootstrap and for cutting access without going through the console.
 
 ## Background worker
 
@@ -454,6 +463,8 @@ Copy `.env.example` → `.env`. The API and worker read the same file.
 | `JWT_REFRESH_EXPIRES_IN` | `604800` | **seconds**, not a duration string |
 | `APP_PUBLIC_URL` | `http://localhost:4000` | the browser-facing **frontend** origin that verification and reset links are built against — not the API. Trailing slash trimmed |
 | `MCP_RATE_LIMIT_PER_MIN` | `60` | per-connector upstream-API token-bucket capacity, tokens/minute — see [`docs/07-sheets-adapter-decisions.md`](docs/07-sheets-adapter-decisions.md) step 4. Most `google_sheets` tools charge a floor of 1 unit per `tools/call`; `sheets_query_rows`' bounded scan charges 1 unit per page fetched from the upstream API instead, so a single call can cost more than 1 |
+| `ADMIN_IP_ALLOWLIST` | — | optional, comma-separated CIDRs gating the whole `/admin` group before `RequireAuth` runs; unset/empty disables the check. Parsed once at boot — a malformed entry fails startup rather than the first request. A wrong value locks every platform staff account out of `/admin` with no in-app recovery path |
+| `ADMIN_REQUIRE_2FA` | `true` | gates every `/admin` route except `POST /admin/2fa/{enroll,confirm,verify}` behind a completed TOTP step-up. Set `false` only for local development |
 | `WORKER_PORT` | `3001` | worker's internal `/health` port |
 | `WORKER_JOB_TIMEOUT` | `5m` | per-run timeout, any job |
 | `SESSION_CLEANUP_INTERVAL` | `1h` | |
@@ -483,7 +494,10 @@ Redis keys used, all written with `REDIS_KEY_PREFIX` in front:
 | `reset:request:<email>` | reset cooldown, 15 min — keyed by **email, not userId**, because `forgot-password` runs before the address is known to belong to a user, and an id-keyed cooldown could not cover the unknown-address path identically |
 | `worker:lock:<jobName>` | job lock, TTL ≈ one interval |
 | `mcp:ratelimit:<connectorId>` | per-connector token bucket, idle TTL 2 min |
-| `admin:count:<hash>` | short-TTL cache for admin list counts |
+| `admin:count:<hash>` | short-TTL cache for admin list counts, 30s — keyed by the exact filter set, so paging one search doesn't re-`COUNT(*)` per page |
+| `admin:reauth:attempts:<userId>` | password re-auth limiter on the three destructive admin mutations, 5 per 15 min — independent of `login:attempts:` so burning one budget doesn't hand an attacker a fresh one on the other |
+| `admin:2fa:<userId>` | a completed TOTP step-up, 12h |
+| `admin:2fa:attempts:<userId>` | brute-force limiter on the 6-digit step-up code, 5 per 15 min |
 
 Both token namespaces store `sha256hex(32 random bytes)`, never the raw token, so a `KEYS` / `MONITOR` / RDB dump yields nothing redeemable. Key construction lives behind a small helper in each of `internal/infra/redis/{auth,email,ratelimit,admincount}.go` and `internal/worker/lock.go`, so the prefix cannot be applied on the write path and forgotten on the read path. It namespaces the *keyspace*, not the instance — `maxmemory` and eviction stay instance-wide, so a noisy co-tenant can still evict our locks and tokens.
 
