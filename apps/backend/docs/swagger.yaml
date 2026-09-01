@@ -834,13 +834,6 @@ definitions:
           type: string
         type: array
     type: object
-  internal_module_subscription.AssignRequest:
-    properties:
-      planId:
-        type: string
-    required:
-    - planId
-    type: object
   internal_module_subscription.PlanResponse:
     properties:
       createdAt:
@@ -872,11 +865,6 @@ definitions:
         type: string
       updatedAt:
         type: string
-    type: object
-  internal_module_subscription.SuccessResponse:
-    properties:
-      success:
-        type: boolean
     type: object
 info:
   contact: {}
@@ -2778,46 +2766,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get the organization's subscription
-      tags:
-      - subscription
-  /subscription/assign:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Active organization ID
-        in: header
-        name: x-organization-id
-        required: true
-        type: string
-      - description: Plan payload
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_module_subscription.AssignRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/internal_module_subscription.SuccessResponse'
-        "400":
-          description: Missing x-organization-id header
-          schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
-        "403":
-          description: Not a member of this organization
-          schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
-        "422":
-          description: Validation failed
-          schema:
-            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Assign a subscription plan
       tags:
       - subscription
 securityDefinitions:

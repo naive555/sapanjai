@@ -188,17 +188,16 @@ export function getSubscription() {
   return apiRequest<SubscriptionResponse | null>("/subscription");
 }
 
-// Not in the source app — added in Phase 6 so the plan picker below can be
-// populated (plan ids are server-generated UUIDs with no other way to
-// discover them). See docs/03 "Deviations resolved during Phase 6".
+// The plan catalogue, read-only. Originally added in Phase 6 to populate a
+// plan picker on the subscription page; that picker is gone — a tenant
+// cannot change its own plan any more (POST /subscription/assign was
+// removed, since RequireOrg is membership-only and let any `member` move
+// their org onto any plan). The list stays so the page can show which plan
+// the org is on against the others it could be moved to; a plan's name and
+// limits are not secret. Changing a plan is now
+// POST /admin/organizations/:orgId/plan, superadmin-only.
 export function listPlans() {
   return apiRequest<PlanResponse[]>("/plans");
-}
-
-// Note: the contract has no admin/permission check on this route (any org
-// member can assign a plan) — a documented source-app quirk, kept for parity.
-export function assignSubscription(planId: string) {
-  return apiRequest<SuccessResponse>("/subscription/assign", { method: "POST", body: { planId } });
 }
 
 // ---- Connectors ----

@@ -7,12 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// AssignRequest is the POST /subscription/assign body, mirroring the
-// t.Object({ planId: t.String() }) schema in the source app.
-type AssignRequest struct {
-	PlanID string `json:"planId" validate:"required,uuid"`
-}
-
 // PlanResponse is the plan embedded in SubscriptionResponse.
 type PlanResponse struct {
 	ID        uuid.UUID       `json:"id"`
@@ -31,9 +25,4 @@ type SubscriptionResponse struct {
 	CreatedAt      time.Time       `json:"createdAt"`
 	UpdatedAt      time.Time       `json:"updatedAt"`
 	Plan           PlanResponse    `json:"plan"`
-}
-
-// SuccessResponse is the response body for POST /subscription/assign.
-type SuccessResponse struct {
-	Success bool `json:"success"`
 }

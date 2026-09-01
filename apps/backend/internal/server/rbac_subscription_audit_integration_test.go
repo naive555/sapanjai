@@ -35,6 +35,24 @@ func createPlan(t *testing.T, store *database.Store, limits map[string]int) uuid
 	return plan.ID
 }
 
+// assignPlanDirect puts orgID on planID by writing the row, not by calling
+// an API route: there is no tenant-facing way to do this any more. POST
+// /subscription/assign was removed (any org member could put their own org
+// on any plan), and the only remaining path is POST
+// /admin/organizations/:orgId/plan, which needs a superadmin this test has
+// no reason to mint. Exercised end-to-end through the API in
+// admin_mutations_integration_test.go's TestIntegration_Admin_AssignPlan.
+func assignPlanDirect(t *testing.T, store *database.Store, orgID uuid.UUID, planID uuid.UUID) {
+	t.Helper()
+
+	if err := store.UpsertOrgSubscription(context.Background(), db.UpsertOrgSubscriptionParams{
+		OrganizationID: orgID,
+		PlanID:         planID,
+	}); err != nil {
+		t.Fatalf("UpsertOrgSubscription: %v", err)
+	}
+}
+
 // doJSONList issues a GET request and decodes a JSON array response, for
 // the list endpoints (GET /rbac/roles, GET /audit-logs) that return a bare
 // array on success rather than an object.
@@ -253,12 +271,23 @@ func TestIntegration_Subscription(t *testing.T) {
 
 	planA := createPlan(t, store, map[string]int{"max_members": 5})
 
-	t.Run("assign then get embeds the plan", func(t *testing.T) {
+	// A tenant can no longer assign a plan at all: POST /subscription/assign
+	// is gone, not merely denied, so the route table stops advertising a
+	// capability no tenant token can use. A stale client gets the contract's
+	// 404 "Route not found", the same as any unmounted path.
+	t.Run("assign route is gone for tenants", func(t *testing.T) {
 		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/subscription/assign",
 			map[string]any{"planId": planA.String()}, orgHeaders)
-		if resp.StatusCode != http.StatusOK || body["success"] != true {
-			t.Fatalf("assign: status = %d, body = %v", resp.StatusCode, body)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("assign: status = %d, want 404; body = %v", resp.StatusCode, body)
 		}
+		if body["message"] != "Route not found" {
+			t.Errorf("assign: message = %v, want %q", body["message"], "Route not found")
+		}
+	})
+
+	t.Run("get embeds the plan once one is assigned", func(t *testing.T) {
+		assignPlanDirect(t, store, uuid.MustParse(org.ID), planA)
 
 		resp2, body2 := doJSON(t, client, ts.URL, http.MethodGet, "/subscription", nil, orgHeaders)
 		if resp2.StatusCode != http.StatusOK {
@@ -279,14 +308,9 @@ func TestIntegration_Subscription(t *testing.T) {
 		}
 	})
 
-	t.Run("re-assign upserts to the new plan", func(t *testing.T) {
+	t.Run("re-assigning upserts rather than duplicating", func(t *testing.T) {
 		planB := createPlan(t, store, map[string]int{"max_members": 50})
-
-		resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/subscription/assign",
-			map[string]any{"planId": planB.String()}, orgHeaders)
-		if resp.StatusCode != http.StatusOK || body["success"] != true {
-			t.Fatalf("re-assign: status = %d, body = %v", resp.StatusCode, body)
-		}
+		assignPlanDirect(t, store, uuid.MustParse(org.ID), planB)
 
 		_, body2 := doJSON(t, client, ts.URL, http.MethodGet, "/subscription", nil, orgHeaders)
 		if body2["planId"] != planB.String() {

@@ -220,8 +220,7 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `PUT /rbac/roles/:roleId/permissions` | org | Replace a role's permission set |
 | `POST /rbac/assign` | org | Assign a role to a member |
 | `GET /subscription` | org | Org's subscription with plan embedded (nullable) |
-| `POST /subscription/assign` | org | Upsert the org's plan |
-| `GET /plans` | auth | All plans (global, not org-scoped) |
+| `GET /plans` | auth | All plans (global, not org-scoped) — a read-only catalogue. A tenant cannot change its own plan; that is `POST /admin/organizations/:orgId/plan`, superadmin-only |
 | `GET /audit-logs` | org | Org's logs, newest first — `userId`, `action`, `limit` (1–100, default 50) |
 | `POST /connectors` | perm:`connector:write` | Create a connector; `config` is sealed with envelope encryption |
 | `GET /connectors` | perm:`connector:read` | Org's connectors, oldest first |
@@ -326,11 +325,11 @@ curl -s localhost:3000/rbac/assign \
 # --- subscription & audit logs -----------------------------------------
 curl -s localhost:3000/plans -H 'Authorization: Bearer <accessToken>'
 
-curl -s localhost:3000/subscription/assign \
-  -H 'Content-Type: application/json' \
+# reading the org's own plan is a tenant route; changing it is not —
+# see POST /admin/organizations/:orgId/plan (superadmin only)
+curl -s localhost:3000/subscription \
   -H 'Authorization: Bearer <accessToken>' \
-  -H 'x-organization-id: <orgId>' \
-  -d '{"planId":"<planId>"}'
+  -H 'x-organization-id: <orgId>'
 
 curl -s 'localhost:3000/audit-logs?action=org.created&limit=10' \
   -H 'Authorization: Bearer <accessToken>' \

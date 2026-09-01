@@ -111,9 +111,11 @@ func (s *Service) AssignPlan(ctx context.Context, organizationID, planID uuid.UU
 }
 
 // ListPlans returns every available subscription plan, oldest first (seed
-// insertion order). Not present in the source app — added in Phase 6 so the
-// frontend can populate a plan picker; see docs/03 "Deviations resolved
-// during Phase 6".
+// insertion order). Not present in the source app — added in Phase 6 for the
+// frontend's plan picker, which is gone now that a tenant cannot change its
+// own plan (see Handler.Register). It stays as the read-only catalogue the
+// subscription page renders; see docs/03 "Deviations resolved during Phase
+// 6".
 func (s *Service) ListPlans(ctx context.Context) ([]db.Plan, error) {
 	return s.store.ListPlans(ctx)
 }

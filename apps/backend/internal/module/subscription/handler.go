@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	appmw "github.com/sapanjai/backend/internal/middleware"
-	"github.com/sapanjai/backend/internal/shared/httpx"
+
+	// Imported for its side effect on `make swagger`, not for code: swaggo
+	// resolves the httpx.ErrorResponse in the @Failure annotations below
+	// through this file's own import list, and fails generation with
+	// "cannot find type definition" without it. Every other handler imports
+	// httpx for BindAndValidate; this one has no request body left to bind
+	// since POST /subscription/assign was removed.
+	_ "github.com/sapanjai/backend/internal/shared/httpx"
 )
 
-// Handler implements the two /subscription routes, mirroring
-// src/modules/subscription/index.ts.
+// Handler implements GET /subscription and GET /plans. The source app's
+// POST /subscription/assign is deliberately not mirrored — see Register.
 type Handler struct {
 	service *Service
 }
@@ -23,19 +29,30 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-// Register mounts the two /subscription routes on the given group. Both are
+// Register mounts the /subscription read route on the given group. It is
 // org-scoped per docs/02-api-contract.md.
+//
+// There is deliberately no tenant-facing write route here. POST
+// /subscription/assign used to let any org member — including a plain
+// `member` — put their own organization on any plan, since RequireOrg is
+// membership-only and carries no role or permission check. Changing a plan
+// changes what the org is allowed to consume (max_members, max_roles,
+// max_connectors, enforced by Service.EnforceLimit), so it is a
+// commercial decision, not a tenant setting. It now lives exclusively at
+// POST /admin/organizations/:orgId/plan, behind RequirePlatformRole
+// ("superadmin"). The route is gone rather than kept-and-denied: the route
+// table should not advertise a capability no tenant token can ever use.
 func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.GET("", h.get, guards.RequireOrg())
-	g.POST("/assign", h.assign, guards.RequireOrg())
 }
 
 // RegisterPlans mounts GET /plans. Not in the source app — added in Phase 6
-// so the frontend subscription page can populate a plan picker (plan ids are
-// server-generated UUIDs with no fixed/knowable value, so the frontend has
-// no other way to discover them). Plans are global, not org-scoped, so this
-// only requires RequireAuth, not RequireOrg. See docs/03 "Deviations
-// resolved during Phase 6".
+// to populate the frontend's plan picker, which no longer exists (see
+// Register above). It stays as a read-only catalogue: the tenant
+// subscription page shows which plan the org is on against the others it
+// could be moved to, and a plan's name and limits are not secret. Plans are
+// global, not org-scoped, so this only requires RequireAuth, not RequireOrg.
+// See docs/03 "Deviations resolved during Phase 6".
 func (h *Handler) RegisterPlans(g *echo.Group, guards *appmw.Guards) {
 	g.GET("", h.listPlans, guards.RequireAuth())
 }
@@ -61,37 +78,6 @@ func (h *Handler) get(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, toSubscriptionResponse(*sub))
-}
-
-// assign upserts the active organization's subscription to the given plan.
-// @Summary  Assign a subscription plan
-// @Tags     subscription
-// @Security BearerAuth
-// @Accept   json
-// @Produce  json
-// @Param    x-organization-id  header    string         true  "Active organization ID"
-// @Param    body               body      AssignRequest  true  "Plan payload"
-// @Success  200                {object}  SuccessResponse
-// @Failure  400                {object}  httpx.ErrorResponse  "Missing x-organization-id header"
-// @Failure  403                {object}  httpx.ErrorResponse  "Not a member of this organization"
-// @Failure  422                {object}  httpx.ErrorResponse  "Validation failed"
-// @Router   /subscription/assign [post]
-func (h *Handler) assign(c echo.Context) error {
-	var req AssignRequest
-	if err := httpx.BindAndValidate(c, &req); err != nil {
-		return err
-	}
-
-	planID, err := uuid.Parse(req.PlanID)
-	if err != nil {
-		return err
-	}
-
-	if err := h.service.AssignPlan(c.Request().Context(), appmw.OrgID(c), planID); err != nil {
-		return err
-	}
-
-	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
 }
 
 // listPlans returns every available subscription plan.

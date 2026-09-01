@@ -2995,69 +2995,6 @@ const docTemplate = `{
                     }
                 }
             }
-        },
-        "/subscription/assign": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "subscription"
-                ],
-                "summary": "Assign a subscription plan",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Active organization ID",
-                        "name": "x-organization-id",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "description": "Plan payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_module_subscription.AssignRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/internal_module_subscription.SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Missing x-organization-id header",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Not a member of this organization",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Validation failed",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
-                        }
-                    }
-                }
-            }
         }
     },
     "definitions": {
@@ -4325,17 +4262,6 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_module_subscription.AssignRequest": {
-            "type": "object",
-            "required": [
-                "planId"
-            ],
-            "properties": {
-                "planId": {
-                    "type": "string"
-                }
-            }
-        },
         "internal_module_subscription.PlanResponse": {
             "type": "object",
             "properties": {
@@ -4382,14 +4308,6 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
-                }
-            }
-        },
-        "internal_module_subscription.SuccessResponse": {
-            "type": "object",
-            "properties": {
-                "success": {
-                    "type": "boolean"
                 }
             }
         }

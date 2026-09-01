@@ -296,7 +296,9 @@ image works in any environment.
 2. Create `api`, `worker`, `web` with the settings above.
 3. Deploy `api` — the pre-deploy command applies migrations.
 4. Seed the default plans once — see "Running migrate and seed by hand" below.
-   Without this, `GET /plans` returns an empty list and the plan picker is blank.
+   Without this, `GET /plans` returns an empty list, the subscription page's
+   plan catalogue is blank, and there is no plan for an admin to assign at
+   `POST /admin/organizations/:orgId/plan`.
 5. Deploy `worker` and `web`.
 
 ## Running migrate and seed by hand

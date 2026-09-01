@@ -141,8 +141,9 @@ Recorded actions: `user.login`, `user.register`, `org.created`, `org.member.invi
 | Method/Path | Guard | Body | Behavior |
 | ----------- | ----- | ---- | -------- |
 | `GET /subscription` | org | — | Org's subscription incl. plan (nullable if none). |
-| `POST /subscription/assign` | org | `{ planId }` | Upsert org subscription. ⚠️ Source has no admin check — see quirks in 01-source-analysis.md. |
-| `GET /plans` | auth | — | All available plans: `[{ id, name, limits, createdAt }]`. **Not in the source app** — added in Phase 6 so the frontend subscription page can populate a plan picker (plan ids are server-generated UUIDs with no fixed/knowable value otherwise). Global, not org-scoped, so `auth` not `org` guard. |
+| `GET /plans` | auth | — | All available plans: `[{ id, name, limits, createdAt }]`. **Not in the source app.** Read-only catalogue: the subscription page shows which plan the org is on against the others it could be moved to. Global, not org-scoped, so `auth` not `org` guard. |
+
+**There is no tenant-facing plan write route.** The source app's `POST /subscription/assign` was removed: it sat on `RequireOrg`, which is membership-only and carries no role or permission check, so any org member — including a plain `member` — could put their own organization on any plan, raising `max_members`/`max_roles`/`max_connectors` at will. A plan is a commercial decision, not a tenant setting. The only way to change one is now `POST /admin/organizations/:orgId/plan` (platform:`superadmin`, see the Admin console section below). The route is **gone, not denied** — a stale client gets the ordinary 404 `Route not found`, because the route table should not advertise a capability no tenant token can ever use.
 
 ### Connectors (`/connectors`)
 

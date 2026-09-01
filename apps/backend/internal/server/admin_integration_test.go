@@ -137,12 +137,12 @@ func setupAdminFixture(t *testing.T, client *http.Client, baseURL string, store 
 		t.Fatalf("create mcp key: missing apiKey (the one and only time it is returned): %v", keyBody)
 	}
 
+	// Written straight to the store: there is no tenant route for this any
+	// more (POST /subscription/assign is gone), and the admin route that
+	// replaced it is itself under test elsewhere, so using it here would
+	// couple this fixture to the thing several of these tests assert on.
 	planID := createPlan(t, store, map[string]int{"max_members": 10})
-	planResp, planRespBody := doJSON(t, client, baseURL, http.MethodPost, "/subscription/assign",
-		map[string]any{"planId": planID.String()}, ownerHeaders)
-	if planResp.StatusCode != http.StatusOK {
-		t.Fatalf("assign plan: status = %d, want 200; body = %v", planResp.StatusCode, planRespBody)
-	}
+	assignPlanDirect(t, store, uuid.MustParse(org.ID), planID)
 
 	superUser := registerUser(t, client, baseURL, "admin-fixture-superadmin")
 	promoteToPlatformRole(t, store, uuid.MustParse(superUser.UserID), "superadmin")
