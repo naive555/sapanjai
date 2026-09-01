@@ -466,23 +466,38 @@ no re-resolved RBAC principal of its own).
 ### Admin console (`/admin`)
 
 The platform-staff surface, and the one deliberate exception to tenant
-scoping: every route below reads **across all organizations**, guarded by
-`RequirePlatformRole("superadmin", "support")` rather than
-`RequireOrg`/`RequirePermission`. Design, threat model, and the decisions
-behind it: [`11-admin-panel.md`](11-admin-panel.md).
+scoping: every route below reaches **across all organizations**, guarded by
+`RequirePlatformRole("superadmin", "support")` (reads, impersonation, the
+three `/admin/2fa/*` routes) or a separate `RequirePlatformRole("superadmin")`
+instance (mutations) rather than `RequireOrg`/`RequirePermission`. Design,
+threat model, and the decisions behind it: [`11-admin-panel.md`](11-admin-panel.md).
 
-Everything documented here is a **read**. `docs/11-admin-panel.md` §4's role
-matrix also lists superadmin-only mutations (plan/limit changes, delete org,
-`platform-role` grant, ban) and impersonation; **none of those are wired
-today**, and they belong in this contract when they are, not before. The only
-way to grant a platform role at present is the operator CLI
-(`make admin-grant EMAIL=… ROLE=superadmin|support|none`), which promotes an
-existing account and never creates one or sets a password; there is no API
-path to it today.
+The whole group additionally sits behind an IP allowlist and, once a staff
+member has enrolled, a TOTP step-up gate — both described below the endpoint
+table, after the response shapes.
 
-Because every route in this phase is a read and support reads everything, the
-two roles are indistinguishable here: anything a superadmin can see, support
-can see. `GET /admin/me` reports which one the caller holds.
+**Role split.** One rule: support reads everything and mutates nothing,
+except starting an impersonation, which is itself read-only (`GET /admin/me`
+reports which role the caller holds).
+
+| Route group | superadmin | support |
+| ----------- | :--------: | :--------: |
+| Every `GET /admin/*` read route | yes | yes |
+| `POST /admin/users/:userId/impersonate` | yes | yes |
+| `POST/PUT/DELETE/PATCH` mutations (plan/limit changes, delete org, platform-role grant, ban, plan CRUD) | yes | no |
+| `POST /admin/2fa/{enroll,confirm,verify}` | yes | yes |
+
+A support caller hitting a mutation route gets the same 403
+`Insufficient permissions` `RequirePlatformRole` returns for a non-staff
+caller — the two are indistinguishable, so a mutation route cannot be probed
+to learn who holds which platform role. The only way to grant the **first**
+platform role is still the operator CLI
+(`make admin-grant EMAIL=… ROLE=superadmin|support|none`) — a chicken-and-egg
+`PATCH /admin/users/:userId/platform-role` cannot solve on its own, since
+calling it already requires being a superadmin. Once at least one superadmin
+exists, that route is the normal path for every subsequent grant or revoke;
+the CLI remains available for the bootstrap case and for revoking access
+without going through the console.
 
 **Shared list conventions.** Every list route takes `?limit=` (1–100, default
 50 — `GET /admin/audit-logs` allows up to 200) and `?offset=` (≥ 0, default
@@ -510,6 +525,43 @@ down, never broken.
 | `GET /admin/audit-logs` | platform:`superadmin,support` | `organizationId`, `userId`, `action` (repeatable), `from`, `to`, `limit` (1–200), `offset` | Cross-org audit query, newest first, with org name and actor email joined in. `action` is repeatable (`?action=a&action=b`, matching any); a trailing `*` makes one entry a prefix match (`?action=mcp.*`), and everything else is matched literally with `%`/`_`/`\` escaped, so an action string can never be misread as a pattern. `from`/`to` are RFC3339 and are normalized to UTC before binding — `audit_logs.created_at` is a `timestamp` with no time zone, so an unnormalized offset would silently compare against the wrong instant. |
 | `GET /admin/system/stats` | platform:`superadmin,support` | — | Platform-wide counts for the console landing page: orgs, users, connectors, MCP keys (total and active), active sessions, audit rows, the `email_outbox` breakdown, 7-day signup deltas, org-count per plan, and Redis's `used_memory_human`. Same 30s count cache as the lists. A rising `emailOutbox.failed` is the earliest signal that Resend or the `EMAIL_FROM` domain is misconfigured. |
 | `GET /admin/plans` | platform:`superadmin,support` | — | Every plan with its raw `limits` JSON. `total` is simply `len(items)` — plans is a small seeded table with no filters, so it bypasses the count cache. |
+
+**Mutations.** Superadmin only (`RequirePlatformRole("superadmin")`, a
+separate guard instance from the read routes above — support never even
+reaches these handlers). `POST/PUT/PATCH` bodies are bound and validated the
+normal way; `DELETE /admin/organizations/:orgId` is the one route in this
+module that needs `httpx.BindBodyAndValidate`, since Echo's default binder
+does not read a `DELETE` body.
+
+| Method/Path | Guard | Body | Behavior |
+| ----------- | ----- | ---- | -------- |
+| `POST /admin/organizations/:orgId/plan` | platform:`superadmin` | `{ planId }` | Upserts the org's subscription via `subscription.Service.AssignPlan` — this module never reimplements the upsert. No password re-auth: a plan change alone is not destructive. `200 { success: true }`. A well-formed but nonexistent `planId` surfaces as a 500 (FK violation), the same tolerance `subscription.Service.AssignPlan` already accepts elsewhere. |
+| `PUT /admin/organizations/:orgId/limits` | platform:`superadmin` | `{ customLimits: {…} \| null }` | Overwrites `org_subscriptions.custom_limits`; `null` clears back to plan-only limits. Every present value must be a whole number (422 `Validation failed`) — no key is required, since this is a partial overlay `subscription.Service.EffectiveLimits` merges custom-over-plan. `404 Organization has no subscription to set limits on` if no subscription row exists yet to attach an override to. No re-auth. |
+| `DELETE /admin/organizations/:orgId` | platform:`superadmin` | `{ confirm, password }` | Re-authenticates the caller's password (see below) first, then requires `confirm` to equal the org's own **slug** exactly — typing it out is the deliberate friction on an irreversible delete. Memberships/connectors/mcp_api_keys/org_subscriptions all cascade; `audit_logs.organization_id` carries no FK, so the audit trail survives the org it describes — which is why the audit write happens **before** the `DELETE`, not after. Errors: `403 REAUTH_FAILED`, `400 ORG_CONFIRM_MISMATCH`, `404 Resource not found` (unknown or malformed id), `429 TOO_MANY_ATTEMPTS`. |
+| `PATCH /admin/users/:userId/platform-role` | platform:`superadmin` | `{ role: "superadmin"\|"support"\|null, password }` | Re-authenticates, then grants (`role` set) or revokes (`role: null`) `users.platform_role`. Every session for the target is revoked in the same transaction as the write — a demotion also ends the target's tenant sessions immediately. No Redis override key is needed: `platform_role` is re-read from the database on every `/admin` request (see below), so there is no stale JWT claim to compensate for. Errors: `403 REAUTH_FAILED`, `403 CANNOT_TARGET_SELF`, `409 SUPERADMIN_LIMIT` (capped at 10 concurrent superadmins — a scripting-mistake guard, not a real ceiling), `404 USER_NOT_FOUND`, `422 Validation failed`, `429 TOO_MANY_ATTEMPTS`. |
+| `PATCH /admin/users/:userId/ban` | platform:`superadmin` | `{ banned, reason?, password }` | Re-authenticates, then sets/clears `users.banned_at`/`ban_reason` and revokes every session for the target, in one transaction. `reason` is optional either direction (conventionally set only on ban). On ban, the Redis `banned:<userId>` fast-path cache is primed best-effort (self-heals on the target's next login attempt if that write fails); on unban the Redis `Unban` call is **not** best-effort — it has no TTL, so a failed clear here has no other self-healing path and the error is surfaced. Deliberately leaves `mcp_api_keys` untouched: the gateway already refuses a banned owner's key at the MCP-key join, and revoking keys outright is irreversible where a ban is not. Errors: `403 REAUTH_FAILED`, `403 CANNOT_TARGET_SELF`, `409 TARGET_IS_PLATFORM_STAFF` (checked both directions — a still-privileged account must be demoted first), `404 USER_NOT_FOUND`, `422 Validation failed`, `429 TOO_MANY_ATTEMPTS`. |
+| `POST /admin/plans` | platform:`superadmin` | `{ name, limits }` | Creates a plan. `limits` must define `max_members`/`max_roles`/`max_connectors` (the keys `subscription.Service.EnforceLimit` and `cmd/seed` actually depend on; `-1` means unlimited) and every value, required or not, must be a whole number — `422 Validation failed` otherwise. No re-auth: plan CRUD shapes pricing tiers, not tenant or staff access. |
+| `PUT /admin/plans/:planId` | platform:`superadmin` | `{ name, limits }` | Full replace of name+limits together, not a partial patch. Same `limits` validation as create. `404 Resource not found` for an unknown or malformed id. |
+| `DELETE /admin/plans/:planId` | platform:`superadmin` | — | `409 PLAN_IN_USE` if any `org_subscriptions` row still references the plan (checked explicitly so this is a real 409 rather than a 500 from the underlying `ON DELETE NO ACTION` constraint). `404 Resource not found` for an unknown or malformed id. |
+
+**Impersonation.** On the *read* guard, not write — it grants no more than
+support already has (read access), and the token it mints is itself
+read-only.
+
+| Method/Path | Guard | Body | Behavior |
+| ----------- | ----- | ---- | -------- |
+| `POST /admin/users/:userId/impersonate` | platform:`superadmin,support` | `{ reason }` (required, 10-500 chars) | Mints a 10-minute, non-refreshable, read-only access token authenticating **as** the target user — no `refreshToken` in the response; re-issuing writes a fresh audit entry every time. No password re-auth: the operation is read-only, and prompting for one here would train staff to enter it reflexively, cheapening the prompt on routes that actually need it. Refusals, in order: `404 User not found`; `403 CANNOT_IMPERSONATE_STAFF` if the target holds any `platform_role` (checked before the ban state so a banned staff account reports the staff refusal, not its ban status); `403 ACCOUNT_SUSPENDED` if the target is banned. `422 Validation failed` for a `reason` under 10 characters. Every start is audited with the reason, actor, target, ip and userAgent — the containment story here is detection, not prevention. The minted token carries an `imp: true` claim: `Guards.verify()` rejects any non-`GET`/`HEAD`/`OPTIONS` request on it with `403 IMPERSONATION_READ_ONLY`, and `RequirePlatformRole` separately refuses **any** token carrying `imp` before it even reads the caller's user row — an impersonation token can never reach `/admin` itself, regardless of what the target's `platform_role` becomes mid-flight. |
+
+**2FA step-up.** All three routes sit on `RequirePlatformRoleNo2FA` — same
+role check as every other `/admin` route, but exempt from the
+`ADMIN_REQUIRE_2FA` gate described below (the chicken-and-egg: a staff member
+cannot complete step-up through a route step-up itself gates).
+
+| Method/Path | Guard | Body | Behavior |
+| ----------- | ----- | ---- | -------- |
+| `POST /admin/2fa/enroll` | platform:`superadmin,support`, 2FA-gate exempt | — | Generates a fresh TOTP secret, seals it under `CONNECTOR_MASTER_KEY` (the same envelope machinery and `KeyProvider` connectors use), and returns its `otpauth://` URI **once** — never persisted in cleartext, including logs. Re-callable: enrolling again wipes any prior confirmation and recovery codes along with the superseded secret. |
+| `POST /admin/2fa/confirm` | platform:`superadmin,support`, 2FA-gate exempt | `{ code }` (6-digit) | Verifies `code` against the most recently enrolled secret; on success stamps `confirmed_at` and returns **ten** recovery codes once (only their SHA-256 hashes are persisted — losing this response means losing the codes). `400 TOTP_NOT_ENROLLED` if no secret was ever enrolled. `401 INVALID_TOTP_CODE` on a wrong code. |
+| `POST /admin/2fa/verify` | platform:`superadmin,support`, 2FA-gate exempt | `{ code }` (TOTP code or an unused recovery code) | The step-up check itself: on success sets the `admin:2fa:<userId>` Redis key (12h TTL) every other `/admin` route depends on when `ADMIN_REQUIRE_2FA=true`. Tries `code` as a live TOTP code first, then as an unused recovery code — a matched recovery code is deleted from the stored set immediately, so it verifies exactly once. Rate-limited independently of every other admin limiter (`admin:2fa:attempts:<userId>`, 5 attempts / 15 min) — `429 TOO_MANY_ATTEMPTS`. `400 TOTP_NOT_ENROLLED` if confirm never landed (a secret exists but is unconfirmed is treated identically, so as not to leak the in-progress state). `401 INVALID_TOTP_CODE` if `code` matches neither a live TOTP window nor any unused recovery code — deliberately one code for both failure modes, same reasoning as `INVALID_CREDENTIALS`. |
 
 Response shapes:
 
@@ -553,6 +605,22 @@ GET /admin/system/stats           -> { organizations, users, connectors, mcpKeys
                                        redisUsedMemoryHuman }
 
 GET /admin/plans                  -> { items: [{ id, name, limits, createdAt }], total }
+
+POST /admin/organizations/:orgId/plan   -> { success: true }
+PUT  /admin/organizations/:orgId/limits -> { success: true }
+DELETE /admin/organizations/:orgId      -> { success: true }
+PATCH /admin/users/:userId/platform-role -> { success: true }
+PATCH /admin/users/:userId/ban          -> { success: true }
+POST /admin/plans                       -> { id, name, limits, createdAt }
+PUT  /admin/plans/:planId               -> { id, name, limits, createdAt }
+DELETE /admin/plans/:planId             -> { success: true }
+
+POST /admin/users/:userId/impersonate   -> { accessToken, expiresIn,
+                                              user: { id, email, displayName } }
+
+POST /admin/2fa/enroll                  -> { otpauthUri }
+POST /admin/2fa/confirm                 -> { recoveryCodes: [ <10 strings> ] }
+POST /admin/2fa/verify                  -> { success: true }
 ```
 
 **What these routes must never return**, restated here because it is the rule
@@ -572,10 +640,49 @@ nested objects — asserting both that no `encrypted_config`/`password_hash`/
 `key_hash` key appears under any spelling and that the secret's raw bytes
 appear nowhere in the body. A leak under a renamed key still fails.
 
-Admin reads are **not** themselves audit-logged today. That is a known gap
-rather than a decision — the audit trail records what tenants do, not what
-staff looked at — and it is worth closing before impersonation ships, since
-impersonation is the point at which "who looked at this" starts to matter.
+Admin **reads** are **not** themselves audit-logged today — that remains a
+known gap, not a decision (the audit trail records what tenants do, not what
+staff looked at). Every admin **mutation**, and every impersonation start, is
+audit-logged (`admin.*`/`admin.impersonation.started` actions), so "who
+looked at this" is answered for impersonation even while it stays unanswered
+for an ordinary `GET /admin/users/:userId`.
+
+**Password re-auth.** `DELETE /admin/organizations/:orgId`,
+`PATCH /admin/users/:userId/platform-role`, and
+`PATCH /admin/users/:userId/ban` re-verify the caller's own password
+(`{ password }` in the body) before anything destructive happens — a session
+left open on an unlocked laptop, or a stolen access token, is not by itself
+sufficient to delete an organization, grant/revoke platform access, or ban a
+user. Rate-limited independently of login (`admin:reauth:attempts:<userId>`,
+5 attempts / 15 min, same shape as the login limiter) so the password field
+cannot become an online password oracle against the highest-value accounts in
+the system: `403 REAUTH_FAILED` on a wrong password, `429 TOO_MANY_ATTEMPTS`
+after 5. `POST /admin/organizations/:orgId/plan`,
+`PUT /admin/organizations/:orgId/limits`, and plan CRUD do **not** re-auth —
+none of them is irreversible or changes who can access what the way
+delete-org/role-change/ban do.
+
+**IP allowlist.** `ADMIN_IP_ALLOWLIST` (comma-separated CIDRs) gates the
+entire `/admin` route group **before** `RequireAuth` runs at all — an
+off-network caller never reaches the login/2FA surface, let alone a read or
+mutation. Rejection is a plain `404 Route not found`, never `403`: a `403`
+would confirm to an off-network scanner that something exists here to be
+denied from. Empty/unset (the required default for local dev, and for any
+deployment that hasn't set the variable) disables the check entirely and lets
+every request through unmodified. Parsed once at boot, not per request — a
+malformed CIDR fails startup rather than silently letting every request
+through (or none).
+
+**2FA step-up.** When `ADMIN_REQUIRE_2FA=true` (the default), every `/admin`
+route except the three `POST /admin/2fa/*` routes above requires a live
+`admin:2fa:<userId>` Redis key (12h TTL) from a completed
+`POST /admin/2fa/verify` — `403 TWO_FACTOR_REQUIRED` otherwise. The role
+check runs, and can reject, before this one: a demoted staff member's
+`platform_role` is gone immediately, so a stale-but-unexpired `admin:2fa:`
+key from before the demotion is never even reached. `platform_role` itself
+stays a fresh per-request database read rather than a JWT claim or a cached
+value, for the same reason `isVerified` is (see `GET /auth/me` above) — no
+Redis override key compensates for it.
 
 ### API docs
 
@@ -598,6 +705,8 @@ Source serves Swagger UI at `/swagger` with bearerAuth security scheme. Go port 
 | `APP_PUBLIC_URL` | http://localhost:4000 | browser-facing **frontend** origin that verification/reset links are built against; trailing slash trimmed |
 | `LOG_LEVEL` | info | fatal/error/warn/info/debug/trace |
 | `NODE_ENV` → rename `APP_ENV` | development | dev enables pretty logging |
+| `ADMIN_IP_ALLOWLIST` | — (unset) | comma-separated CIDRs gating the `/admin` group before `RequireAuth`; empty/unset disables the check. Parsed once at boot — a malformed entry fails startup. A wrong value locks every platform staff account out of `/admin` with no in-app recovery path. |
+| `ADMIN_REQUIRE_2FA` | true | gates every `/admin` route except `POST /admin/2fa/{enroll,confirm,verify}` behind a completed TOTP step-up (`admin:2fa:<userId>`, 12h TTL). Set false only for local development. |
 
 This table covers the API process. Worker-only variables — `WORKER_PORT`,
 `WORKER_JOB_TIMEOUT`, `SESSION_CLEANUP_*`, and the transactional-mail set

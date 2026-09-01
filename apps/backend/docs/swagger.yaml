@@ -5,6 +5,467 @@ definitions:
       message:
         type: string
     type: object
+  internal_module_admin.AssignPlanRequest:
+    properties:
+      planId:
+        type: string
+    required:
+    - planId
+    type: object
+  internal_module_admin.AuditLogItem:
+    properties:
+      action:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      organizationId:
+        type: string
+      organizationName:
+        type: string
+      userEmail:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_admin.AuditLogsListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.AuditLogItem'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_module_admin.BanRequest:
+    properties:
+      banned:
+        type: boolean
+      password:
+        type: string
+      reason:
+        maxLength: 500
+        type: string
+    required:
+    - password
+    type: object
+  internal_module_admin.ConnectorItem:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      lastHealthCheckAt:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      organizationName:
+        type: string
+      status:
+        type: string
+      type:
+        type: string
+    type: object
+  internal_module_admin.ConnectorsListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.ConnectorItem'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_module_admin.DeleteOrganizationRequest:
+    properties:
+      confirm:
+        type: string
+      password:
+        type: string
+    required:
+    - confirm
+    - password
+    type: object
+  internal_module_admin.EmailOutboxStats:
+    properties:
+      failed:
+        type: integer
+      pending:
+        type: integer
+      sent:
+        type: integer
+    type: object
+  internal_module_admin.ImpersonateRequest:
+    properties:
+      reason:
+        maxLength: 500
+        minLength: 10
+        type: string
+    required:
+    - reason
+    type: object
+  internal_module_admin.ImpersonateResponse:
+    properties:
+      accessToken:
+        type: string
+      expiresIn:
+        type: integer
+      user:
+        $ref: '#/definitions/internal_module_admin.ImpersonatedUser'
+    type: object
+  internal_module_admin.ImpersonatedUser:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+    type: object
+  internal_module_admin.MCPKeyItem:
+    properties:
+      createdAt:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      lastUsedAt:
+        type: string
+      name:
+        type: string
+      organizationId:
+        type: string
+      organizationName:
+        type: string
+      revokedAt:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      userEmail:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_admin.MCPKeysListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.MCPKeyItem'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_module_admin.MeResponse:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      platformRole:
+        type: string
+    type: object
+  internal_module_admin.OrgAuditLogItem:
+    properties:
+      action:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      userId:
+        type: string
+    type: object
+  internal_module_admin.OrgMemberItem:
+    properties:
+      displayName:
+        type: string
+      email:
+        type: string
+      joinedAt:
+        type: string
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  internal_module_admin.OrganizationDetailResponse:
+    properties:
+      connectors:
+        items:
+          $ref: '#/definitions/internal_module_admin.ConnectorItem'
+        type: array
+      createdAt:
+        type: string
+      effectiveLimits:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      id:
+        type: string
+      mcpKeys:
+        items:
+          $ref: '#/definitions/internal_module_admin.MCPKeyItem'
+        type: array
+      members:
+        items:
+          $ref: '#/definitions/internal_module_admin.OrgMemberItem'
+        type: array
+      name:
+        type: string
+      planName:
+        type: string
+      recentAuditLogs:
+        items:
+          $ref: '#/definitions/internal_module_admin.OrgAuditLogItem'
+        type: array
+      slug:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  internal_module_admin.OrganizationListItem:
+    properties:
+      connectorCount:
+        type: integer
+      createdAt:
+        type: string
+      id:
+        type: string
+      mcpKeyCount:
+        type: integer
+      memberCount:
+        type: integer
+      name:
+        type: string
+      planName:
+        type: string
+      slug:
+        type: string
+    type: object
+  internal_module_admin.OrganizationsListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.OrganizationListItem'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_module_admin.PlanBreakdownItem:
+    properties:
+      orgCount:
+        type: integer
+      planName:
+        type: string
+    type: object
+  internal_module_admin.PlanCreateRequest:
+    properties:
+      limits:
+        additionalProperties: {}
+        type: object
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - limits
+    - name
+    type: object
+  internal_module_admin.PlanItem:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      limits:
+        items:
+          type: integer
+        type: array
+      name:
+        type: string
+    type: object
+  internal_module_admin.PlanUpdateRequest:
+    properties:
+      limits:
+        additionalProperties: {}
+        type: object
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - limits
+    - name
+    type: object
+  internal_module_admin.PlansListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.PlanItem'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_module_admin.PlatformRoleRequest:
+    properties:
+      password:
+        type: string
+      role:
+        enum:
+        - superadmin
+        - support
+        type: string
+    required:
+    - password
+    type: object
+  internal_module_admin.SetLimitsRequest:
+    properties:
+      customLimits:
+        additionalProperties: {}
+        type: object
+    type: object
+  internal_module_admin.StatsResponse:
+    properties:
+      auditLogs:
+        type: integer
+      connectors:
+        type: integer
+      emailOutbox:
+        $ref: '#/definitions/internal_module_admin.EmailOutboxStats'
+      mcpKeysActive:
+        type: integer
+      mcpKeysTotal:
+        type: integer
+      organizations:
+        type: integer
+      organizationsLast7d:
+        type: integer
+      planBreakdown:
+        items:
+          $ref: '#/definitions/internal_module_admin.PlanBreakdownItem'
+        type: array
+      redisUsedMemoryHuman:
+        type: string
+      sessionsActive:
+        type: integer
+      users:
+        type: integer
+      usersLast7d:
+        type: integer
+    type: object
+  internal_module_admin.SuccessResponse:
+    properties:
+      success:
+        type: boolean
+    type: object
+  internal_module_admin.TOTPConfirmRequest:
+    properties:
+      code:
+        type: string
+    required:
+    - code
+    type: object
+  internal_module_admin.TOTPConfirmResponse:
+    properties:
+      recoveryCodes:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_module_admin.TOTPEnrollResponse:
+    properties:
+      otpauthUri:
+        type: string
+    type: object
+  internal_module_admin.TOTPVerifyRequest:
+    properties:
+      code:
+        type: string
+    required:
+    - code
+    type: object
+  internal_module_admin.UserDetailResponse:
+    properties:
+      activeSessions:
+        type: integer
+      banReason:
+        type: string
+      bannedAt:
+        type: string
+      createdAt:
+        type: string
+      displayName:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      isVerified:
+        type: boolean
+      memberships:
+        items:
+          $ref: '#/definitions/internal_module_admin.UserMembershipItem'
+        type: array
+      platformRole:
+        type: string
+    type: object
+  internal_module_admin.UserListItem:
+    properties:
+      bannedAt:
+        type: string
+      createdAt:
+        type: string
+      displayName:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      isVerified:
+        type: boolean
+      orgCount:
+        type: integer
+      platformRole:
+        type: string
+    type: object
+  internal_module_admin.UserMembershipItem:
+    properties:
+      joinedAt:
+        type: string
+      organizationId:
+        type: string
+      organizationName:
+        type: string
+      organizationSlug:
+        type: string
+      role:
+        type: string
+    type: object
+  internal_module_admin.UsersListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.UserListItem'
+        type: array
+      total:
+        type: integer
+    type: object
   internal_module_auditlog.LogResponse:
     properties:
       action:
@@ -56,6 +517,8 @@ definitions:
         type: string
       isVerified:
         type: boolean
+      platformRole:
+        type: string
     type: object
   internal_module_auth.RefreshRequest:
     properties:
@@ -421,6 +884,877 @@ info:
   title: Sapanjai API
   version: 0.1.0
 paths:
+  /admin/2fa/confirm:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 6-digit code from the authenticator app
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.TOTPConfirmRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.TOTPConfirmResponse'
+        "400":
+          description: TOTP_NOT_ENROLLED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "401":
+          description: INVALID_TOTP_CODE / Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Confirm TOTP enrollment (returns ten recovery codes once)
+      tags:
+      - admin
+  /admin/2fa/enroll:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.TOTPEnrollResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Enroll a fresh TOTP secret (returns the otpauth:// URI once)
+      tags:
+      - admin
+  /admin/2fa/verify:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: TOTP code or an unused recovery code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.TOTPVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "400":
+          description: TOTP_NOT_ENROLLED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "401":
+          description: INVALID_TOTP_CODE / Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: TOO_MANY_ATTEMPTS
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Verify a TOTP or recovery code (step-up, 12h)
+      tags:
+      - admin
+  /admin/audit-logs:
+    get:
+      parameters:
+      - description: Filter by organization ID
+        in: query
+        name: organizationId
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: userId
+        type: string
+      - collectionFormat: multi
+        description: Filter by action; repeatable, trailing '*' means prefix match
+        in: query
+        items:
+          type: string
+        name: action
+        type: array
+      - description: Only logs at or after this RFC3339 timestamp
+        in: query
+        name: from
+        type: string
+      - description: Only logs at or before this RFC3339 timestamp
+        in: query
+        name: to
+        type: string
+      - description: Max results (1-200, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.AuditLogsListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Query audit logs (cross-org)
+      tags:
+      - admin
+  /admin/connectors:
+    get:
+      parameters:
+      - description: Filter by organization ID
+        in: query
+        name: organizationId
+        type: string
+      - description: Filter by connector type
+        in: query
+        name: type
+        type: string
+      - description: 'Filter by status: active, inactive, error'
+        in: query
+        name: status
+        type: string
+      - description: Match against connector name
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-100, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.ConnectorsListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List connectors (cross-org, metadata only)
+      tags:
+      - admin
+  /admin/mcp-keys:
+    get:
+      parameters:
+      - description: Filter by organization ID
+        in: query
+        name: organizationId
+        type: string
+      - description: Filter by owner user ID
+        in: query
+        name: userId
+        type: string
+      - description: Match against key name or owner email
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-100, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.MCPKeysListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List MCP keys (cross-org, metadata only)
+      tags:
+      - admin
+  /admin/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.MeResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the calling staff account's admin profile
+      tags:
+      - admin
+  /admin/organizations:
+    get:
+      parameters:
+      - description: Match against name or slug
+        in: query
+        name: search
+        type: string
+      - description: Max results (1-100, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.OrganizationsListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List organizations (cross-org)
+      tags:
+      - admin
+  /admin/organizations/{orgId}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: confirm must equal the organization's slug; password re-verifies
+          the caller
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.DeleteOrganizationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "400":
+          description: ORG_CONFIRM_MISMATCH
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: REAUTH_FAILED / Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: TOO_MANY_ATTEMPTS
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete an organization
+      tags:
+      - admin
+    get:
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.OrganizationDetailResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get one organization's detail view (cross-org)
+      tags:
+      - admin
+  /admin/organizations/{orgId}/limits:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: customLimits payload; null clears back to plan-only limits
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.SetLimitsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Organization has no subscription to set limits on
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Set an organization's custom subscription limits
+      tags:
+      - admin
+  /admin/organizations/{orgId}/plan:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Plan payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.AssignPlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Assign an organization's subscription plan
+      tags:
+      - admin
+  /admin/plans:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlansListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List subscription plans
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a subscription plan
+      tags:
+      - admin
+  /admin/plans/{planId}:
+    delete:
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: PLAN_IN_USE
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a subscription plan
+      tags:
+      - admin
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      - description: Plan payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a subscription plan
+      tags:
+      - admin
+  /admin/system/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.StatsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get platform-wide system stats
+      tags:
+      - admin
+  /admin/users:
+    get:
+      parameters:
+      - description: Match against email or display name
+        in: query
+        name: search
+        type: string
+      - description: 'Filter by platform role: superadmin, support, or none'
+        in: query
+        name: role
+        type: string
+      - description: Filter by ban status
+        in: query
+        name: banned
+        type: boolean
+      - description: Max results (1-100, default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.UsersListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List users (cross-org)
+      tags:
+      - admin
+  /admin/users/{userId}:
+    get:
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.UserDetailResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: User not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get one user's detail view (cross-org)
+      tags:
+      - admin
+  /admin/users/{userId}/ban:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: banned toggles the ban; reason is stored on ban; password re-verifies
+          the caller
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.BanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: REAUTH_FAILED / CANNOT_TARGET_SELF / Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: TARGET_IS_PLATFORM_STAFF
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: TOO_MANY_ATTEMPTS
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Ban or unban a user
+      tags:
+      - admin
+  /admin/users/{userId}/impersonate:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID to impersonate
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: Mandatory reason, minimum 10 characters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.ImpersonateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.ImpersonateResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions, or the target is platform staff /
+            suspended
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: User not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start impersonating a tenant user (read-only, 10 minutes)
+      tags:
+      - admin
+  /admin/users/{userId}/platform-role:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: User ID
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: role is null to revoke; password re-verifies the caller
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlatformRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.SuccessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: REAUTH_FAILED / CANNOT_TARGET_SELF / Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: USER_NOT_FOUND
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: SUPERADMIN_LIMIT
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "429":
+          description: TOO_MANY_ATTEMPTS
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Grant or revoke a user's platform role
+      tags:
+      - admin
   /audit-logs:
     get:
       parameters:

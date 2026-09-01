@@ -87,7 +87,10 @@ const (
 	// staff account directly — it must be demoted first.
 	TargetIsPlatformStaff = "TARGET_IS_PLATFORM_STAFF"
 
-	// SuperadminLimit guards against demoting/removing the last superadmin.
+	// SuperadminLimit caps how many accounts may simultaneously hold
+	// platform_role = 'superadmin' (admin.superadminCap, currently 10) —
+	// a scripting-mistake guard on PATCH /admin/users/:userId/platform-role,
+	// not a floor on the last superadmin.
 	SuperadminLimit = "SUPERADMIN_LIMIT"
 
 	// PlanInUse guards against deleting a plan with active subscriptions.
