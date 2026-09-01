@@ -353,6 +353,61 @@ export function adminMe() {
   return apiRequest<AdminMeResponse>("/admin/me");
 }
 
+// The exact contract message for apperror.TwoFactorRequired
+// (apps/backend/internal/shared/apperror/apperror.go's Map; docs/02-api-contract.md
+// §"2FA step-up") — GET /admin/me's 403 body when ADMIN_REQUIRE_2FA=true and
+// the caller has no live admin:2fa:<userId> Redis key yet. The API error
+// body carries only `{ message }`, no machine-readable code (see ApiError in
+// ./client.ts), so this string is the only way the (admin)/admin layout can
+// tell "this staff member needs to complete 2FA step-up" apart from an
+// ordinary 403 (a tenant user with no platform role at all, which still
+// bounces to /overview). Defined once here rather than scattered across
+// call sites.
+export const TWO_FACTOR_REQUIRED_MESSAGE = "Two-factor authentication required";
+
+// ---- TOTP step-up (apps/backend/internal/module/admin/{handler,totp}.go,
+// docs/02-api-contract.md §"2FA step-up") ----
+//
+// These three routes are the one part of /admin exempt from the 2FA gate
+// they themselves implement (RequirePlatformRoleNo2FA) — a staff member
+// still needs a platform role to call them, just not a live step-up yet.
+// The frontend UI for this flow lives at app/(admin)/admin/2fa/page.tsx,
+// reachable even while GET /admin/me is 403ing with
+// TWO_FACTOR_REQUIRED_MESSAGE above. Never log or persist OtpauthURI or
+// RecoveryCodes client-side (CLAUDE.md's redaction rule) — both are live
+// bearer credentials, shown exactly once.
+
+export interface TOTPEnrollResponse {
+  otpauthUri: string;
+}
+
+// No request body. Re-callable: enrolling again wipes any prior
+// confirmation and recovery codes along with the superseded secret, so a
+// caller with an existing enrollment must be warned before this runs.
+export function enrollTOTP() {
+  return apiRequest<TOTPEnrollResponse>("/admin/2fa/enroll", { method: "POST" });
+}
+
+export interface TOTPConfirmResponse {
+  recoveryCodes: string[];
+}
+
+// code: the 6-digit code from the authenticator app just enrolled. 400
+// TOTP_NOT_ENROLLED if enroll never ran; 401 INVALID_TOTP_CODE on a wrong
+// code.
+export function confirmTOTP(code: string) {
+  return apiRequest<TOTPConfirmResponse>("/admin/2fa/confirm", { method: "POST", body: { code } });
+}
+
+// code: a live TOTP code OR an unused recovery code — the backend tries
+// both, so this validates only non-emptiness, not a fixed shape. On success
+// the backend sets admin:2fa:<userId> in Redis for 12h, which is what every
+// other /admin route checks. 400 TOTP_NOT_ENROLLED if confirm never landed;
+// 401 INVALID_TOTP_CODE on a wrong code; 429 TOO_MANY_ATTEMPTS at 5/15min.
+export function verifyTOTP(code: string) {
+  return apiRequest<SuccessResponse>("/admin/2fa/verify", { method: "POST", body: { code } });
+}
+
 export interface AdminOrgListItem {
   id: string;
   name: string;

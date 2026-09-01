@@ -9,9 +9,17 @@ import { ArrowLeftIcon, ShieldAlertIcon } from "lucide-react";
 import { FullPageSkeleton } from "@/components/full-page-skeleton";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
-import { adminMe } from "@/lib/api/endpoints";
+import { adminMe, TWO_FACTOR_REQUIRED_MESSAGE } from "@/lib/api/endpoints";
 import { useSession } from "@/lib/auth/use-session";
 import { cn } from "@/lib/utils";
+
+// The TOTP step-up/enrollment page — app/(admin)/admin/2fa/page.tsx — sits
+// inside this same layout segment but is deliberately exempted from the
+// gate below: it exists precisely to be reachable while GET /admin/me is
+// 403ing with TWO_FACTOR_REQUIRED_MESSAGE, so it can't itself depend on
+// that call succeeding. See the redirect effect and the render branch
+// further down.
+const STEP_UP_PATH = "/admin/2fa";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Overview" },
@@ -68,12 +76,37 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   });
 
   useEffect(() => {
-    if (isError && error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+    if (!(isError && error instanceof ApiError)) return;
+    // A 403 carrying exactly the 2FA-required message means this account
+    // IS platform staff, just without a live step-up yet — send it to the
+    // page that can fix that, not /overview. Message-matching is the
+    // intended mechanism here, not a hack: the API error body carries only
+    // `{ message }` (see ApiError in lib/api/client.ts), so the contract-
+    // fixed string is the only signal available (docs/02-api-contract.md's
+    // "2FA step-up" section, apperror.TwoFactorRequired).
+    if (error.status === 403 && error.message === TWO_FACTOR_REQUIRED_MESSAGE) {
+      router.replace(STEP_UP_PATH);
+      return;
+    }
+    // Any other 401/403 (no platform role at all, banned, etc.) keeps the
+    // original deterministic-bounce behavior.
+    if (error.status === 401 || error.status === 403) {
       router.replace("/overview");
     }
   }, [isError, error, router]);
 
   if (status === "loading" || status === "anon") return <FullPageSkeleton />;
+
+  // The step-up page renders on its own, chrome-free, the instant the
+  // session is authed — it must not wait on (or be torn down by) GET
+  // /admin/me, which is exactly the call it exists to unblock. A staff
+  // member who lands here without actually needing step-up, or a tenant
+  // user who guesses the URL, is still caught: the effect above keeps
+  // running regardless of path and will router.replace them to /overview
+  // the moment adminMe resolves to an ordinary 401/403 — the backend's own
+  // RequirePlatformRoleNo2FA is the real authority either way.
+  if (pathname === STEP_UP_PATH) return <>{children}</>;
+
   if (isError) return null; // redirect in flight
   if (isLoading || !adminProfile) return <FullPageSkeleton />;
 

@@ -244,6 +244,31 @@ Rotating `CONNECTOR_MASTER_KEY` without moving the old value into
 `CONNECTOR_MASTER_KEY_PREVIOUS` makes every stored connector config
 unreadable — see the envelope-encryption ground rule in CLAUDE.md.
 
+### Bootstrapping the first platform admin
+
+`grantadmin` ships in the same image as `api`/`worker`/`migrate`/`seed` and is
+the only way to grant the first `superadmin` — `PATCH
+/admin/users/:userId/platform-role` already requires being a superadmin, so
+there is no API path to create the first one. It never creates a user or sets
+a password (see the doc comment atop `apps/backend/cmd/grantadmin/main.go`):
+the target account must already exist, having registered and logged in
+through the app normally.
+
+It ships in the image so that any host which can override a container command
+can run it (`/app/grantadmin -email … -role …` — that is how `k8s/migrate/job.yaml`
+runs `migrate` and `seed`). **Railway is not such a host for a one-off:** it
+isn't a per-deploy step, so it doesn't belong on Pre-Deploy Command the way
+`migrate up` does, and the distroless runner has no console to exec into (see
+"Running migrate and seed by hand" below). On Railway, run it the same way as
+the `seed` one-off — from your machine, against the database's public URL,
+since `grantadmin` reads `DATABASE_URL` through the same `config.Load` as the
+API:
+
+```
+cd apps/backend
+DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/grantadmin -email you@example.com -role superadmin
+```
+
 **`web`:**
 
 | Variable                  | Value                                                    |
@@ -287,18 +312,22 @@ Railway execs commands directly in exec form rather than wrapping them in
 `sh -c`, so a bare binary path is exactly right. This runs on every deploy and
 is the only migration path you should need.
 
-**One-offs (seeding, or a manual `migrate` run): from your machine, against the
-database's public URL.** Copy `DATABASE_PUBLIC_URL` from the Postgres service's
-Variables tab — the internal `*.railway.internal` address is not reachable from
-outside Railway — then:
+**One-offs (seeding, a manual `migrate` run, or `grantadmin`): from your
+machine, against the database's public URL.** Copy `DATABASE_PUBLIC_URL` from
+the Postgres service's Variables tab — the internal `*.railway.internal`
+address is not reachable from outside Railway — then:
 
 ```
 cd apps/backend
 DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/seed
 DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/migrate up    # if ever needed
+DATABASE_URL='<DATABASE_PUBLIC_URL>' go run ./cmd/grantadmin -email you@example.com -role superadmin
 ```
 
-Both commands call the same `config.Load` as the API, so they validate the
+(See "Bootstrapping the first platform admin" above for what `grantadmin`
+does and doesn't do.)
+
+All three commands call the same `config.Load` as the API, so they validate the
 *whole* env contract, not just `DATABASE_URL`. That is fine: `loadDotEnv` uses
 `godotenv.Load`, which does **not** overwrite variables already set, so the
 explicit `DATABASE_URL` above wins while `JWT_*_SECRET` and
