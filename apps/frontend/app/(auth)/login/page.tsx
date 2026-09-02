@@ -37,10 +37,12 @@ export default function LoginPage() {
     try {
       const tokens = await login(values);
       applyTokens(tokens);
-      // The overview is the post-login landing (Phase 5). It handles an
-      // unselected org itself — a returning user on a fresh browser has no
-      // stored selection — so this doesn't need to route around that case.
-      router.replace("/overview");
+      // Organization selection is the post-login landing, not the overview:
+      // every org-scoped screen behind it reads the active org, and a
+      // returning user on a fresh browser has no stored selection to read.
+      // Picking the org first is the honest first step; /overview is one
+      // click away once there is an org for it to be about.
+      router.replace("/organizations");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
     }

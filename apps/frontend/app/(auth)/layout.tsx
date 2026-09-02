@@ -13,7 +13,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (status === "authed") {
-      router.replace("/overview");
+      // Same landing the login page routes to itself — this effect also
+      // fires the instant applyTokens flips status, so the two must agree
+      // or whichever lands second wins.
+      router.replace("/organizations");
     }
   }, [status, router]);
 

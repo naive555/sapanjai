@@ -11,7 +11,7 @@ export default function Home() {
 
   useEffect(() => {
     if (status === "authed") {
-      router.replace("/overview");
+      router.replace("/organizations");
     } else if (status === "anon") {
       router.replace("/login");
     }
