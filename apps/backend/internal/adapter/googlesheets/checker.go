@@ -40,7 +40,7 @@ func (c *Checker) Check(ctx context.Context, config map[string]any) error {
 		return err
 	}
 
-	ts := NewTokenSource(ctx, cfg.OAuth)
+	ts := NewTokenSource(ctx, cfg.Credential)
 	api, err := newClient(ctx, ts, "")
 	if err != nil {
 		return err

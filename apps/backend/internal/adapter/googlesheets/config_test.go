@@ -31,7 +31,9 @@ func validRawConfig() map[string]any {
 // file from one whose private key is garbage. The health check is what
 // catches that, which is the same division of labour the OAuth variant has
 // always had.
-const testPrivateKey = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"
+// A raw string literal, so the \n stay two-character JSON escapes rather
+// than real newlines, which would make the key file invalid JSON.
+const testPrivateKey = `-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n`
 
 const testServiceAccountEmail = "sapanjai-bot@example-project.iam.gserviceaccount.com"
 
