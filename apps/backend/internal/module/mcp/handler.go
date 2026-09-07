@@ -188,7 +188,7 @@ func connectorIDParam(c echo.Context) (uuid.UUID, error) {
 // authorization on this route: there is no bearer token behind it. And the
 // file's metadata and allowlist status are re-fetched live rather than
 // trusted from mint time, so narrowing drive_folder_ids kills outstanding
-// links on their next use. Nothing here logs config, the OAuth token, or the
+// links on their next use. Nothing here logs config, the credential, or the
 // signature — only ids and a MIME type.
 func (h *Handler) downloadFile(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -236,7 +236,7 @@ func (h *Handler) downloadFile(c echo.Context) error {
 		return apperror.New(apperror.NotFound)
 	}
 
-	ts := h.service.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+	ts := h.service.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 	info, err := googlesheets.GetFile(ctx, ts, cfg, conn.ID, h.service, fileID)
 	if err != nil {
 		var rlErr *googlesheets.RateLimitedError

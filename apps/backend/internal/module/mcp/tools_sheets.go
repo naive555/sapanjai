@@ -69,7 +69,7 @@ const sheetsListSpreadsheetsDescription = "List every spreadsheet this connector
 	"with each one's title. Call this first whenever you don't already know a spreadsheet's id: every other " +
 	"sheets_* tool needs an id from this list. The Google account behind this connector may be able to reach " +
 	"other spreadsheets too, but only the ones listed here can ever be read through this connector — everything " +
-	"else is rejected, even if the OAuth token itself could technically open it."
+	"else is rejected, even if the credential itself could technically open it."
 
 type listSpreadsheetsOutput struct {
 	Spreadsheets []spreadsheetSummaryOutput `json:"spreadsheets" jsonschema:"the spreadsheets this connector can read"`
@@ -92,7 +92,7 @@ func registerListSpreadsheets(s *gomcp.Server, svc *Service, _ *rbac.Principal, 
 			return ErrorResult(err), listSpreadsheetsOutput{}, nil
 		}
 
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		result, err := googlesheets.ListSpreadsheets(ctx, ts, cfg)
 		if err != nil {
 			return ErrorResult(err), listSpreadsheetsOutput{}, nil
@@ -170,7 +170,7 @@ func registerDescribeSpreadsheet(s *gomcp.Server, svc *Service, _ *rbac.Principa
 			return SpreadsheetNotAllowed(in.SpreadsheetID), describeSpreadsheetOutput{}, nil
 		}
 
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		result, err := googlesheets.DescribeSpreadsheet(ctx, ts, cfg, in.SpreadsheetID, in.IncludeSampleRows)
 		if err != nil {
 			return ErrorResult(err), describeSpreadsheetOutput{}, nil
@@ -314,7 +314,7 @@ func registerQueryRows(s *gomcp.Server, svc *Service, _ *rbac.Principal, conn db
 			return SpreadsheetNotAllowed(in.SpreadsheetID), queryRowsOutput{}, nil
 		}
 
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		// svc itself satisfies googlesheets.RateCharger (ChargeRateLimit
 		// has the exact signature the adapter's scan loop needs) — this is
 		// the seam step 4 built for exactly this call, docs/07 step 7:
@@ -502,7 +502,7 @@ func registerReadRange(s *gomcp.Server, svc *Service, _ *rbac.Principal, conn db
 			return SpreadsheetNotAllowed(in.SpreadsheetID), readRangeOutput{}, nil
 		}
 
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		// svc satisfies googlesheets.RateCharger, same seam sheets_query_rows
 		// uses; read_range charges it exactly once, for the single
 		// Values.Get call (docs/07 step 8: "charge one unit via

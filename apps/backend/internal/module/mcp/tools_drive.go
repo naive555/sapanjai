@@ -47,7 +47,7 @@ var driveGetFileEntry = Entry{
 
 const driveListFolderDescription = "List the files directly inside one of this connector's allowlisted Drive " +
 	"folders (config.scope.drive_folder_ids) — folder_id must be one of those, not an arbitrary Drive folder id, " +
-	"even one the connector's OAuth account can otherwise reach. Only *direct* children are listed: a subfolder's " +
+	"even one the connector's Google account can otherwise reach. Only *direct* children are listed: a subfolder's " +
 	"own contents are not included, and a subfolder must itself be allowlisted before its files (or the subfolder " +
 	"itself, as an entry here) become visible. Results are capped per call; when has_more is true, call again with " +
 	"next_page_token to continue. Use the file_id this returns with drive_get_file to fetch one file's full " +
@@ -94,7 +94,7 @@ func registerDriveListFolder(s *gomcp.Server, svc *Service, _ *rbac.Principal, c
 			return FolderNotAllowed(in.FolderID), driveListFolderOutput{}, nil
 		}
 
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		result, err := googlesheets.ListFolder(ctx, ts, cfg, conn.ID, svc, googlesheets.ListFolderInput{
 			FolderID: in.FolderID, PageToken: in.PageToken,
 		})
@@ -201,7 +201,7 @@ func registerDriveGetFile(s *gomcp.Server, svc *Service, _ *rbac.Principal, conn
 		// No allowlist pre-check here, unlike every other tool: a bare file
 		// id carries no folder context, so there is nothing to check until
 		// GetFile has fetched the file's own parents.
-		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.OAuth)
+		ts := svc.sheetsTokens.Get(ctx, conn.ID, cfg.Credential)
 		result, err := googlesheets.GetFile(ctx, ts, cfg, conn.ID, svc, in.FileID)
 		if err != nil {
 			var rlErr *googlesheets.RateLimitedError
