@@ -50,6 +50,9 @@ function renderPage() {
 }
 
 function fillValidConfig() {
+  // The form defaults to the service-account toggle position; switch to
+  // OAuth to exercise that path here.
+  fireEvent.click(screen.getByRole("radio", { name: "OAuth (refresh token)" }));
   fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "client-abc" } });
   fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: SECRET } });
   fireEvent.change(screen.getByLabelText("Refresh token"), { target: { value: "1//0g-token" } });
@@ -105,6 +108,7 @@ describe("GoogleSheetsConnectorPage", () => {
 
     expect(await screen.findByText(/doesn't exist, or belongs to a different organization/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Client secret")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Service account key (JSON)")).not.toBeInTheDocument();
   });
 
   it("refuses to edit a connector of another type instead of showing the sheets form", async () => {
@@ -114,5 +118,38 @@ describe("GoogleSheetsConnectorPage", () => {
 
     await screen.findByText(/only edits google sheets configuration/i);
     expect(screen.queryByLabelText("Client secret")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Service account key (JSON)")).not.toBeInTheDocument();
+  });
+
+  it("never renders a stored service-account key back into the form, and PATCHes a fresh one", async () => {
+    const keyJson = JSON.stringify({
+      type: "service_account",
+      client_email: "sheets-bot@my-project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n",
+    });
+    getConnectorMock.mockResolvedValue(sheetsConnector);
+    updateConnectorMock.mockResolvedValue({ ...sheetsConnector, status: "inactive" });
+
+    renderPage();
+
+    await screen.findByText("Acme sheet");
+    // Service account is the default toggle position, and — same invariant
+    // as "Client secret" above — nothing pre-fills it: the config endpoint
+    // never returns a stored secret, so this field starts empty even though
+    // the connector already has a working credential saved.
+    expect(screen.getByLabelText("Service account key (JSON)")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("Service account key (JSON)"), { target: { value: keyJson } });
+    fireEvent.change(screen.getByLabelText("Allowed spreadsheet IDs"), { target: { value: "1AbC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    await waitFor(() =>
+      expect(updateConnectorMock).toHaveBeenCalledWith("conn-1", {
+        config: {
+          service_account: { key_json: keyJson },
+          scope: { spreadsheet_ids: ["1AbC"], drive_folder_ids: [] },
+        },
+      }),
+    );
   });
 });

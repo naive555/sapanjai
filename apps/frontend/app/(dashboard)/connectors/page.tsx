@@ -95,6 +95,8 @@ const createDefaults: CreateConnectorValues = {
   name: "",
   type: "generic",
   configJson: "",
+  credentialKind: "service_account",
+  serviceAccountKeyJson: "",
   clientId: "",
   clientSecret: "",
   refreshToken: "",

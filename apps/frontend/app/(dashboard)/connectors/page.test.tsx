@@ -193,7 +193,11 @@ describe("ConnectorsPage", () => {
     fireEvent.pointerUp(sheetsOption, { pointerType: "mouse", button: 0 });
     fireEvent.click(sheetsOption);
 
-    fireEvent.change(await screen.findByLabelText("Client ID"), { target: { value: "client-abc" } });
+    // The credential toggle defaults to "Service account" — switch to OAuth
+    // to exercise that path here (the create dialog's own service_account
+    // submission is covered separately below).
+    fireEvent.click(await screen.findByRole("radio", { name: "OAuth (refresh token)" }));
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "client-abc" } });
     fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: secret } });
     fireEvent.change(screen.getByLabelText("Refresh token"), { target: { value: "1//0g-token" } });
     fireEvent.change(screen.getByLabelText("Allowed spreadsheet IDs"), { target: { value: "1AbC" } });
@@ -216,6 +220,74 @@ describe("ConnectorsPage", () => {
       const cached = JSON.stringify(queryClient.getMutationCache().getAll().map((m) => m.state));
       expect(cached).not.toContain(secret);
     });
+  });
+
+  it("creates a google_sheets connector with the default service_account credential", async () => {
+    const keyJson = JSON.stringify({
+      type: "service_account",
+      client_email: "sheets-bot@my-project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n",
+    });
+    listConnectorsMock.mockResolvedValue([]);
+    createConnectorMock.mockResolvedValue(
+      makeConnector({ id: "new-sheets-sa", name: "Acme sheet (SA)", type: "google_sheets" }),
+    );
+
+    renderPage();
+
+    await screen.findByText(/no connectors yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create connector/i }));
+
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Acme sheet (SA)" } });
+    fireEvent.keyDown(screen.getByLabelText("Type"), { key: "ArrowDown" });
+    const sheetsOption = await screen.findByRole("option", { name: "Google Sheets" });
+    fireEvent.pointerDown(sheetsOption, { pointerType: "mouse", button: 0 });
+    fireEvent.pointerUp(sheetsOption, { pointerType: "mouse", button: 0 });
+    fireEvent.click(sheetsOption);
+
+    // No toggle click here — service_account is what a user gets without
+    // choosing.
+    fireEvent.change(await screen.findByLabelText("Service account key (JSON)"), {
+      target: { value: keyJson },
+    });
+    fireEvent.change(screen.getByLabelText("Allowed spreadsheet IDs"), { target: { value: "1AbC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(createConnectorMock).toHaveBeenCalledWith({
+        name: "Acme sheet (SA)",
+        type: "google_sheets",
+        config: {
+          service_account: { key_json: keyJson },
+          scope: { spreadsheet_ids: ["1AbC"], drive_folder_ids: [] },
+        },
+      }),
+    );
+  });
+
+  it("rejects a malformed pasted service-account key before submit", async () => {
+    listConnectorsMock.mockResolvedValue([]);
+
+    renderPage();
+
+    await screen.findByText(/no connectors yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /create connector/i }));
+
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Acme sheet" } });
+    fireEvent.keyDown(screen.getByLabelText("Type"), { key: "ArrowDown" });
+    const sheetsOption = await screen.findByRole("option", { name: "Google Sheets" });
+    fireEvent.pointerDown(sheetsOption, { pointerType: "mouse", button: 0 });
+    fireEvent.pointerUp(sheetsOption, { pointerType: "mouse", button: 0 });
+    fireEvent.click(sheetsOption);
+
+    fireEvent.change(await screen.findByLabelText("Service account key (JSON)"), {
+      target: { value: "{ not: json" },
+    });
+    fireEvent.change(screen.getByLabelText("Allowed spreadsheet IDs"), { target: { value: "1AbC" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByText(/not valid json/i)).toBeInTheDocument();
+    expect(createConnectorMock).not.toHaveBeenCalled();
   });
 
   it("exposes each connector's id, truncated on screen but copied whole", async () => {
