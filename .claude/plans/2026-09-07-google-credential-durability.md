@@ -1,6 +1,39 @@
 # Google credential durability — service-account auth + health-check job — Implementation Plan
 
-> **Status: 📋 not started (planned 2026-09-07).** 0 / 9 steps.
+> **Status: 🚧 in progress (planned 2026-09-07).** 3 / 9 steps — the backend
+> half of the service-account path is done and verified.
+>
+> **Shipped:** step 2 (`b59bcec`) — `Config.OAuth` became `Config.Credential`,
+> a union of `*OAuthConfig` and the new `*ServiceAccountConfig`, with
+> `ParseConfig` requiring exactly one (`ErrCredentialAmbiguous` covers both
+> and neither). Step 3 (`7ab8aaf`) — `NewTokenSource` /
+> `TokenSourceCache.Get` take a `Credential`; a service account goes through
+> `jwt.Config.TokenSource`, the OAuth branch is untouched, and a zero
+> `Credential` returns an erroring token source rather than a nil one that
+> would panic inside a `tools/call`. Step 4 (`41ebc67`) — the seven
+> `cfg.OAuth` readers in `internal/module/mcp`, plus three comments the
+> rename made inaccurate (two of them inside tool descriptions the model
+> reads in `tools/list`).
+>
+> **Verified live, not read through:** `go build ./...` clean, `gofmt`
+> clean, `make lint` 0 issues, and the whole backend suite green against
+> real postgres+redis — including the 38 `TestIntegration_MCP*` cases, which
+> execute rather than skip (`internal/server` runs 3.9s→49s once
+> `DATABASE_URL`/`REDIS_URL` are set; without them the suite prints `ok`
+> while skipping every case, which is a trap worth knowing about before
+> trusting a green run here).
+>
+> **A connector can already authenticate as a service account** by posting
+> the config directly. What is missing is everything that lets a customer do
+> it without curl: steps 5-6 (dashboard + guide) and step 7 (health job).
+>
+> **Deviations so far, both deliberate:** `checker.go:43` is listed under
+> step 4 but landed in step 3 — it is in the adapter package, which could
+> not compile or run step 3's own tests without it. And the fixture note in
+> step 9 gained a fact found by probing the library: `JWTConfigFromJSON`
+> does not parse the PEM, so tests need no real private key, and its error
+> quotes fragments of the input — which is why `parseServiceAccount` drops
+> that error instead of wrapping it.
 >
 > **Why this exists:** every `google_sheets` connector onboarded today dies
 > after seven days. `internal/adapter/googlesheets/oauth.go:17-20` requests
@@ -19,10 +52,11 @@
 > entirely (steps 2-6); and a worker job that catches a dead credential
 > before the customer does (step 7).
 >
-> Target executor: **Sonnet** for steps 1 and 7, **Opus** for steps 2-3
+> Target executor: **Sonnet** for steps 1, 4, 5-7, **Opus** for steps 2-3
 > (the credential-variant refactor touches eight call sites and the
 > fingerprint cache, where a mistake silently keeps minting tokens from a
-> retired credential).
+> retired credential — the fingerprint was, as expected, the one place the
+> refactor would have introduced a silent bug).
 
 ---
 
@@ -74,13 +108,13 @@ must "redo step 4 every week."
 Replace that with an explicit instruction to set the OAuth consent screen's
 publishing status to **In production** before step 4, and state plainly what
 they trade for it: a one-time "Google hasn't verified this app" interstitial
-they clear with *Advanced → Go to (unsafe)*. Because the customer is the sole
+they clear with _Advanced → Go to (unsafe)_. Because the customer is the sole
 user of their own OAuth client, the 100-test-user cap and the verification
 requirement do not bite; only the warning screen does.
 
 **Verify this by hand before writing the copy.** Google has tightened
 unverified-app handling repeatedly, and an unverified production app holding
-a *restricted* scope is exactly the case most likely to be blocked. Create a
+a _restricted_ scope is exactly the case most likely to be blocked. Create a
 throwaway Cloud project, publish it, complete the flow, and confirm a
 refresh token issued that way still works on day 8. If Google refuses,
 delete this step and say so in the tracker — steps 2-6 are the real fix
@@ -251,7 +285,7 @@ Model on `internal/job/sessioncleanup/`. Nothing here is specific to Google
   default. The Background-worker bullet: a third job. The Environment
   section: the two new vars.
 - `docs/06-sheets-adapter.md` §3 — the config shape now has two variants.
-- `docs/07-sheets-adapter-decisions.md` — append a decision recording *why*
+- `docs/07-sheets-adapter-decisions.md` — append a decision recording _why_
   service account became the default: `drive.readonly` is restricted, CASA
   is not viable for an SMB customer, and Testing-mode tokens expire in 7
   days. Include the dates and the Google policy this rests on, so a future
@@ -275,7 +309,7 @@ New tests required:
   error string contains none of the key's bytes**.
 - `oauth_test.go` — two different service-account keys fingerprint
   differently; a service-account credential and an OAuth credential
-  fingerprint differently; `TokenSourceCache.Get` returns a *new* source
+  fingerprint differently; `TokenSourceCache.Get` returns a _new_ source
   after the key JSON changes (the regression step 3 warns about).
 - `checker_test.go` — `probe` runs unchanged under a service-account
   credential (mocked `sheetsAPI`, no network).
