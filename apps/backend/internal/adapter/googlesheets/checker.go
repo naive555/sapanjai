@@ -7,9 +7,11 @@ import (
 	"github.com/sapanjai/backend/internal/module/connector"
 )
 
-// Checker implements connector.Checker for type "google_sheets": refresh
-// the OAuth token and do one cheap metadata read against the connector's
-// allowlist, proving both credential and scope resolve to something real.
+// Checker implements connector.Checker for type "google_sheets": exchange
+// whichever credential the config carries for an access token and do one
+// cheap metadata read against the connector's allowlist, proving both
+// credential and scope resolve to something real. Credential-agnostic —
+// NewTokenSource handles the service-account and OAuth variants alike.
 //
 // Stateless by necessity — Check receives a decrypted config but never a
 // connector id, so there is no key to cache a TokenSource under here.

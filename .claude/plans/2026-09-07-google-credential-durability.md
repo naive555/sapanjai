@@ -290,7 +290,9 @@ Model on `internal/job/sessioncleanup/`. Nothing here is specific to Google
   is not viable for an SMB customer, and Testing-mode tokens expire in 7
   days. Include the dates and the Google policy this rests on, so a future
   reader can tell whether it still holds.
-- `.env.example` and `.env.docker.example` — the two new vars, commented.
+- `.env.example` — the two new vars, commented. (This plan originally named
+  `.env.docker.example` alongside it; no such file exists in this repo, and
+  one was deliberately not created.)
 - `docs/02-api-contract.md` — only if it documents the connector config
   body; check before editing.
 

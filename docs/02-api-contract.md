@@ -161,14 +161,20 @@ skeleton placeholder — no adapter, health-check always 501) and
 | `GET /connectors/:connectorId` | perm:`connector:read` | — | One connector. 404 `NOT_FOUND` for another org's id — indistinguishable from a nonexistent one. |
 | `PATCH /connectors/:connectorId` | perm:`connector:write` | `{ name?, status?, config? }` | Partial update; unset fields are left unchanged. A supplied `config` is re-sealed under a brand-new data key (the old ciphertext is overwritten, not versioned). `type` is immutable — there is no `type` field to patch. |
 | `DELETE /connectors/:connectorId` | perm:`connector:delete` | — | `{ success: true }`. 404 `NOT_FOUND` if already gone or not this org's. |
-| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | — | Probes the upstream and records `status`/`lastHealthCheckAt`. For `type: "generic"` (no checker registered) this always returns 501 `HEALTH_CHECK_UNSUPPORTED` and leaves the row untouched. For `type: "google_sheets"`, `googlesheets.Checker` parses `config`, refreshes the OAuth token, and reads metadata for the first allowlisted spreadsheet (or lists the first allowlisted Drive folder if none is allowlisted) — success writes `status: "active"`, any failure (bad config shape, expired/invalid refresh token, upstream error) writes `status: "error"` and still returns 200 with the updated row; the probe error itself is never returned to the caller or logged with credential material. Gated by `connector:write` (not `:read`) because it writes to the row. |
+| `POST /connectors/:connectorId/health-check` | perm:`connector:write` | — | Probes the upstream and records `status`/`lastHealthCheckAt`. For `type: "generic"` (no checker registered) this always returns 501 `HEALTH_CHECK_UNSUPPORTED` and leaves the row untouched. For `type: "google_sheets"`, `googlesheets.Checker` parses `config`, builds a token source from whichever credential variant it holds (a service-account key or an OAuth refresh token), and reads metadata for the first allowlisted spreadsheet (or lists the first allowlisted Drive folder if none is allowlisted) — success writes `status: "active"`, any failure (bad config shape, an invalid/expired credential, upstream error) writes `status: "error"` and still returns 200 with the updated row; the probe error itself is never returned to the caller or logged with credential material. Gated by `connector:write` (not `:read`) because it writes to the row. |
 
 **`google_sheets` config shape** (sealed the same as any other connector's
-`config` — never returned by any endpoint):
+`config` — never returned by any endpoint). The credential half is a union —
+exactly one of `service_account` or `oauth` — enforced by `ParseConfig`
+(`internal/adapter/googlesheets/config.go`; `ErrCredentialAmbiguous` covers
+both and neither). `service_account` is the default: a Google
+service-account key, shared with each spreadsheet/folder the way you'd share
+it with a colleague, with no consent screen and no refresh token for Google
+to expire —
 
 ```jsonc
 {
-  "oauth": { "refresh_token": "1//0g...", "client_id": "...apps.googleusercontent.com", "client_secret": "..." },
+  "service_account": { "key_json": "{\"type\":\"service_account\",\"client_email\":\"...@....gserviceaccount.com\", ...}" },
   "scope": {
     "spreadsheet_ids": ["1AbC...", "1XyZ..."],
     "drive_folder_ids": ["0B1a..."],
@@ -177,15 +183,27 @@ skeleton placeholder — no adapter, health-check always 501) and
 }
 ```
 
-`scope` is the security boundary: `spreadsheet_ids` / `drive_folder_ids` is
-an allowlist the adapter enforces on every call, independent of whatever the
-OAuth token itself can reach — an id absent from the allowlist is always
-rejected. At least one of `spreadsheet_ids` / `drive_folder_ids` must be
-non-empty. `header_rows` is an optional per-spreadsheet override for the
-header row (default: row 1) — real customer sheets often carry a title
-banner above the real header. Onboarding is manual credential paste for the
-MVP (`docs/07-sheets-adapter-decisions.md` §1 Decision 2) — no OAuth consent flow
-in the dashboard yet.
+`oauth` is the original refresh-token flow, kept for the one case a service
+account can't cover — a Google Workspace admin who blocks sharing outside
+the domain:
+
+```jsonc
+{
+  "oauth": { "refresh_token": "1//0g...", "client_id": "...apps.googleusercontent.com", "client_secret": "..." },
+  "scope": { "spreadsheet_ids": ["1AbC...", "1XyZ..."], "drive_folder_ids": ["0B1a..."], "header_rows": { "1AbC...": 3 } }
+}
+```
+
+`scope` is unchanged and identical for both variants — the security
+boundary: `spreadsheet_ids` / `drive_folder_ids` is an allowlist the adapter
+enforces on every call, independent of whatever the credential itself can
+reach — an id absent from the allowlist is always rejected. At least one of
+`spreadsheet_ids` / `drive_folder_ids` must be non-empty. `header_rows` is an
+optional per-spreadsheet override for the header row (default: row 1) — real
+customer sheets often carry a title banner above the real header. Onboarding
+is manual credential paste for the MVP (`docs/07-sheets-adapter-decisions.md`
+§1 Decision 2) — no hosted OAuth consent flow or Google Cloud Console
+automation in the dashboard yet, for either credential variant.
 
 Response shape (all endpoints except `DELETE`, which returns `{ success: true }`):
 
@@ -288,7 +306,7 @@ vice versa) regardless of what the caller is permitted to do.
 | ---- | --------------- | ---------- | ------------ | ------- |
 | `sapanjai_describe_connector` | any | `connector:read` | Describes the connector this session is bound to. Takes no arguments — the connector is fixed by the URL, not model-supplied. | `{ name, type, status }` — structurally incapable of returning `config`; the decrypted connector config never leaves `connector.Service`, same invariant as the REST `/connectors` routes. |
 | `sapanjai_whoami` | any | `connector:read` | Reports the caller's own organization, the display name of the PAT this session authenticated with, and its resolved permission list — the actions actually granted after intersecting the key's own `scopes` with its creator's live role. Takes no arguments. | `{ organizationId, keyName, permissions: [string] }` — `permissions` is `["*"]` for an unscoped key riding an owner's live bypass, `[]` (never `null`) for a principal with no resolved actions, and the resolved action list otherwise; structurally incapable of returning a credential, config, or a key id/hash. |
-| `sheets_list_spreadsheets` | `google_sheets` | `sheets:read` | Lists every spreadsheet the connector's own allowlist (`config.scope.spreadsheet_ids`) grants access to, with each one's title. The OAuth account behind the connector may be able to reach other spreadsheets too; only allowlisted ones are ever returned. Takes no arguments. | `{ spreadsheets: [{ spreadsheet_id, title, accessible }] }` — `accessible` is `false` for an allowlisted id the OAuth token can no longer read (a revoked share, a deleted file); reported per-item rather than failing the whole call. |
+| `sheets_list_spreadsheets` | `google_sheets` | `sheets:read` | Lists every spreadsheet the connector's own allowlist (`config.scope.spreadsheet_ids`) grants access to, with each one's title. The Google identity behind the connector (a service account or an OAuth account) may be able to reach other spreadsheets too; only allowlisted ones are ever returned. Takes no arguments. | `{ spreadsheets: [{ spreadsheet_id, title, accessible }] }` — `accessible` is `false` for an allowlisted id the connector's credential can no longer read (a revoked share, a deleted file); reported per-item rather than failing the whole call. |
 | `sheets_describe_spreadsheet` | `google_sheets` | `sheets:read` | Schema discovery (docs/06-sheets-adapter.md §4.1): one spreadsheet's title, every tab's name and row/column count, and each tab's column headers, optionally with a few sample data rows. Sheets has no schema, so this is meant to be called before `sheets_query_rows`/`sheets_read_range`. Input: `{ spreadsheet_id: string (required), include_sample_rows: int 0-5, default 0 }`. | `{ spreadsheet_id, title, sheets: [{ name, row_count, column_count, columns: [{ index, letter, header }], sample_rows: [[string]] }] }` |
 | `sheets_query_rows` | `google_sheets` | `sheets:read` | The workhorse (step 7): filters one sheet's data rows by a structured column DSL (`eq`/`neq`/`contains`/`gt`/`lt`/`gte`/`lte`/`in`, AND-ed together), with column projection and offset/limit pagination. No Google Visualization Query Language is ever exposed — a filter value is always compared as literal text or a plain number, never evaluated as a formula, regardless of a leading `=`/`+`/`-`/`@`. Input: `{ spreadsheet_id, sheet_name, filters?: [{ column, op, value }], columns?: [string], limit?: int 1-200 default 50, offset?: int default 0, response_format?: "markdown" \| "json" default "markdown" }`. | See "Bounded scan" below for the response shape. |
 | `sheets_read_range` | `google_sheets` | `sheets:read` | The escape hatch (step 8): reads an explicit A1 range directly, for whatever `sheets_query_rows`' filter DSL cannot express — no filtering, no projection. The range is parsed and re-validated in our own code, never handed to Google opaquely; it must carry explicit numeric row bounds on both ends (a bare sheet name, or a column-only range like `A:D`, is rejected as unbounded — a row-only range like `1:100` is not, since its rows are still explicitly bounded). An omitted sheet name resolves to the spreadsheet's first tab. Input: `{ spreadsheet_id: string (required), range: string (required) }`. | `{ spreadsheet_id, range, sheet_name, columns: [string], rows: [[string]], row_count, column_count }` — `range` is always the fully resolved range actually read (sheet name and column bounds filled in); `rows` is padded to a rectangle `column_count` wide, never ragged. |
@@ -371,10 +389,15 @@ absent from the spreadsheet's own tabs (or, for `sheets_read_range`, a
 sheet name parsed out of `range`) returns `SHEET_NOT_FOUND`; a filter or
 projection column absent from the sheet's header row returns
 `COLUMN_NOT_FOUND`, both naming `sheets_describe_spreadsheet` as the
-recovery path. The connector's OAuth access token is cached in-process per connector id
-(`golang.org/x/oauth2.ReuseTokenSource`, deliberately not Redis — a derived
-access token is a live credential) and reused across calls against the same
-connector.
+recovery path. The connector's derived access token is cached in-process per
+connector id (`TokenSourceCache`, `internal/adapter/googlesheets/oauth.go` —
+an OAuth credential reuses `golang.org/x/oauth2.ReuseTokenSource`, a service
+account reuses `jwt.Config.TokenSource`'s own cache; deliberately not Redis,
+since a derived access token is a live credential) and reused across calls
+against the same connector until its credential's fingerprint changes, so a
+rotated key or refresh token — or a switch from one credential variant to
+the other — takes effect on the very next call rather than being served
+from a stale cache.
 
 **Audit.** Best-effort (a failed write never fails the MCP call), same
 `GET /audit-logs` trail as everything else:

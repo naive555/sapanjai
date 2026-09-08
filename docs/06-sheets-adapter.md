@@ -59,7 +59,23 @@ grant on every request — it narrows, never widens.
 
 ## 3. Connector config shape (`google_sheets`)
 
-Stored in `encrypted_config` via the existing envelope encryption — **no field ever surfaces in a response DTO or a log**
+Stored in `encrypted_config` via the existing envelope encryption — **no field ever surfaces in a response DTO or a log**. The credential half is a union: exactly one of `service_account` or `oauth` is present, enforced by `ParseConfig` (`ErrCredentialAmbiguous` covers both and neither — `internal/adapter/googlesheets/config.go`).
+
+`service_account` is the default the dashboard offers first — a Google service-account key, shared with each spreadsheet/folder the way you'd share it with a colleague; no consent screen and no refresh token for Google to expire:
+
+```json
+{
+  "service_account": {
+    "key_json": "{\"type\":\"service_account\",\"client_email\":\"...@....gserviceaccount.com\", ...}"
+  },
+  "scope": {
+    "spreadsheet_ids": ["1AbC...", "1XyZ..."],
+    "drive_folder_ids": ["0B1a..."]
+  }
+}
+```
+
+`oauth` is the original refresh-token flow, kept for the one case a service account can't cover — a Google Workspace admin who blocks sharing outside the domain:
 
 ```json
 {
@@ -75,7 +91,9 @@ Stored in `encrypted_config` via the existing envelope encryption — **no field
 }
 ```
 
-**`scope` is the single most important security boundary** — the adapter must **reject** any spreadsheet/folder that is not in the allowlist, always, even when the OAuth token could reach it. Otherwise an agent that has been prompt-injected can read the entire Drive account.
+`scope` is unchanged and identical for both variants.
+
+**`scope` is the single most important security boundary** — the adapter must **reject** any spreadsheet/folder that is not in the allowlist, always, even when the credential itself could reach it. Otherwise an agent that has been prompt-injected can read the entire Drive account.
 
 ---
 
@@ -272,7 +290,7 @@ Returned inside the result object (`isError: true`), not as a protocol-level err
 | `COLUMN_NOT_FOUND`        | No such column — check the headers via `sheets_describe_spreadsheet`                     |
 | `RESULT_TOO_LARGE`        | Suggest adding a `columns` projection or lowering `limit`                                |
 | `RATE_LIMITED`            | State the retry-after in seconds                                                         |
-| `UPSTREAM_AUTH_FAILED`    | The OAuth refresh token has expired — the owner must re-authorize from the dashboard     |
+| `UPSTREAM_AUTH_FAILED`    | The connector's credential no longer authenticates — a revoked service-account key, or an expired OAuth refresh token; the owner re-supplies it from the dashboard |
 
 ---
 

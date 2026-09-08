@@ -70,6 +70,10 @@ Resolved details the spec left implicit:
 ### Decision 2 — OAuth onboarding: **manual credential paste for the MVP**
 
 *Gated steps 5 and 12. Confirmed 2026-08-18.*
+**Superseded in part by Decision 5 (2026-09-07):** the paste stays, but what
+gets pasted is a service-account key by default, not a refresh token. Read
+this for why there is no consent flow; read Decision 5 for why the OAuth
+variant it describes stopped being the default.
 
 The MVP does **not** build a dashboard consent flow. Customers supply
 `client_id` / `client_secret` / `refresh_token` for a Google Cloud project and paste
@@ -117,6 +121,50 @@ The result: one implementation of the semantics, three callers (the existing
 middleware — **unchanged**, the MCP catalog filter, the MCP call-time check). The
 middleware is rewired only in the sense that the function it already calls is now a
 thin wrapper. Behaviour is identical, which is what makes step 1 safe to merge alone.
+
+### Decision 5 — Credential default: **service account, not OAuth**
+
+*Planned 2026-09-07, shipped 2026-09-07 → 2026-09-08*
+(`.claude/plans/2026-09-07-google-credential-durability.md`). Numbered 5, not
+4: a fourth decision already exists above (unlabeled, resolved the same day
+as 1–3 and recorded in the archived execution plan's step 7), so this
+continues the count rather than colliding with it.
+
+Every `google_sheets` connector onboarded through the Decision 2 paste path
+died within a week of being created, and nothing in the product noticed —
+Open risk 3 below called this out during the original build and it turned
+out to be real. The cause is Google policy, not a bug: `oauth.go`'s scopes
+include `drive.readonly`, which Google classifies as a **restricted** scope.
+A customer's own OAuth app therefore cannot leave "Testing" publishing
+status without a paid third-party CASA security assessment, renewed
+annually — infeasible for an SMB design partner. Google expires every
+refresh token a Testing-status app issues after exactly 7 days, so the
+connector's next scheduled refresh returns `invalid_grant` and the
+connector goes dark — at the time, with no health-check job to catch it
+before the customer's agent did (a gap the same plan closed separately with
+`internal/job/connectorhealth`, unrelated to which credential a connector
+holds).
+
+A Google **service account** sidesteps the whole class: it has no consent
+screen, no publishing status, and no refresh token for Google to expire. The
+customer instead shares each spreadsheet or folder with the service
+account's `@…gserviceaccount.com` address, exactly as they would share it
+with a colleague — which composes with the existing allowlist model rather
+than replacing it (`06-sheets-adapter.md` §3). `Config.Credential` became a
+union of `*OAuthConfig` and `*ServiceAccountConfig`, service account is now
+the default the dashboard offers first, and OAuth stays supported for the
+one case a service account cannot cover: a Google Workspace tenant with
+external sharing disabled refuses to share to a `@…gserviceaccount.com`
+address exactly as it would refuse any other outside account.
+
+**Whether this still holds** rests on two Google policies that could each
+change independently: `drive.readonly` remaining classified as restricted
+(if Google narrowed what counts as restricted, OAuth would become viable
+again without a CASA assessment), and Google continuing to permit a service
+account to be shared into an arbitrary Drive file the way a human collaborator
+is (if Google tightened service-account sharing the way it has tightened
+consent screens, this decision would need to be revisited entirely). Neither
+had changed as of 2026-09-08.
 
 ---
 
