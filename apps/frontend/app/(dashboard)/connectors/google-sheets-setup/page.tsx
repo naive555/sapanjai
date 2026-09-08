@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeftIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronDownIcon } from "lucide-react";
 
 import { Callout } from "@/components/callout";
 import { CopyableCode } from "@/components/copyable-code";
@@ -23,7 +23,17 @@ import { Button } from "@/components/ui/button";
  *
  * A server component on purpose: it is static prose with no session or org
  * dependency, so it renders once at build time. The client bits (copy
- * buttons) are islands inside it.
+ * buttons, the collapsed OAuth section) are islands inside it.
+ *
+ * Service account is the primary path here, matching the form's default
+ * (components/connectors/google-sheets-form.tsx): the adapter requests
+ * drive.readonly, a Google *restricted* scope, so a customer's own OAuth
+ * client cannot leave "Testing" publishing status without a paid annual CASA
+ * assessment, and Google expires every refresh token a Testing app issues
+ * after 7 days. A service account has no consent screen and no refresh token
+ * to expire — the customer just shares each file with its address. The OAuth
+ * walkthrough stays below, collapsed, for the one case a service account
+ * can't cover: a Workspace admin who has disabled sharing outside the org.
  */
 
 export const metadata: Metadata = {
@@ -116,7 +126,7 @@ function Substeps({ start, children }: { start?: number; children: React.ReactNo
 
 /**
  * A Google-side destination. Opened in a new tab on purpose: a reader is
- * halfway through a seven-step list, and replacing the list with the console
+ * halfway through a numbered list, and replacing the list with the console
  * loses their place in it.
  */
 function ExtLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -137,6 +147,27 @@ function C({ children }: { children: React.ReactNode }) {
   return <code className="font-mono text-[0.8125rem] text-foreground">{children}</code>;
 }
 
+/**
+ * A collapsed, secondary path. The repo has no accordion primitive, so this
+ * is a plain `<details>` styled to match the numbered-step cards around it —
+ * native semantics (keyboard toggling, no JS state) beat reaching for a new
+ * dependency for one collapsible section.
+ *
+ * Closed by default: the whole point of demoting OAuth below the fold is
+ * that a reader who doesn't need it never has to scroll past its contents.
+ */
+function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
+  return (
+    <details className="group rounded-lg border bg-card p-5 open:pb-6">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-heading text-base font-medium marker:content-none [&::-webkit-details-marker]:hidden">
+        {summary}
+        <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="mt-5 space-y-5">{children}</div>
+    </details>
+  );
+}
+
 export default function GoogleSheetsSetupPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-8">
@@ -149,25 +180,30 @@ export default function GoogleSheetsSetupPage() {
         </Button>
       </PageHeader>
 
+      <Callout title="Before you start: does your organization block external sharing?">
+        The walkthrough below shares each spreadsheet with a service account — an address ending in{" "}
+        <C>@…gserviceaccount.com</C>. If your Google Workspace admin has disabled sharing outside the
+        organization, that block applies to a service account exactly as it would to any other outside
+        account: Share will refuse the address or silently do nothing. If that&apos;s your situation, you
+        need either a policy exception from your admin or the OAuth walkthrough collapsed at the bottom of
+        this page — better to know that now than after setting up a service account that can&apos;t be
+        shared with anything.
+      </Callout>
+
       <div className="space-y-3 rounded-lg border bg-card p-5">
         <h2 className="font-heading text-base font-medium">What you&apos;re collecting</h2>
         <P>
-          Four things. The first three come from Google and go into the connector form as credentials;
-          the fourth is the list of documents this connector is allowed to touch.
+          Two things. The first comes from Google and goes into the connector form as the credential; the
+          second is the list of documents this connector is allowed to touch.
         </P>
         <ul className="space-y-1.5 text-sm text-muted-foreground">
-          <li>
-            <C>client_id</C> and <C>client_secret</C> — steps 1&ndash;3
-          </li>
-          <li>
-            <C>refresh_token</C> — step 4, the step people get stuck on
-          </li>
-          <li>spreadsheet IDs and/or Drive folder IDs — step 5</li>
+          <li>a service account key (JSON) — steps 1&ndash;3</li>
+          <li>spreadsheet IDs and/or Drive folder IDs — step 4</li>
         </ul>
         <Callout>
           Sapanjai has no &ldquo;Sign in with Google&rdquo; button yet, so there is no way to skip this by
           clicking through a consent screen in the dashboard. You do it once by hand in Google Cloud, paste
-          the result in, and it keeps working until you revoke it.
+          the result in, and — unlike an OAuth refresh token — there is no clock running on it afterward.
         </Callout>
       </div>
 
@@ -211,7 +247,173 @@ export default function GoogleSheetsSetupPage() {
           </Todo>
         </Step>
 
-        <Step n={3} title="Create an OAuth client">
+        <Step n={3} title="Create a service account and download its JSON key">
+          <P>
+            A service account is Google&apos;s identity for a program rather than a person. It has an email
+            address you&apos;ll share spreadsheets with in step 4, and Google hands it a JSON key file
+            instead of asking anyone to sign in — there is no consent screen and nothing here for Google to
+            expire after seven days.
+          </P>
+          <Substeps>
+            <li>
+              In the project from step 1, go to{" "}
+              <ExtLink href="https://console.cloud.google.com/iam-admin/serviceaccounts">
+                IAM &amp; Admin → Service accounts
+              </ExtLink>{" "}
+              and create one. Any name works; you&apos;re the only one who&apos;ll read it back.
+            </li>
+            <li>
+              Skip granting it a project role. A role controls what it can do inside Google Cloud itself —
+              what it can read in Sheets and Drive comes entirely from what gets shared with it in step 4,
+              the same as sharing a file with a colleague.
+            </li>
+            <li>
+              Open the new service account, go to its <strong>Keys</strong> tab, and choose{" "}
+              <strong>Add key → Create new key → JSON</strong>. Google downloads one file and will not show
+              you its private key again — lose it, and the fix is creating a new key here, not recovering
+              the old one.
+            </li>
+          </Substeps>
+          <Todo>
+            The exact current label sequence for &ldquo;Add key&rdquo;, and whether the console still calls
+            the format choice &ldquo;JSON&rdquo;.
+          </Todo>
+          <Callout title="Treat the downloaded file like a password">
+            It is a private key that authenticates as the service account with no second factor and no
+            expiry. Handle it the way you would any other credential — never in a chat message, a ticket, or
+            a repo — and paste it straight into the connector form in step 5 rather than keeping a copy
+            somewhere you&apos;ll forget about.
+          </Callout>
+        </Step>
+
+        <Step n={4} title="Share each spreadsheet and folder with the service account, and collect the IDs">
+          <P>
+            A service account does not inherit your own account&apos;s access to anything, even a
+            spreadsheet you own — every document has to be shared with it explicitly, the same as sharing it
+            with a new colleague.
+          </P>
+          <Substeps>
+            <li>
+              Copy the service account&apos;s address: the <C>client_email</C> field in the JSON key from
+              step 3, shaped like <C>name@project-id.iam.gserviceaccount.com</C>.
+            </li>
+            <li>
+              Open each spreadsheet, click <strong>Share</strong>, paste that address, set its role to{" "}
+              <strong>Viewer</strong>, and send — untick &ldquo;Notify people&rdquo; first, since it
+              isn&apos;t one.
+            </li>
+            <li>Do the same at the folder level for anything you&apos;d rather allow by folder than by file.</li>
+          </Substeps>
+          <Callout title="Share silently refusing the address?">
+            That is the failure mode from the top of this page: a Workspace admin who has disabled sharing
+            outside the organization blocks a <C>@…gserviceaccount.com</C> address exactly like any other
+            outside account. Ask for a policy exception, or use the OAuth walkthrough collapsed at the
+            bottom of this page instead.
+          </Callout>
+          <P>
+            Then collect the ID of everything you just shared. Open it in a browser — the ID is the segment
+            between <C>/d/</C> and <C>/edit</C>:
+          </P>
+          <CopyableCode
+            value="https://docs.google.com/spreadsheets/d/1AbC...THIS_PART...XyZ/edit#gid=0"
+            label="the spreadsheet URL shape"
+          />
+          <P>For a Drive folder, the ID is everything after the last slash:</P>
+          <CopyableCode
+            value="https://drive.google.com/drive/folders/0B1a...THIS_PART...9Zk"
+            label="the Drive folder URL shape"
+          />
+          <Callout variant="boundary" title="This list is the boundary — not the credential">
+            Sapanjai checks every request against these IDs before it calls Google, and an ID that is not on
+            the list is refused even though the connector&apos;s credential could reach it perfectly well.
+            That is the point: an agent that gets talked into asking for someone else&apos;s spreadsheet gets
+            a refusal, not the file. It also means a sheet you forgot to list simply will not work, and that
+            is the single most common reason a working connector &ldquo;can&apos;t see&rdquo; a document.
+          </Callout>
+          <Callout title="Folders do not cascade">
+            Sharing or allowlisting a folder covers the files directly inside it — not files nested in its
+            subfolders. If your documents live one level down, share and list those subfolders too. One
+            folder silently granting an entire tree is exactly the kind of unbounded scope this is meant to
+            prevent.
+          </Callout>
+        </Step>
+
+        <Step n={5} title="Paste it all into the connector">
+          <P>
+            Go to <Link href="/connectors" className="text-foreground underline underline-offset-4">connectors</Link>,
+            create one with the type <C>google_sheets</C>, and paste the whole JSON key from step 3 into the{" "}
+            <strong>Service account key (JSON)</strong> field — it parses in the browser and echoes back the{" "}
+            <C>client_email</C> so you can confirm it&apos;s the one you just shared with. (Used the OAuth
+            walkthrough below instead? Fill in its client ID, client secret, and refresh token there
+            instead.) Add at least one spreadsheet or folder ID from step 4. A connector cannot be created
+            without its configuration, so there is no half-finished state to come back to.
+          </P>
+          <P>
+            If a sheet&apos;s real header row is not row 1 — a title banner above it, say — set a header row
+            override for it on the form. Otherwise the first row of the sheet gets read as column names.
+          </P>
+          <Callout>
+            Nothing you type here is ever shown back to you. The configuration is encrypted the moment it
+            arrives and no endpoint returns it, so a later edit replaces the whole thing rather than merging
+            into it — when you change one ID, re-enter the credential too.
+          </Callout>
+        </Step>
+
+        <Step n={6} title="Run a health check">
+          <P>
+            A new connector starts <strong>inactive</strong>. On the connectors list, use{" "}
+            <strong>Run health check</strong> on its row: Sapanjai uses the credential to get a live access
+            token and reads one allowlisted document with it. If that works, the connector flips to{" "}
+            <strong>active</strong> and agents can use it.
+          </P>
+          <Callout title="What a pass actually proves">
+            The probe reads the <em>first</em> spreadsheet on your list, or — if you listed only folders — the
+            first folder. So a pass proves your credential, its scopes, and that one ID. It does not walk
+            the rest of the list. If one document out of six misbehaves later, the health check will still
+            say active.
+          </Callout>
+          <P>
+            A failure is reported without Google&apos;s own error message, deliberately: those messages name
+            accounts and files, and this one is on its way into a log. Work down this list instead.
+          </P>
+          <ul className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+            <li>
+              <strong className="text-foreground">Both APIs enabled?</strong> Step 2. Enabling one and not the
+              other is the most common miss.
+            </li>
+            <li>
+              <strong className="text-foreground">Using a service account — shared with the exact address?</strong>{" "}
+              A typo in the <C>client_email</C> pasted into Share produces the same failure as not sharing it
+              at all, and Google gives no warning at share time either way.
+            </li>
+            <li>
+              <strong className="text-foreground">Using OAuth — is the refresh token still alive?</strong> If
+              the consent screen is still in Testing, it may already have expired — see the OAuth walkthrough
+              below.
+            </li>
+            <li>
+              <strong className="text-foreground">Credential pasted whole?</strong> A trailing space or a
+              line break copied along with a secret is invisible and fatal.
+            </li>
+            <li>
+              <strong className="text-foreground">ID, not URL?</strong> The allowlist wants the bare ID from
+              step 4, not the whole address.
+            </li>
+          </ul>
+        </Step>
+      </div>
+
+      <Disclosure summary="OAuth (refresh token) — only if your Workspace admin blocks external sharing">
+        <P>
+          Reach for this only if step 4 above is a dead end. A Workspace admin who has disabled sharing
+          outside the organization blocks a service account&apos;s address exactly like any other outside
+          account, with no per-file override. OAuth instead authorizes as a Google account that already has
+          access, so it sidesteps the block entirely — at the cost of a refresh token you mint by hand and,
+          per the warning below, may have to renew.
+        </P>
+
+        <div className="space-y-3">
+          <h3 className="font-heading text-sm font-medium">Create an OAuth client</h3>
           <P>
             This is what produces the <C>client_id</C> and <C>client_secret</C>. Google will make you fill in
             a consent screen first, even though nobody outside your own account will ever see it.
@@ -224,14 +426,14 @@ export default function GoogleSheetsSetupPage() {
             </li>
             <li>
               On External, add the Google account you signed in with as a <strong>test user</strong>.
-              Authorization in step 4 fails outright if you skip this.
+              Authorization below fails outright if you skip this.
             </li>
             <li>
               Create the OAuth client itself. Pick <strong>Web application</strong> as the type if you plan to
-              use the OAuth Playground in step 4, and <strong>Desktop app</strong> if you plan to use the
-              manual route.
+              use the OAuth Playground below, and <strong>Desktop app</strong> if you plan to use the manual
+              route.
             </li>
-            <li>Copy the client ID and client secret somewhere safe. You need both in steps 4 and 6.</li>
+            <li>Copy the client ID and client secret somewhere safe. You need both below and in the connector form.</li>
           </Substeps>
           <Todo>
             The console&apos;s current navigation path to the consent screen and the credentials page — these
@@ -241,12 +443,13 @@ export default function GoogleSheetsSetupPage() {
             While an External app&apos;s publishing status is <strong>Testing</strong>, Google expires its
             refresh tokens after roughly seven days. The connector works, and then one morning it does not,
             with nothing on your side having changed. Publish the app once you have confirmed the setup works
-            — or expect to redo step 4 every week. <em>Verify against Google&apos;s current policy before
-            relying on the exact number of days.</em>
+            — or expect to redo the token exchange below every week. <em>Verify against Google&apos;s current
+            policy before relying on the exact number of days.</em>
           </Callout>
-        </Step>
+        </div>
 
-        <Step n={4} title="Get a refresh token with exactly these two scopes">
+        <div className="space-y-3">
+          <h3 className="font-heading text-sm font-medium">Get a refresh token with exactly these two scopes</h3>
           <P>
             A refresh token is the long-lived credential Sapanjai stores. Everything else is derived from it.
             It has to carry these two scopes and no others:
@@ -262,12 +465,12 @@ export default function GoogleSheetsSetupPage() {
           <P>There are two ways to get one. Both end with the same string.</P>
 
           <div className="space-y-3 rounded-md border p-4">
-            <h3 className="text-sm font-medium">Option A — Google&apos;s OAuth Playground</h3>
+            <h4 className="text-sm font-medium">Option A — Google&apos;s OAuth Playground</h4>
             <P>Fewer moving parts, but it is a web app whose layout this page cannot show you.</P>
             <Substeps>
               <li>
                 Add <C>https://developers.google.com/oauthplayground</C> as an authorized redirect URI on the
-                OAuth client from step 3. Without this, the Playground is rejected.
+                OAuth client above. Without this, the Playground is rejected.
               </li>
               <li>
                 Open the{" "}
@@ -285,10 +488,10 @@ export default function GoogleSheetsSetupPage() {
           </div>
 
           <div className="space-y-3 rounded-md border p-4">
-            <h3 className="text-sm font-medium">Option B — by hand</h3>
+            <h4 className="text-sm font-medium">Option B — by hand</h4>
             <P>
               More typing, but every step is exact and nothing depends on a screen. Replace{" "}
-              <C>YOUR_CLIENT_ID</C> and <C>YOUR_CLIENT_SECRET</C> with the values from step 3.
+              <C>YOUR_CLIENT_ID</C> and <C>YOUR_CLIENT_SECRET</C> with the values from above.
             </P>
             <Substeps>
               <li>
@@ -320,95 +523,14 @@ export default function GoogleSheetsSetupPage() {
             else unless <C>prompt=consent</C> forces it to re-issue. Both are already in the URL above; if you
             built your own, check for them there first.
           </Callout>
-        </Step>
+        </div>
 
-        <Step n={5} title="Find the spreadsheet and folder IDs">
-          <P>
-            Open the spreadsheet in a browser. The ID is the segment between <C>/d/</C> and <C>/edit</C>:
-          </P>
-          <CopyableCode
-            value="https://docs.google.com/spreadsheets/d/1AbC...THIS_PART...XyZ/edit#gid=0"
-            label="the spreadsheet URL shape"
-          />
-          <P>For a Drive folder, the ID is everything after the last slash:</P>
-          <CopyableCode
-            value="https://drive.google.com/drive/folders/0B1a...THIS_PART...9Zk"
-            label="the Drive folder URL shape"
-          />
-          <Callout variant="boundary" title="This list is the boundary — not the token">
-            Sapanjai checks every request against these IDs before it calls Google, and an ID that is not on
-            the list is refused even though the connector&apos;s credentials could reach it perfectly well.
-            That is the point: an agent that gets talked into asking for someone else&apos;s spreadsheet gets
-            a refusal, not the file. It also means a sheet you forgot to list simply will not work, and that
-            is the single most common reason a working connector &ldquo;can&apos;t see&rdquo; a document.
-          </Callout>
-          <Callout title="Folders do not cascade">
-            Allowlisting a folder covers the files directly inside it — not files nested in its subfolders. If
-            your documents live one level down, list those subfolders too. One folder ID silently granting an
-            entire tree is exactly the kind of unbounded scope the allowlist exists to prevent.
-          </Callout>
-        </Step>
-
-        <Step n={6} title="Paste it all into the connector">
-          <P>
-            Go to <Link href="/connectors" className="text-foreground underline underline-offset-4">connectors</Link>,
-            create one with the type <C>google_sheets</C>, and fill in the client ID, client secret, and refresh
-            token, plus at least one spreadsheet or folder ID. A connector cannot be created without its
-            configuration, so there is no half-finished state to come back to.
-          </P>
-          <P>
-            If a sheet&apos;s real header row is not row 1 — a title banner above it, say — set a header row
-            override for it on the form. Otherwise the first row of the sheet gets read as column names.
-          </P>
-          <Callout>
-            Nothing you type here is ever shown back to you. The configuration is encrypted the moment it
-            arrives and no endpoint returns it, so a later edit replaces the whole thing rather than merging
-            into it — when you change one ID, re-enter the credentials too.
-          </Callout>
-        </Step>
-
-        <Step n={7} title="Run a health check">
-          <P>
-            A new connector starts <strong>inactive</strong>. On the connectors list, use{" "}
-            <strong>Run health check</strong> on its row: Sapanjai exchanges your refresh token for a live
-            access token and reads one allowlisted document with it. If that works, the connector flips to{" "}
-            <strong>active</strong> and agents can use it.
-          </P>
-          <Callout title="What a pass actually proves">
-            The probe reads the <em>first</em> spreadsheet on your list, or — if you listed only folders — the
-            first folder. So a pass proves your credentials, your scopes, and that one ID. It does not walk
-            the rest of the list. If one document out of six misbehaves later, the health check will still
-            say active.
-          </Callout>
-          <P>
-            A failure is reported without Google&apos;s own error message, deliberately: those messages name
-            accounts and files, and this one is on its way into a log. Work down this list instead.
-          </P>
-          <ul className="space-y-2 text-sm leading-relaxed text-muted-foreground">
-            <li>
-              <strong className="text-foreground">Both APIs enabled?</strong> Step 2. Enabling one and not the
-              other is the most common miss.
-            </li>
-            <li>
-              <strong className="text-foreground">Refresh token still alive?</strong> If the consent screen is
-              still in Testing, it may already have expired — see step 3.
-            </li>
-            <li>
-              <strong className="text-foreground">Credentials pasted whole?</strong> A trailing space or a
-              line break copied along with a secret is invisible and fatal.
-            </li>
-            <li>
-              <strong className="text-foreground">Right account?</strong> The account you authorized in step 4
-              has to be one that can already open the document — Sapanjai cannot grant it access Google
-              hasn&apos;t.
-            </li>
-            <li>
-              <strong className="text-foreground">ID, not URL?</strong> The allowlist wants the bare ID from
-              step 5, not the whole address.
-            </li>
-          </ul>
-        </Step>
-      </div>
+        <P>
+          You still need the spreadsheet and Drive folder IDs — step 4 above shows how to find them. Skip the
+          sharing part: the account you just authorized already has access, since it is the one that owns or
+          can already open these documents.
+        </P>
+      </Disclosure>
 
       <div className="space-y-3 rounded-lg border bg-card p-5">
         <h2 className="font-heading text-base font-medium">Next: give an agent a key</h2>

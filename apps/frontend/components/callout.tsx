@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
  * assume works some other way, and is the one surface outside RBAC that
  * spends `--signal`. Per globals.css that colour means "elevated privilege",
  * and a connector's spreadsheet/folder allowlist is exactly that: the thing
- * standing between an agent and every file the OAuth account can reach.
+ * standing between an agent and every file the connector's credential can
+ * reach — whichever variant supplied it.
  * Keeping it rare is what keeps it readable, so `boundary` is not a general
  * "important" style — if two of them end up on one screen, one of them is
  * really a `note`.
