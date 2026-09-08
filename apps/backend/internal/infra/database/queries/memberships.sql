@@ -27,6 +27,18 @@ JOIN organizations o ON o.id = m.organization_id
 WHERE m.user_id = $1
 ORDER BY m.created_at ASC;
 
+-- name: GetOrganizationOwner :one
+-- Resolves who to notify about an org-wide event (connector-health alerts
+-- today). Membership.role is either set once at org creation ("owner",
+-- organization.Service.Create) or validated to "admin"/"member" on invite
+-- (organization.InviteRequest) -- an org always has exactly one owner row,
+-- never zero or more than one.
+SELECT u.id AS user_id, u.email, u.display_name
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.organization_id = $1 AND m.role = 'owner'
+LIMIT 1;
+
 -- name: ListOrganizationMembers :many
 SELECT
   m.user_id,

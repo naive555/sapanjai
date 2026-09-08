@@ -196,6 +196,12 @@ type Querier interface {
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
+	// Resolves who to notify about an org-wide event (connector-health alerts
+	// today). Membership.role is either set once at org creation ("owner",
+	// organization.Service.Create) or validated to "admin"/"member" on invite
+	// (organization.InviteRequest) -- an org always has exactly one owner row,
+	// never zero or more than one.
+	GetOrganizationOwner(ctx context.Context, organizationID uuid.UUID) (GetOrganizationOwnerRow, error)
 	GetPlanByName(ctx context.Context, name string) (Plan, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
@@ -203,6 +209,14 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTotp, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
+	// Cross-org sweep for the connector-health background job
+	// (internal/job/connectorhealth) -- deliberately not organization-scoped,
+	// unlike every other query in this file. encrypted_config is NOT selected:
+	// the job re-reads and decrypts each connector through connector.Service so
+	// decrypted config never leaves the service that owns it (CLAUDE.md).
+	// Ordered oldest-checked-first (nulls, i.e. never checked, first) so a
+	// backlog drains in the order it went stale rather than round-robining.
+	ListConnectorsForHealthCheck(ctx context.Context, batchSize int32) ([]ListConnectorsForHealthCheckRow, error)
 	ListMCPKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]McpApiKey, error)
 	ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error)
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationMembersRow, error)

@@ -161,6 +161,52 @@ func (q *Queries) ListConnectorsByOrg(ctx context.Context, organizationID uuid.U
 	return items, nil
 }
 
+const listConnectorsForHealthCheck = `-- name: ListConnectorsForHealthCheck :many
+SELECT id, organization_id, type, status
+FROM connectors
+ORDER BY last_health_check_at ASC NULLS FIRST
+LIMIT $1
+`
+
+type ListConnectorsForHealthCheckRow struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Type           string    `json:"type"`
+	Status         string    `json:"status"`
+}
+
+// Cross-org sweep for the connector-health background job
+// (internal/job/connectorhealth) -- deliberately not organization-scoped,
+// unlike every other query in this file. encrypted_config is NOT selected:
+// the job re-reads and decrypts each connector through connector.Service so
+// decrypted config never leaves the service that owns it (CLAUDE.md).
+// Ordered oldest-checked-first (nulls, i.e. never checked, first) so a
+// backlog drains in the order it went stale rather than round-robining.
+func (q *Queries) ListConnectorsForHealthCheck(ctx context.Context, batchSize int32) ([]ListConnectorsForHealthCheckRow, error) {
+	rows, err := q.db.Query(ctx, listConnectorsForHealthCheck, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConnectorsForHealthCheckRow
+	for rows.Next() {
+		var i ListConnectorsForHealthCheckRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Type,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateConnector = `-- name: UpdateConnector :one
 UPDATE connectors
 SET name = $3, status = $4, encrypted_config = $5, updated_at = now()

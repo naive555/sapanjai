@@ -15,12 +15,18 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/sapanjai/backend/internal/adapter/googlesheets"
 	"github.com/sapanjai/backend/internal/config"
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/redis"
+	"github.com/sapanjai/backend/internal/job/connectorhealth"
 	"github.com/sapanjai/backend/internal/job/emaildispatch"
 	"github.com/sapanjai/backend/internal/job/sessioncleanup"
+	"github.com/sapanjai/backend/internal/module/auditlog"
+	"github.com/sapanjai/backend/internal/module/connector"
+	"github.com/sapanjai/backend/internal/module/subscription"
 	"github.com/sapanjai/backend/internal/shared/email"
+	"github.com/sapanjai/backend/internal/shared/envelope"
 	applogger "github.com/sapanjai/backend/internal/shared/logger"
 	"github.com/sapanjai/backend/internal/worker"
 )
@@ -70,6 +76,32 @@ func main() {
 		log.Info("email sender: log (no RESEND_API_KEY configured)", "from", cfg.EmailFrom)
 	}
 
+	// The connector-health job (internal/job/connectorhealth) re-reads and
+	// decrypts each connector through connector.Service exactly the way
+	// POST /connectors/:id/health-check does, so it needs the same wiring
+	// server.New uses: an envelope.Encryptor over CONNECTOR_MASTER_KEY, and
+	// the same Checker registry (googlesheets.NewChecker is the only real
+	// adapter today; every other type still resolves to 501
+	// HEALTH_CHECK_UNSUPPORTED, which the job skips quietly).
+	keyProvider, err := envelope.NewEnvKeyProvider(cfg.ConnectorMasterKey, cfg.ConnectorMasterKeysRetired...)
+	if err != nil {
+		log.Error("connector master key", "error", err)
+		os.Exit(1)
+	}
+	crypto := envelope.New(keyProvider)
+	auditSvc := auditlog.NewService(store, log)
+	subSvc := subscription.NewService(store)
+	connectorSvc := connector.NewService(store, crypto, auditSvc, subSvc, connector.NewRegistry(googlesheets.NewChecker()), log)
+
+	// Renders the connector-health notification the same way the API renders
+	// verification/reset mail (internal/module/auth): parsed once at boot so
+	// a malformed template fails startup, not the first alert.
+	renderer, err := email.NewRenderer()
+	if err != nil {
+		log.Error("email renderer", "error", err)
+		os.Exit(1)
+	}
+
 	w := worker.New(worker.NewRedisLock(rdb, cfg.RedisKeyPrefix), log, cfg.WorkerJobTimeout)
 	// Register future jobs here — one line each.
 	w.Register(sessioncleanup.New(
@@ -88,6 +120,12 @@ func main() {
 		cfg.EmailDispatchBatchSize,
 		cfg.EmailMaxAttempts,
 		cfg.EmailOutboxRetention,
+	))
+	w.Register(connectorhealth.New(
+		store, connectorSvc, renderer, log,
+		cfg.ConnectorHealthInterval,
+		cfg.ConnectorHealthBatchSize,
+		cfg.AppPublicURL,
 	))
 
 	health := &http.Server{

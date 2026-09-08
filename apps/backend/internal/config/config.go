@@ -37,6 +37,10 @@ const (
 	maxEmailAttempts  = 20
 )
 
+// maxConnectorHealthBatchSize bounds CONNECTOR_HEALTH_BATCH_SIZE for the same
+// reason maxCleanupBatchSize exists.
+const maxConnectorHealthBatchSize = 1000
+
 type Config struct {
 	AppName  string
 	AppEnv   string
@@ -127,6 +131,14 @@ type Config struct {
 	// EmailOutboxRetention is how long 'sent'/'failed' rows are kept before
 	// the dispatch job prunes them.
 	EmailOutboxRetention time.Duration
+
+	// ConnectorHealthInterval is how often the connector-health sweep
+	// (internal/job/connectorhealth) runs.
+	ConnectorHealthInterval time.Duration
+
+	// ConnectorHealthBatchSize is how many connectors one sweep checks,
+	// oldest-checked-first (nulls -- never checked -- first).
+	ConnectorHealthBatchSize int
 
 	// AdminIPAllowlist gates the /admin route group (execution plan Task
 	// 6.2, docs/11-admin-panel.md) before RequireAuth runs at all — an
@@ -229,6 +241,7 @@ func Load() (*Config, error) {
 		{"SESSION_CLEANUP_RETENTION", "720h", &cfg.SessionCleanupRetention},
 		{"EMAIL_DISPATCH_INTERVAL", "15s", &cfg.EmailDispatchInterval},
 		{"EMAIL_OUTBOX_RETENTION", "168h", &cfg.EmailOutboxRetention},
+		{"CONNECTOR_HEALTH_INTERVAL", "6h", &cfg.ConnectorHealthInterval},
 	} {
 		parsed, err := time.ParseDuration(getEnv(d.key, d.fallback))
 		switch {
@@ -286,6 +299,16 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("EMAIL_MAX_ATTEMPTS must be between 1 and %d", maxEmailAttempts))
 	default:
 		cfg.EmailMaxAttempts = emailMaxAttempts
+	}
+
+	connectorHealthBatchSize, err := strconv.Atoi(getEnv("CONNECTOR_HEALTH_BATCH_SIZE", "50"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("CONNECTOR_HEALTH_BATCH_SIZE is not a valid integer: %v", err))
+	case connectorHealthBatchSize < 1 || connectorHealthBatchSize > maxConnectorHealthBatchSize:
+		problems = append(problems, fmt.Sprintf("CONNECTOR_HEALTH_BATCH_SIZE must be between 1 and %d", maxConnectorHealthBatchSize))
+	default:
+		cfg.ConnectorHealthBatchSize = connectorHealthBatchSize
 	}
 
 	allowlist, err := parseCIDRList(os.Getenv("ADMIN_IP_ALLOWLIST"))

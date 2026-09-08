@@ -86,6 +86,32 @@ func (q *Queries) GetMembership(ctx context.Context, arg GetMembershipParams) (M
 	return i, err
 }
 
+const getOrganizationOwner = `-- name: GetOrganizationOwner :one
+SELECT u.id AS user_id, u.email, u.display_name
+FROM memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.organization_id = $1 AND m.role = 'owner'
+LIMIT 1
+`
+
+type GetOrganizationOwnerRow struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Email       string    `json:"email"`
+	DisplayName *string   `json:"display_name"`
+}
+
+// Resolves who to notify about an org-wide event (connector-health alerts
+// today). Membership.role is either set once at org creation ("owner",
+// organization.Service.Create) or validated to "admin"/"member" on invite
+// (organization.InviteRequest) -- an org always has exactly one owner row,
+// never zero or more than one.
+func (q *Queries) GetOrganizationOwner(ctx context.Context, organizationID uuid.UUID) (GetOrganizationOwnerRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizationOwner, organizationID)
+	var i GetOrganizationOwnerRow
+	err := row.Scan(&i.UserID, &i.Email, &i.DisplayName)
+	return i, err
+}
+
 const listMembershipsByUser = `-- name: ListMembershipsByUser :many
 SELECT
   m.id, m.user_id, m.organization_id, m.role, m.created_at,

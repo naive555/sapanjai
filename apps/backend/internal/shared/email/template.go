@@ -18,8 +18,9 @@ var templateFS embed.FS
 // Subject lines. Constants rather than literals at the call site so the
 // service layer and the tests cannot drift apart.
 const (
-	SubjectVerifyEmail   = "Verify your email address"
-	SubjectPasswordReset = "Reset your Sapanjai password"
+	SubjectVerifyEmail     = "Verify your email address"
+	SubjectPasswordReset   = "Reset your Sapanjai password"
+	SubjectConnectorHealth = "A Sapanjai connector needs attention"
 )
 
 // Expiry phrasing shown in the body. These are copy, not policy: the
@@ -46,6 +47,19 @@ type PasswordResetData struct {
 	DisplayName string
 	ResetURL    string
 	ExpiresIn   string
+}
+
+// ConnectorHealthData is the template input for the connector-health alert
+// (internal/job/connectorhealth), sent once on an active->error transition.
+// ConnectorName is the customer's own label for the connector and, like
+// DisplayName, is user-controlled and MUST reach the HTML body through
+// html/template's escaping. Deliberately absent: anything from the
+// connector's config, and the upstream Checker error string -- CLAUDE.md
+// forbids either reaching a mail body.
+type ConnectorHealthData struct {
+	DisplayName   string
+	ConnectorName string
+	ConnectorURL  string
 }
 
 // Renderer turns template data into a ready-to-send Message. Build one at
@@ -90,6 +104,15 @@ func (r *Renderer) PasswordReset(to string, data PasswordResetData) (Message, er
 		return Message{}, err
 	}
 	return Message{To: to, Subject: SubjectPasswordReset, HTML: html, Text: text}, nil
+}
+
+// ConnectorHealth renders the connector-health alert for to.
+func (r *Renderer) ConnectorHealth(to string, data ConnectorHealthData) (Message, error) {
+	html, text, err := r.render("connector_health.html", "connector_health.txt", data)
+	if err != nil {
+		return Message{}, err
+	}
+	return Message{To: to, Subject: SubjectConnectorHealth, HTML: html, Text: text}, nil
 }
 
 // render executes the named HTML and text templates against data. Both

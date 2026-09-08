@@ -33,6 +33,7 @@ func setBaselineEnv(t *testing.T) {
 		"RESEND_API_KEY", "EMAIL_FROM", "APP_PUBLIC_URL",
 		"EMAIL_DISPATCH_INTERVAL", "EMAIL_DISPATCH_BATCH_SIZE",
 		"EMAIL_MAX_ATTEMPTS", "EMAIL_OUTBOX_RETENTION",
+		"CONNECTOR_HEALTH_INTERVAL", "CONNECTOR_HEALTH_BATCH_SIZE",
 		"ADMIN_IP_ALLOWLIST", "ADMIN_REQUIRE_2FA",
 	} {
 		t.Setenv(k, "")
@@ -121,6 +122,77 @@ func TestLoad_EmailOverrides(t *testing.T) {
 	}
 	if cfg.EmailOutboxRetention != 72*time.Hour {
 		t.Errorf("EmailOutboxRetention = %v", cfg.EmailOutboxRetention)
+	}
+}
+
+func TestLoad_ConnectorHealthOverrides(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("CONNECTOR_HEALTH_INTERVAL", "30m")
+	t.Setenv("CONNECTOR_HEALTH_BATCH_SIZE", "10")
+
+	cfg := mustLoad(t)
+
+	if cfg.ConnectorHealthInterval != 30*time.Minute {
+		t.Errorf("ConnectorHealthInterval = %v, want 30m", cfg.ConnectorHealthInterval)
+	}
+	if cfg.ConnectorHealthBatchSize != 10 {
+		t.Errorf("ConnectorHealthBatchSize = %d, want 10", cfg.ConnectorHealthBatchSize)
+	}
+}
+
+func TestLoad_RejectsInvalidConnectorHealthDuration(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"CONNECTOR_HEALTH_INTERVAL", "not-a-duration"},
+		{"CONNECTOR_HEALTH_INTERVAL", "0h"},
+		{"CONNECTOR_HEALTH_INTERVAL", "-6h"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_RejectsOutOfRangeConnectorHealthBatchSize(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"CONNECTOR_HEALTH_BATCH_SIZE", "not-a-number"},
+		{"CONNECTOR_HEALTH_BATCH_SIZE", "0"},
+		{"CONNECTOR_HEALTH_BATCH_SIZE", "-1"},
+		{"CONNECTOR_HEALTH_BATCH_SIZE", "1001"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_AcceptsConnectorHealthBatchSizeBounds(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("CONNECTOR_HEALTH_BATCH_SIZE", "1")
+	if cfg := mustLoad(t); cfg.ConnectorHealthBatchSize != 1 {
+		t.Errorf("lower bound rejected: batch=%d", cfg.ConnectorHealthBatchSize)
+	}
+
+	t.Setenv("CONNECTOR_HEALTH_BATCH_SIZE", "1000")
+	if cfg := mustLoad(t); cfg.ConnectorHealthBatchSize != 1000 {
+		t.Errorf("upper bound rejected: batch=%d", cfg.ConnectorHealthBatchSize)
 	}
 }
 
@@ -266,6 +338,12 @@ func TestLoad_ExistingDefaultsUnchanged(t *testing.T) {
 	}
 	if cfg.SessionCleanupBatchSize != 1000 {
 		t.Errorf("SessionCleanupBatchSize = %d, want 1000", cfg.SessionCleanupBatchSize)
+	}
+	if cfg.ConnectorHealthInterval != 6*time.Hour {
+		t.Errorf("ConnectorHealthInterval = %v, want 6h", cfg.ConnectorHealthInterval)
+	}
+	if cfg.ConnectorHealthBatchSize != 50 {
+		t.Errorf("ConnectorHealthBatchSize = %d, want 50", cfg.ConnectorHealthBatchSize)
 	}
 	if cfg.AdminIPAllowlist != nil {
 		t.Errorf("AdminIPAllowlist = %v, want nil (unset disables the check)", cfg.AdminIPAllowlist)

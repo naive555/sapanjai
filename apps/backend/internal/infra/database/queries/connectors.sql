@@ -29,3 +29,16 @@ RETURNING *;
 
 -- name: DeleteConnector :execrows
 DELETE FROM connectors WHERE id = $1 AND organization_id = $2;
+
+-- name: ListConnectorsForHealthCheck :many
+-- Cross-org sweep for the connector-health background job
+-- (internal/job/connectorhealth) -- deliberately not organization-scoped,
+-- unlike every other query in this file. encrypted_config is NOT selected:
+-- the job re-reads and decrypts each connector through connector.Service so
+-- decrypted config never leaves the service that owns it (CLAUDE.md).
+-- Ordered oldest-checked-first (nulls, i.e. never checked, first) so a
+-- backlog drains in the order it went stale rather than round-robining.
+SELECT id, organization_id, type, status
+FROM connectors
+ORDER BY last_health_check_at ASC NULLS FIRST
+LIMIT sqlc.arg(batch_size);

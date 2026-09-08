@@ -1,0 +1,11 @@
+{{if .DisplayName}}Hi {{.DisplayName}},{{else}}Hi there,{{end}}
+
+Your connector "{{.ConnectorName}}" stopped passing its health check. This
+usually means its credential has expired or been revoked, and it can't be
+used again until it's reconnected.
+
+Review it here:
+
+{{.ConnectorURL}}
+
+-- Sapanjai

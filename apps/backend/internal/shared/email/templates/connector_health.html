@@ -1,0 +1,20 @@
+<!--
+  Connector-health alert body. Fired once, on an active->error transition
+  (internal/job/connectorhealth) -- never once per interval a connector
+  stays broken. Deliberately carries no connector config and no upstream
+  error string (CLAUDE.md): just the connector's own name and a link back
+  into the dashboard where the owner can see the failure and reconnect it.
+-->
+{{- template "email_header" . }}
+<p style="margin:0 0 16px 0;">{{if .DisplayName}}Hi {{.DisplayName}},{{else}}Hi there,{{end}}</p>
+<p style="margin:0 0 24px 0;">Your connector &ldquo;{{.ConnectorName}}&rdquo; stopped passing its health check. This usually means its credential has expired or been revoked, and it can't be used again until it's reconnected.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+<tr>
+<td align="center" bgcolor="#4f46e5" style="border-radius:6px;">
+<a href="{{.ConnectorURL}}" style="display:inline-block;padding:12px 28px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">Review connector</a>
+</td>
+</tr>
+</table>
+<p style="margin:0;color:#6b7280;font-size:13px;">If the button above doesn't work, copy and paste this link into your browser:<br>
+<a href="{{.ConnectorURL}}" style="color:#4f46e5;word-break:break-all;">{{.ConnectorURL}}</a></p>
+{{template "email_footer" .}}

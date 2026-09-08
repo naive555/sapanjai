@@ -314,6 +314,58 @@ func TestRenderer_DoesNotFilterTheLinkAsUnsafe(t *testing.T) {
 	}
 }
 
+func TestRenderer_ConnectorHealth_CarriesTheLinkAndName(t *testing.T) {
+	r := newTestRenderer(t)
+
+	const url = "https://app.sapanjai.io/connectors/6d1f2b3a-1234-4a5b-9c6d-7e8f9a0b1c2d"
+
+	msg, err := r.ConnectorHealth("owner@example.com", ConnectorHealthData{
+		DisplayName:   "Ada",
+		ConnectorName: "Prod Sheets",
+		ConnectorURL:  url,
+	})
+	if err != nil {
+		t.Fatalf("ConnectorHealth: %v", err)
+	}
+
+	if msg.To != "owner@example.com" {
+		t.Errorf("To = %q, want %q", msg.To, "owner@example.com")
+	}
+	if msg.Subject != SubjectConnectorHealth {
+		t.Errorf("Subject = %q, want %q", msg.Subject, SubjectConnectorHealth)
+	}
+	if !strings.Contains(msg.HTML, `href="`+url+`"`) {
+		t.Errorf("HTML part has no href to the connector URL.\nHTML:\n%s", msg.HTML)
+	}
+	if !strings.Contains(msg.Text, url) {
+		t.Errorf("text part does not contain the connector URL.\nText:\n%s", msg.Text)
+	}
+	if !strings.Contains(msg.HTML, "Prod Sheets") || !strings.Contains(msg.Text, "Prod Sheets") {
+		t.Errorf("body does not name the connector.\nHTML:\n%s\nText:\n%s", msg.HTML, msg.Text)
+	}
+}
+
+// ConnectorName is the customer's own label for the connector -- as
+// user-controlled as DisplayName -- and must reach the HTML body only
+// through html/template's escaping.
+func TestRenderer_ConnectorHealth_EscapesConnectorNameInHTML(t *testing.T) {
+	r := newTestRenderer(t)
+
+	const payload = `<script>alert('xss')</script>`
+
+	msg, err := r.ConnectorHealth("owner@example.com", ConnectorHealthData{
+		ConnectorName: payload,
+		ConnectorURL:  "https://app.sapanjai.io/connectors/x",
+	})
+	if err != nil {
+		t.Fatalf("ConnectorHealth: %v", err)
+	}
+
+	if strings.Contains(msg.HTML, "<script>") {
+		t.Errorf("connector name reached the HTML unescaped.\nHTML:\n%s", msg.HTML)
+	}
+}
+
 // A renderer is built once at startup and shared across every request the
 // API serves, so its methods must be safe to call concurrently.
 func TestRenderer_ConcurrentUse(t *testing.T) {
