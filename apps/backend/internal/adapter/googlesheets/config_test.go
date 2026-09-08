@@ -81,7 +81,12 @@ func TestParseConfig_ServiceAccountValid(t *testing.T) {
 	}
 	sa := cfg.Credential.ServiceAccount
 	if sa == nil {
+		// The return is unreachable — t.Fatal ends the test — but
+		// staticcheck cannot see that through the testing package, and
+		// without it every sa.* below reads as a possible nil dereference
+		// (SA5011).
 		t.Fatal("service-account credential is nil")
+		return
 	}
 	if sa.Email != testServiceAccountEmail {
 		t.Fatalf("Email = %q, want %q", sa.Email, testServiceAccountEmail)
