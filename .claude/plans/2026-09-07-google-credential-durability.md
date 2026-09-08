@@ -1,39 +1,58 @@
 # Google credential durability — service-account auth + health-check job — Implementation Plan
 
-> **Status: 🚧 in progress (planned 2026-09-07).** 3 / 9 steps — the backend
-> half of the service-account path is done and verified.
+> **Status: ✅ 8 / 9 steps complete (2026-09-07 → 2026-09-08).** Step 1 is the
+> only one outstanding, and it is blocked on an external clock, not on work —
+> see below.
 >
-> **Shipped:** step 2 (`b59bcec`) — `Config.OAuth` became `Config.Credential`,
-> a union of `*OAuthConfig` and the new `*ServiceAccountConfig`, with
-> `ParseConfig` requiring exactly one (`ErrCredentialAmbiguous` covers both
-> and neither). Step 3 (`7ab8aaf`) — `NewTokenSource` /
-> `TokenSourceCache.Get` take a `Credential`; a service account goes through
-> `jwt.Config.TokenSource`, the OAuth branch is untouched, and a zero
-> `Credential` returns an erroring token source rather than a nil one that
-> would panic inside a `tools/call`. Step 4 (`41ebc67`) — the seven
-> `cfg.OAuth` readers in `internal/module/mcp`, plus three comments the
-> rename made inaccurate (two of them inside tool descriptions the model
-> reads in `tools/list`).
+> **Shipped:** step 2 (`b59bcec`) `Config.Credential` union, `ParseConfig`
+> requiring exactly one variant. Step 3 (`7ab8aaf`) `NewTokenSource` /
+> `TokenSourceCache.Get` over a `Credential`, service accounts via
+> `jwt.Config.TokenSource`, an erroring token source for the zero value.
+> Step 4 (`41ebc67`) the seven `cfg.OAuth` readers in `internal/module/mcp`.
+> Step 5 (`e07f1fb`) the dashboard credential toggle, defaulting to service
+> account, validating a pasted key before submit and echoing back its
+> `client_email`. Step 6 (`002cbbc`) the setup guide rewritten around the
+> service-account path with OAuth collapsed beneath it. Step 7 (`bd3d8a7`)
+> `internal/job/connectorhealth`. Step 8 (`f3fe4e2`) CLAUDE.md, docs/02,
+> docs/06, docs/07 and `.env.example`. Plus `336d753`, a lint fix for
+> step 2's own test.
 >
-> **Verified live, not read through:** `go build ./...` clean, `gofmt`
-> clean, `make lint` 0 issues, and the whole backend suite green against
-> real postgres+redis — including the 38 `TestIntegration_MCP*` cases, which
-> execute rather than skip (`internal/server` runs 3.9s→49s once
-> `DATABASE_URL`/`REDIS_URL` are set; without them the suite prints `ok`
-> while skipping every case, which is a trap worth knowing about before
-> trusting a green run here).
+> **Step 9 — verified 2026-09-08, run rather than read:** `make lint` 0
+> issues; the full backend suite green across all 23 packages against real
+> postgres+redis, `internal/server` at 48s (its integration cases execute —
+> unset `DATABASE_URL`/`REDIS_URL` and it prints `ok` while skipping every
+> one, which is how a green run here lies); `pnpm test` 18 files / 121 tests,
+> `pnpm lint` and `tsc --noEmit` clean. **The plan's own success criterion
+> holds: `internal/server/` was not touched by a single one of these
+> commits**, and all 38 `TestIntegration_MCP*` cases still pass — the
+> credential refactor was behaviour-preserving in fact, not just in
+> intention. No swagger annotation changed, so the committed OpenAPI spec is
+> still accurate. 37 files, +2501/-292.
 >
-> **A connector can already authenticate as a service account** by posting
-> the config directly. What is missing is everything that lets a customer do
-> it without curl: steps 5-6 (dashboard + guide) and step 7 (health job).
+> **Outstanding — step 1**, the docs-only stopgap telling OAuth customers to
+> publish their consent screen. It needs a throwaway Google Cloud project
+> published and left alone for eight days to confirm a refresh token issued
+> that way survives, and that Google does not block an unverified production
+> app holding a restricted scope. Steps 2-8 removed the urgency: service
+> account is now the default and has no refresh token to expire, so step 1
+> only ever mattered for customers on the OAuth path. Do it or delete it
+> once the eight days are up — and archive this file then, not before.
 >
-> **Deviations so far, both deliberate:** `checker.go:43` is listed under
-> step 4 but landed in step 3 — it is in the adapter package, which could
-> not compile or run step 3's own tests without it. And the fixture note in
-> step 9 gained a fact found by probing the library: `JWTConfigFromJSON`
-> does not parse the PEM, so tests need no real private key, and its error
-> quotes fragments of the input — which is why `parseServiceAccount` drops
-> that error instead of wrapping it.
+> **Deviations, all deliberate and recorded in their commits:**
+> `checker.go:43` landed in step 3 rather than step 4 (the adapter package
+> could not compile or run step 3's tests without it). Step 8's instruction
+> to update `.env.docker.example` was wrong — no such file exists here, and
+> one was deliberately not created; the bullet below is corrected.
+> `docs/02-api-contract.md` had drifted further than step 8 anticipated and
+> needed the tool-description wording step 4 changed in code.
+>
+> **Known gap, left open on purpose:** a connector is created with status
+> `inactive`, so one broken on its very first health check transitions
+> `inactive→error` and sends no email — the job watches `active→error` only.
+> `inactive` is also what a deliberately paused connector looks like, so
+> alerting on it would be noise, and the dashboard's own health-check button
+> covers the onboarding case. Widening it is a one-line change to
+> `wasActive` if that trade stops being the right one.
 >
 > **Why this exists:** every `google_sheets` connector onboarded today dies
 > after seven days. `internal/adapter/googlesheets/oauth.go:17-20` requests
