@@ -28,6 +28,20 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "Sapanjai",
   description: "Managed MCP gateway — connect an agent to your systems, scoped and audited.",
+  // Every icon is listed explicitly and every file lives in `public/`. This is
+  // deliberate: an `icons` field here *overrides* the App Router's
+  // `app/icon.*` / `app/apple-icon.*` file conventions rather than merging
+  // with them, so a mix of the two silently drops the convention tags. Safari's
+  // mask-icon has no convention, which forces this field to exist at all --
+  // so everything else has to come along. Adding an icon means adding it here.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+    other: [{ rel: "mask-icon", url: "/safari-pinned-tab.svg", color: "#7046cf" }],
+  },
 };
 
 export default function RootLayout({
