@@ -27,6 +27,17 @@ RUN corepack enable
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# AGPL-3.0 §13: the dashboard footer offers the Corresponding Source of the
+# running version (components/source-link.tsx). Declared here as well as in the
+# runner stage below because Next evaluates unprefixed env vars at build time on
+# statically prerendered routes and at request time on dynamic ones — setting
+# both keeps the two paths agreeing. A fork MUST override SOURCE_URL.
+ARG SOURCE_URL
+ARG SOURCE_COMMIT
+ENV SOURCE_URL=${SOURCE_URL}
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 RUN pnpm build
 
 ########################
@@ -48,6 +59,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # "connection refused" since nothing listens there. A well-known Next.js
 # standalone + Docker gotcha.
 ENV HOSTNAME=0.0.0.0
+
+# The same two values again — ARGs do not cross stages. See the builder stage.
+ARG SOURCE_URL
+ARG SOURCE_COMMIT
+ENV SOURCE_URL=${SOURCE_URL}
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 RUN addgroup -S app && adduser -S app -G app
 
 COPY --from=builder /app/public ./public

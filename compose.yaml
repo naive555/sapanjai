@@ -91,6 +91,13 @@ services:
   web:
     build:
       context: ./apps/frontend
+      args:
+        # AGPL-3.0 §13 source offer in the dashboard footer. SOURCE_COMMIT is
+        # blank for a plain `docker compose up --build`; pass the real one with
+        #   SOURCE_COMMIT=$(git rev-parse HEAD) docker compose build web
+        # and override SOURCE_URL if you are running a modified fork.
+        SOURCE_URL: ${SOURCE_URL:-https://github.com/naive555/sapanjai}
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     container_name: sapanjai-web
     ports:
       - "4000:3000"

@@ -111,7 +111,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   if (isLoading || !adminProfile) return <FullPageSkeleton />;
 
   return (
-    <div className="flex min-h-screen flex-1 flex-col">
+    <div className="flex flex-1 flex-col">
       {/* The one line every screen under /admin shares, full width, above
           everything else — the worst failure mode of this console is a
           staff member forgetting they've left the tenant boundary. */}

@@ -181,7 +181,7 @@ export default function DashboardLayout({
   };
 
   return (
-    <div className="flex min-h-screen flex-1">
+    <div className="flex flex-1">
       <aside className="hidden w-56 shrink-0 flex-col gap-7 border-r bg-sidebar px-3 py-5 md:flex">
         <Link
           href="/overview"

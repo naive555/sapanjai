@@ -581,11 +581,41 @@ make swagger         # regenerate the OpenAPI spec (requires swag)
 
 `make sqlc` is only needed after editing `apps/backend/internal/infra/database/queries/*.sql`, and requires the CLI: `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`. Building or running the API does not.
 
+## License
+
+Sapanjai is **dual licensed**:
+
+- the **[GNU AGPL v3](LICENSE)**, to everyone, at no cost; or
+- a **commercial license**, for organizations that cannot accept the AGPL.
+
+You choose. Self-hosting under the AGPL is a permanently free, first-class path — not a
+trial of the hosted service.
+
+The AGPL's [section 13](https://www.gnu.org/licenses/agpl-3.0.html#section13) is the part
+worth knowing before you fork: it is triggered by letting people **use the software over a
+network**, not only by distributing copies. If you modify Sapanjai and run it as a service
+others reach, those users are entitled to your modified source. The dashboard footer
+already carries the offer — set `SOURCE_URL` to *your* repository and `SOURCE_COMMIT` to
+the commit you built, or the link will point at this repository and will not describe the
+code you are actually running.
+
+What the AGPL does not reach: your customers' data, the contents of a connector, internal
+use however commercial, or a separate program that merely calls Sapanjai's HTTP or MCP API
+across the network.
+
+[`LICENSING.md`](LICENSING.md) explains all of this properly, including how to ask about a
+commercial license. Contributions are welcome under the CLA in [`CLA.md`](CLA.md) — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md) to get started.
+
 ## Documentation
 
 | File | Contents |
 | --- | --- |
 | [`CLAUDE.md`](CLAUDE.md) | Ground rules and conventions — read before changing anything |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Dev loop, the checks CI runs, and what comes up in review |
+| [`LICENSING.md`](LICENSING.md) | The dual license in plain language: what AGPL §13 obliges, and who needs a commercial license |
+| [`CLA.md`](CLA.md) | Contributor License Agreement — why a dual-licensed project needs one |
+| [`SECURITY.md`](SECURITY.md) | How to report a vulnerability privately, and what is in and out of scope |
 | [`docs/01-source-analysis.md`](docs/01-source-analysis.md) | Domain model, behaviors, and known quirks |
 | [`docs/02-api-contract.md`](docs/02-api-contract.md) | **Source of truth** for routes, headers, status codes, error messages |
 | [`docs/03-target-architecture.md`](docs/03-target-architecture.md) | Package layout, design decisions, resolved deviations |

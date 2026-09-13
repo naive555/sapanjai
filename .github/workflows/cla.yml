@@ -1,0 +1,61 @@
+name: CLA
+
+# Sapanjai is dual licensed (see LICENSING.md), which is only offerable if every
+# contribution may also ship under the commercial license. This workflow blocks a
+# pull request until its author has signed CLA.md.
+#
+# Signatures are recorded as JSON on the `cla-signatures` branch of this repo.
+# That branch is data, not code — it is never built, deployed, or merged to main.
+
+on:
+  # pull_request_target runs in the BASE repository's context, so it can write the
+  # signature file on a fork PR. That is only safe because no step below checks out
+  # or executes the pull request's code — do not add actions/checkout to this job.
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+# One signature write at a time; concurrent PRs would otherwise race on the branch.
+concurrency:
+  group: cla-signatures
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    name: Check CLA signature
+    runs-on: ubuntu-latest
+    # Only wake for a pull request event or for the one comment that signs.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, 'I hereby sign the CLA'))
+    steps:
+      - name: CLA Assistant
+        # contributor-assistant/github-action v2.6.1, pinned by digest: this action
+        # holds contents: write on pull_request_target, so a moved tag would be a
+        # supply-chain hole. Bump both the digest and the version comment together.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/naive555/sapanjai/blob/main/CLA.md
+          path-to-signatures: signatures/v1/cla.json
+          branch: cla-signatures
+          # The copyright holder does not sign an agreement with themselves; bots
+          # cannot. Everyone else does.
+          allowlist: naive555,dependabot[bot],github-actions[bot],renovate[bot]
+          custom-notsigned-prcomment: >-
+            Thanks for the pull request. Sapanjai is dual licensed, so before this can be
+            merged we need a one-time Contributor License Agreement on file. Please read
+            **[CLA.md](https://github.com/naive555/sapanjai/blob/main/CLA.md)** — you keep
+            your copyright, and it takes one comment.
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-allsigned-prcomment: >-
+            CLA signed — thank you. This covers your future contributions too.

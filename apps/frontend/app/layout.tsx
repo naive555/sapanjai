@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Martian_Mono } from "next/font/google";
 import "./globals.css";
+import { SourceLink } from "@/components/source-link";
 import { Providers } from "./providers";
 
 // Display face. Wide and engineered — carries the wordmark and page titles
@@ -60,6 +61,12 @@ export default function RootLayout({
     >
       <body className="flex min-h-full flex-col">
         <Providers>{children}</Providers>
+        {/* Outside Providers on purpose: the footer is static server-rendered
+            markup with no need for theme, query, or session context, and
+            AGPL-3.0 §13's source offer should not depend on a client provider
+            tree having hydrated. Sits here in the root layout rather than in
+            each group layout so it covers auth, dashboard, and admin at once. */}
+        <SourceLink />
       </body>
     </html>
   );

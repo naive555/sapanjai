@@ -1,0 +1,24 @@
+# Renders the "Sponsor" button on the repository.
+#
+# Sponsorship funds maintenance of the open source project. It is deliberately
+# NOT an entitlement tier: no sponsor level unlocks a feature, raises a plan
+# limit, or changes what the software does. Gating features on sponsorship would
+# create a second source of truth for entitlements alongside the `plans` /
+# `org_subscriptions` tables, which `subscription.EffectiveLimits` cannot see.
+#
+# Paid tiers offer recognition, roadmap input, and priority issue triage only.
+# The commercially meaningful transactions are the hosted subscription and the
+# commercial license — see LICENSING.md.
+#
+# Note: the `github` key only renders once GitHub Sponsors is enabled and
+# approved on the account, which requires a payout method. Until then this file
+# is valid but shows nothing.
+
+github: [naive555]
+
+# Uncomment if you add these later. Ko-fi and Buy Me a Coffee take one-off
+# payments, which suit a project whose recurring revenue lives elsewhere.
+# ko_fi: your-handle
+# buy_me_a_coffee: your-handle
+# open_collective: sapanjai
+# custom: ["https://sapanjai.dev/sponsor"]
