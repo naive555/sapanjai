@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func testConnector() db.Connector {
 // ---- BuildServer: construction-time filtering (enforcement layer 1) ----
 
 func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil, nil)
 	conn := testConnector()
 
 	// connector:read gates two connector-agnostic tools now —
@@ -100,7 +101,7 @@ func TestBuildServer_ToolVisibilityByPermission(t *testing.T) {
 }
 
 func TestBuildServer_DescribeConnectorReturnsNoConfig(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil, nil)
 	conn := testConnector()
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
@@ -138,7 +139,7 @@ func TestBuildServer_DescribeConnectorReturnsNoConfig(t *testing.T) {
 // ---- enforce: request-time enforcement (layer 2) + audit ----
 
 func TestEnforce_DeniedToolIsNotCallable(t *testing.T) {
-	svc := mcp.NewService(nil, nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil, nil)
 	conn := testConnector()
 	// No grant at all: sapanjai_describe_connector is not registered, so
 	// this exercises the SDK's own "unknown tool" refusal — the tool being
@@ -164,7 +165,7 @@ func TestEnforce_MiddlewareDeniesEvenWhenRegistered(t *testing.T) {
 	// mirrors spikes/mcp-gateway's TestMiddlewareDeniesEvenWhenRegistered,
 	// the mid-session-revocation shape.
 	granted := &rbac.Principal{Actions: []string{"connector:read"}}
-	svc := mcp.NewService(nil, nil, nil, nil, nil)
+	svc := mcp.NewService(nil, nil, nil, nil, nil, nil)
 	conn := testConnector()
 	cs := connect(t, svc.BuildServer(granted, conn, mcp.RequestInfo{}))
 
@@ -220,7 +221,7 @@ func TestResolveConnector_DelegatesToConnectorService(t *testing.T) {
 			return want, nil
 		},
 	}
-	svc := mcp.NewService(getter, nil, nil, nil, nil)
+	svc := mcp.NewService(getter, nil, nil, nil, nil, nil)
 
 	got, err := svc.ResolveConnector(context.Background(), orgID, connID)
 	if err != nil {
@@ -240,10 +241,123 @@ func TestResolveConnector_PropagatesNotFound(t *testing.T) {
 			return db.Connector{}, wantErr
 		},
 	}
-	svc := mcp.NewService(getter, nil, nil, nil, nil)
+	svc := mcp.NewService(getter, nil, nil, nil, nil, nil)
 
 	_, err := svc.ResolveConnector(context.Background(), uuid.New(), uuid.New())
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+}
+
+// ---- recordUsage: the usage_events ledger (step 3 of
+// .claude/plans/2026-09-13-billing-and-usage-metering.md) ----
+
+// fakeUsageRecorder is a usageRecorder test double: records every call it
+// receives and, when err is set, fails every one of them — used to prove a
+// usage-write failure never surfaces to the tools/call caller (invariant 3).
+type fakeUsageRecorder struct {
+	mu    sync.Mutex
+	calls []db.CreateUsageEventParams
+	err   error
+}
+
+func (f *fakeUsageRecorder) CreateUsageEvent(ctx context.Context, arg db.CreateUsageEventParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, arg)
+	return f.err
+}
+
+func (f *fakeUsageRecorder) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// callTool is a small helper: connects, calls sapanjai_describe_connector
+// (the connector-agnostic tool every test in this file already uses, so no
+// connectorGetter/sheets config is needed to exercise a real dispatch), and
+// returns the result.
+func callTool(t *testing.T, cs *gomcp.ClientSession) *gomcp.CallToolResult {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &gomcp.CallToolParams{Name: "sapanjai_describe_connector"})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	return res
+}
+
+// TestRecordUsage_WriteFailureDoesNotFailToolCall is the plan's metering
+// testing expectation and invariant 3, made concrete: a broken usage ledger
+// must never be visible to the MCP client. The defer that calls recordUsage
+// runs (and, per Go's defer semantics, completes) before CallTool's result
+// reaches the client, so no sleep/poll is needed to observe its effect.
+func TestRecordUsage_WriteFailureDoesNotFailToolCall(t *testing.T) {
+	usage := &fakeUsageRecorder{err: errors.New("usage_events insert failed")}
+	svc := mcp.NewService(nil, nil, nil, usage, nil, nil)
+	conn := testConnector()
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
+
+	res := callTool(t, cs)
+	if res.IsError {
+		t.Fatalf("tools/call failed because its usage write failed: %v", res.Content)
+	}
+	if got := usage.callCount(); got != 1 {
+		t.Fatalf("usage recorder was called %d times, want 1 (the failed attempt)", got)
+	}
+	if got := svc.UsageWriteFailures(); got != 1 {
+		t.Errorf("UsageWriteFailures() = %d, want 1", got)
+	}
+}
+
+// TestRecordUsage_SuccessfulCallWritesOneRow covers the other half: a
+// permitted, successfully-dispatched call writes exactly one usage_events
+// row, scoped to the calling principal's org and the connector actually
+// used, naming the tool called and nothing else (never tool arguments,
+// never mcp_key_id — see recordUsage's doc comment for why the latter is
+// always NULL today).
+func TestRecordUsage_SuccessfulCallWritesOneRow(t *testing.T) {
+	usage := &fakeUsageRecorder{}
+	svc := mcp.NewService(nil, nil, nil, usage, nil, nil)
+	conn := testConnector()
+	orgID := uuid.New()
+	p := &rbac.Principal{Role: "owner", OrganizationID: orgID}
+	cs := connect(t, svc.BuildServer(p, conn, mcp.RequestInfo{}))
+
+	res := callTool(t, cs)
+	if res.IsError {
+		t.Fatalf("unexpected tool error: %v", res.Content)
+	}
+
+	if got := usage.callCount(); got != 1 {
+		t.Fatalf("usage recorder was called %d times, want exactly 1", got)
+	}
+	got := usage.calls[0]
+	if got.OrganizationID != orgID {
+		t.Errorf("OrganizationID = %s, want %s", got.OrganizationID, orgID)
+	}
+	if !got.ConnectorID.Valid || got.ConnectorID.Bytes != conn.ID {
+		t.Errorf("ConnectorID = %+v, want valid %s", got.ConnectorID, conn.ID)
+	}
+	if got.Tool != "sapanjai_describe_connector" {
+		t.Errorf("Tool = %q, want %q", got.Tool, "sapanjai_describe_connector")
+	}
+	if got.McpKeyID.Valid {
+		t.Errorf("McpKeyID = %+v, want NULL (not reachable at this call site today)", got.McpKeyID)
+	}
+}
+
+// TestRecordUsage_NilRecorderIsSafe pins the nil-tolerant convention
+// NewService's doc comment now documents for usage, mirroring limiter:
+// a Service built with no usage recorder (the zero value most unit tests in
+// this file already pass) must dispatch tools normally rather than panic.
+func TestRecordUsage_NilRecorderIsSafe(t *testing.T) {
+	svc := mcp.NewService(nil, nil, nil, nil, nil, nil)
+	conn := testConnector()
+	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
+
+	res := callTool(t, cs)
+	if res.IsError {
+		t.Fatalf("unexpected tool error with a nil usage recorder: %v", res.Content)
 	}
 }

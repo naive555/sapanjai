@@ -77,12 +77,17 @@ type Membership struct {
 }
 
 type OrgSubscription struct {
-	ID             uuid.UUID `json:"id"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	PlanID         uuid.UUID `json:"plan_id"`
-	CustomLimits   []byte    `json:"custom_limits"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                   uuid.UUID        `json:"id"`
+	OrganizationID       uuid.UUID        `json:"organization_id"`
+	PlanID               uuid.UUID        `json:"plan_id"`
+	CustomLimits         []byte           `json:"custom_limits"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
+	StripeCustomerID     *string          `json:"stripe_customer_id"`
+	StripeSubscriptionID *string          `json:"stripe_subscription_id"`
+	Status               *string          `json:"status"`
+	CurrentPeriodEnd     pgtype.Timestamp `json:"current_period_end"`
+	CancelAtPeriodEnd    bool             `json:"cancel_at_period_end"`
 }
 
 type Organization struct {
@@ -101,10 +106,24 @@ type Permission struct {
 }
 
 type Plan struct {
-	ID        uuid.UUID       `json:"id"`
-	Name      string          `json:"name"`
-	Limits    json.RawMessage `json:"limits"`
-	CreatedAt time.Time       `json:"created_at"`
+	ID              uuid.UUID       `json:"id"`
+	Name            string          `json:"name"`
+	Limits          json.RawMessage `json:"limits"`
+	CreatedAt       time.Time       `json:"created_at"`
+	StripeProductID *string         `json:"stripe_product_id"`
+	IsPublic        bool            `json:"is_public"`
+	SortOrder       int32           `json:"sort_order"`
+}
+
+type PlanPrice struct {
+	ID            uuid.UUID `json:"id"`
+	PlanID        uuid.UUID `json:"plan_id"`
+	StripePriceID string    `json:"stripe_price_id"`
+	UnitAmount    int64     `json:"unit_amount"`
+	Currency      string    `json:"currency"`
+	Interval      string    `json:"interval"`
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type Role struct {
@@ -123,6 +142,33 @@ type Session struct {
 	IsRevoked    bool      `json:"is_revoked"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type StripeEvent struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	ReceivedAt time.Time `json:"received_at"`
+}
+
+type UsageEvent struct {
+	ID             uuid.UUID   `json:"id"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
+	ConnectorID    pgtype.UUID `json:"connector_id"`
+	McpKeyID       pgtype.UUID `json:"mcp_key_id"`
+	Tool           string      `json:"tool"`
+	OccurredAt     time.Time   `json:"occurred_at"`
+	Quantity       int32       `json:"quantity"`
+}
+
+type UsageRollup struct {
+	ID             uuid.UUID        `json:"id"`
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	PeriodStart    time.Time        `json:"period_start"`
+	PeriodEnd      time.Time        `json:"period_end"`
+	Tool           string           `json:"tool"`
+	CallCount      int32            `json:"call_count"`
+	ReportedAt     pgtype.Timestamp `json:"reported_at"`
+	CreatedAt      time.Time        `json:"created_at"`
 }
 
 type User struct {

@@ -186,7 +186,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		return principal.Narrow(scopes), nil
 	}
 	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin, cfg.RedisKeyPrefix)
-	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, log, cfg.ConnectorMasterKey)
+	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, store, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant

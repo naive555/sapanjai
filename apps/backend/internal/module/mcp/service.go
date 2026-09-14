@@ -10,12 +10,15 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/sapanjai/backend/internal/adapter/googlesheets"
+	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/connector"
@@ -53,6 +56,16 @@ type rateLimiter interface {
 	Take(ctx context.Context, connectorID string, n int) (allowed bool, retryAfter time.Duration, err error)
 }
 
+// usageRecorder is the subset of *database.Store this depends on, narrowed
+// so unit tests can hand-mock it. No usage-ledger service exists to narrow
+// instead (unlike connectorGetter/rateLimiter), so *database.Store is what
+// gets narrowed here.
+type usageRecorder interface {
+	CreateUsageEvent(ctx context.Context, arg db.CreateUsageEventParams) error
+}
+
+var _ usageRecorder = (*database.Store)(nil)
+
 // Service builds per-request *mcp.Server instances scoped to one
 // authenticated principal and one resolved connector, wiring both
 // enforcement layers plus best-effort audit writes.
@@ -60,6 +73,7 @@ type Service struct {
 	connectors connectorGetter
 	limiter    rateLimiter
 	audit      *auditlog.Service
+	usage      usageRecorder
 	log        *slog.Logger
 
 	// sheetsTokens holds one OAuth TokenSource per connector id, shared
@@ -69,20 +83,35 @@ type Service struct {
 	// fileLinkKey signs and verifies drive_get_file download links. nil when
 	// masterKey was empty, which both call sites treat as "disabled".
 	fileLinkKey []byte
+
+	// usageWriteFailures counts failed usage_events inserts since process
+	// start (never reset on read), for a future health/metrics surface and
+	// for tests to assert a failure was counted, not just logged.
+	usageWriteFailures atomic.Int64
 }
 
 // NewService builds an mcp Service. limiter may be nil (unit tests), which
-// means no rate limiting rather than a nil-pointer panic. An empty masterKey
-// disables file-link minting rather than signing under an empty key.
-func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, log *slog.Logger, masterKey []byte) *Service {
+// means no rate limiting rather than a nil-pointer panic; usage follows the
+// same nil-tolerant convention, meaning no usage recording. Neither billing
+// nor rate limiting may ever be a hard dependency of building a Service. An
+// empty masterKey disables file-link minting rather than signing under an
+// empty key.
+func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, usage usageRecorder, log *slog.Logger, masterKey []byte) *Service {
 	return &Service{
 		connectors:   connectors,
 		limiter:      limiter,
 		audit:        audit,
+		usage:        usage,
 		log:          log,
 		sheetsTokens: googlesheets.NewTokenSourceCache(),
 		fileLinkKey:  deriveFileLinkKey(masterKey),
 	}
+}
+
+// UsageWriteFailures reports how many usage_events inserts have failed since
+// process start. Read-only; recordUsage is the sole writer.
+func (s *Service) UsageWriteFailures() int64 {
+	return s.usageWriteFailures.Load()
 }
 
 // openGoogleSheetsConfig decrypts conn's stored config and parses it as a
@@ -237,6 +266,11 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 				auditCtx := context.WithoutCancel(ctx)
 				defer func() {
 					s.auditToolCalled(auditCtx, p, conn, params.Name, time.Since(start), fields, result)
+					// Not filtered by result.IsError: the rollup job's drift
+					// check compares this table's count against audit_logs
+					// for the same window, so the two must record the same
+					// set of calls or the drift number means nothing.
+					s.recordUsage(auditCtx, p, conn, params.Name)
 				}()
 				result, err = next(ctx, method, req)
 				return result, err
@@ -395,6 +429,43 @@ func (s *Service) auditRateLimitHit(ctx context.Context, p *rbac.Principal, conn
 		"connector_id": conn.ID.String(),
 		"tool":         tool,
 	})
+}
+
+// recordUsage writes one usage_events row for a tools/call the enforce
+// middleware let through — the metering counterpart to auditToolCalled,
+// called from the same defer so both ledgers cover the same set of calls.
+//
+// Deliberately NOT best-effort the way recordAudit/auditlog.Service.Record
+// is: that asymmetry is why usage_events exists as its own ledger instead
+// of being folded into audit_logs — a silently dropped audit row is fine, a
+// silently dropped usage row is unrecorded revenue. A failure logs at
+// error (one level louder than recordAudit's) and bumps
+// usageWriteFailures, but still never returns an error, panics, or touches
+// the tools/call result — invariant 3 forbids billing from ever blocking
+// the gateway.
+//
+// mcp_key_id is always left NULL: the authenticated PAT's row id is not
+// reachable here today. rbac.Principal's doc comment says it "must never
+// grow a credential field", and RequestInfo.KeyName's doc comment says it
+// carries the key's display name "never the key id, hash, or token" — both
+// pre-existing, deliberate exclusions this step chooses not to fight rather
+// than an oversight to route around.
+func (s *Service) recordUsage(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
+	if s.usage == nil {
+		return
+	}
+	err := s.usage.CreateUsageEvent(ctx, db.CreateUsageEventParams{
+		OrganizationID: p.OrganizationID,
+		ConnectorID:    pgtype.UUID{Bytes: conn.ID, Valid: true},
+		Tool:           tool,
+	})
+	if err != nil {
+		s.usageWriteFailures.Add(1)
+		if s.log != nil {
+			s.log.Error("failed to record usage event", "error", err,
+				"organization_id", p.OrganizationID, "connector_id", conn.ID, "tool", tool)
+		}
+	}
 }
 
 // recordAudit is best-effort: a marshal or write failure is logged and

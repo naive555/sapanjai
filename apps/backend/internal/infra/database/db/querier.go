@@ -157,9 +157,27 @@ type Querier interface {
 	// recovery-code hashes generated at confirm time (never at enroll time,
 	// since enroll may be called repeatedly before a confirm ever lands).
 	ConfirmUserTOTP(ctx context.Context, arg ConfirmUserTOTPParams) error
+	// The audit_logs side of the same cross-check. "Two independent counters
+	// disagreeing is the detection mechanism" (plan's "the metering problem,
+	// stated plainly") for the undercounting invariant 3 makes structural: a
+	// dropped usage_events write (logged at error, internal/module/mcp's
+	// recordUsage) or a dropped audit_logs write (best-effort,
+	// auditlog.Service.Record) shows up here as nonzero drift rather than
+	// silently. created_at has no time zone -- `since` must already be UTC wall
+	// clock, matching every other naive-timestamp comparison in this codebase
+	// (see auditlog.sql's QueryAuditLogs comment). Served by
+	// idx_audit_logs_created_at (00011), which leads on created_at alone --
+	// the same shape idx_audit_logs_organization_id_created_at (00009) cannot
+	// serve since this query has no organization_id predicate.
+	CountAuditLogsToolCalledSince(ctx context.Context, since time.Time) (int64, error)
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
+	// The usage_events side of the rollup job's audit_logs cross-check. Bounded
+	// by the same `since` the rollup itself uses, and served by
+	// idx_usage_events_occurred_at (00014) -- the same index the prune query
+	// uses, both leading on occurred_at with no organization_id predicate.
+	CountUsageEventsSince(ctx context.Context, since time.Time) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
 	// scopes ($6) is nullable: a nil slice binds NULL (no independent
@@ -173,6 +191,14 @@ type Querier interface {
 	CreatePermission(ctx context.Context, arg CreatePermissionParams) error
 	CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	// One row per billable MCP tool call, written from the gateway's hot path
+	// (internal/module/mcp/service.go) immediately alongside the mcp.tool.called
+	// audit row -- see migration 00014's comment on usage_events. connector_id
+	// and mcp_key_id are nullable FKs (ON DELETE SET NULL) so a later connector
+	// or key deletion never erases the count it represents. quantity is not
+	// taken as a parameter: it defaults to 1, matching "one row = one billable
+	// tool call" -- this is never the rate limiter's N-upstream-request charge.
+	CreateUsageEvent(ctx context.Context, arg CreateUsageEventParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteConnector(ctx context.Context, arg DeleteConnectorParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context, arg DeleteExpiredSessionsParams) (int64, error)
@@ -233,6 +259,13 @@ type Querier interface {
 	MarkEmailSent(ctx context.Context, id uuid.UUID) error
 	MarkUserVerified(ctx context.Context, id uuid.UUID) error
 	PruneEmailOutbox(ctx context.Context, arg PruneEmailOutboxParams) (int64, error)
+	// Deletes usage_events rows older than retention, batch-at-a-time like
+	// PruneEmailOutbox (email_outbox.sql) and DeleteExpiredSessions
+	// (sessions.sql). Deliberately has no organization_id predicate -- this is
+	// the query idx_usage_events_occurred_at (00014) exists for; adding one
+	// would defeat that index on this table, which is the largest in the
+	// schema (one row per tool call).
+	PruneUsageEvents(ctx context.Context, arg PruneUsageEventsParams) (int64, error)
 	// actions is a nullable text[]: NULL (no ?action= given at all) matches
 	// every row, same as before repeatable action filtering was added. An
 	// empty (non-NULL) array must never reach this query — `action = ANY('{}')`
@@ -253,6 +286,21 @@ type Querier interface {
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	// Folds usage_events into usage_rollups for every period whose bucket start
+	// (UTC calendar month, date_trunc('month', occurred_at)) falls on or after
+	// `since`. internal/job/usagerollup is the only caller, and it is the one
+	// that must keep `since` inside the still-fully-present window -- see that
+	// package's rollupLookbackMonths comment for why a re-aggregation must never
+	// reach a period that a prior prune has partially emptied.
+	//
+	// The ON CONFLICT target is usage_rollups' natural key from migration 00014
+	// (organization_id, period_start, tool) -- deliberately excluding
+	// period_end, per that migration's comment -- so re-running this over the
+	// same window is idempotent: it recomputes each period's true count from
+	// usage_events and overwrites the existing rollup rather than adding to it.
+	// reported_at is never set here (decision 1: a cap, not a charge -- nothing
+	// is ever reported to Stripe from this table).
+	RollupUsageEvents(ctx context.Context, since time.Time) (int64, error)
 	// Both $2 and $3 are nullable; an unban passes NULL/NULL. users.banned_at
 	// is the durable source of truth behind the Redis banned:<userId> cache
 	// (see internal/infra/redis/auth.go and internal/middleware.Guards.verify).

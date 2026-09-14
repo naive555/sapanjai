@@ -11,7 +11,7 @@ import (
 )
 
 const getPlanByName = `-- name: GetPlanByName :one
-SELECT id, name, limits, created_at FROM plans WHERE name = $1
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE name = $1
 `
 
 func (q *Queries) GetPlanByName(ctx context.Context, name string) (Plan, error) {
@@ -22,12 +22,15 @@ func (q *Queries) GetPlanByName(ctx context.Context, name string) (Plan, error) 
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }
 
 const listPlans = `-- name: ListPlans :many
-SELECT id, name, limits, created_at FROM plans ORDER BY created_at ASC
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans ORDER BY created_at ASC
 `
 
 func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
@@ -44,6 +47,9 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 			&i.Name,
 			&i.Limits,
 			&i.CreatedAt,
+			&i.StripeProductID,
+			&i.IsPublic,
+			&i.SortOrder,
 		); err != nil {
 			return nil, err
 		}

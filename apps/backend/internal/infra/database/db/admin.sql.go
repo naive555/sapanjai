@@ -307,7 +307,7 @@ func (q *Queries) AdminCountUsersSince(ctx context.Context, since time.Time) (in
 }
 
 const adminCreatePlan = `-- name: AdminCreatePlan :one
-INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING id, name, limits, created_at
+INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING id, name, limits, created_at, stripe_product_id, is_public, sort_order
 `
 
 type AdminCreatePlanParams struct {
@@ -329,6 +329,9 @@ func (q *Queries) AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -389,7 +392,7 @@ func (q *Queries) AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (O
 }
 
 const adminGetPlanByID = `-- name: AdminGetPlanByID :one
-SELECT id, name, limits, created_at FROM plans WHERE id = $1
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE id = $1
 `
 
 func (q *Queries) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error) {
@@ -400,6 +403,9 @@ func (q *Queries) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, err
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -857,7 +863,7 @@ func (q *Queries) AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCu
 }
 
 const adminUpdatePlan = `-- name: AdminUpdatePlan :one
-UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING id, name, limits, created_at
+UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING id, name, limits, created_at, stripe_product_id, is_public, sort_order
 `
 
 type AdminUpdatePlanParams struct {
@@ -878,6 +884,9 @@ func (q *Queries) AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }

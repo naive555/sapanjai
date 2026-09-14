@@ -41,6 +41,16 @@ const (
 // reason maxCleanupBatchSize exists.
 const maxConnectorHealthBatchSize = 1000
 
+// maxUsageRollupBatchSize bounds USAGE_ROLLUP_BATCH_SIZE. usage_events is
+// the largest table in the schema (one row per billable tool call, per
+// migration 00014's comment), and its prune query is shaped exactly like
+// DeleteExpiredSessions' (id IN (SELECT ... LIMIT n)), so it gets the same
+// generous ceiling as maxCleanupBatchSize rather than
+// maxConnectorHealthBatchSize's tighter one (that job's batch is bounded by
+// how many upstream health probes a single sweep should attempt, an
+// unrelated concern).
+const maxUsageRollupBatchSize = 10_000
+
 type Config struct {
 	AppName  string
 	AppEnv   string
@@ -139,6 +149,35 @@ type Config struct {
 	// ConnectorHealthBatchSize is how many connectors one sweep checks,
 	// oldest-checked-first (nulls -- never checked -- first).
 	ConnectorHealthBatchSize int
+
+	// UsageRollupInterval is how often internal/job/usagerollup folds
+	// usage_events into usage_rollups, cross-checks the count against
+	// audit_logs, and prunes usage_events past retention. The rollup query
+	// is a single bounded aggregate (rollupLookbackMonths trailing calendar
+	// months, not the whole table) and is idempotent, so running it often
+	// is cheap and safe -- and running it often matters, because a stale
+	// rollup is a stale view for whatever later enforces
+	// max_tool_calls_per_month: a customer could blow well past a cap
+	// before anyone (human or code) notices. 15m keeps that lag small
+	// without re-aggregating on every gateway request the way a per-call
+	// count would.
+	UsageRollupInterval time.Duration
+
+	// UsageEventsRetention is how long usage_events rows are kept before
+	// internal/job/usagerollup prunes them, once folded into a durable
+	// usage_rollups row. This number (2160h/90 days) and its reasoning were
+	// decided in migration 00014's comment on usage_events, not here: it
+	// covers roughly three monthly billing cycles of investigation
+	// headroom -- disputes, the audit_logs drift cross-check's forensic
+	// window -- well past any plausible rollup-job outage, without keeping
+	// a per-call ledger forever.
+	UsageEventsRetention time.Duration
+
+	// UsageRollupBatchSize is how many usage_events rows one prune
+	// statement deletes at a time (internal/job/usagerollup), following
+	// SESSION_CLEANUP_BATCH_SIZE's shape -- the rollup step itself is a
+	// single unbatched aggregate query, so this only bounds the prune.
+	UsageRollupBatchSize int
 
 	// AdminIPAllowlist gates the /admin route group (execution plan Task
 	// 6.2, docs/11-admin-panel.md) before RequireAuth runs at all — an
@@ -242,6 +281,8 @@ func Load() (*Config, error) {
 		{"EMAIL_DISPATCH_INTERVAL", "15s", &cfg.EmailDispatchInterval},
 		{"EMAIL_OUTBOX_RETENTION", "168h", &cfg.EmailOutboxRetention},
 		{"CONNECTOR_HEALTH_INTERVAL", "6h", &cfg.ConnectorHealthInterval},
+		{"USAGE_ROLLUP_INTERVAL", "15m", &cfg.UsageRollupInterval},
+		{"USAGE_EVENTS_RETENTION", "2160h", &cfg.UsageEventsRetention},
 	} {
 		parsed, err := time.ParseDuration(getEnv(d.key, d.fallback))
 		switch {
@@ -309,6 +350,16 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("CONNECTOR_HEALTH_BATCH_SIZE must be between 1 and %d", maxConnectorHealthBatchSize))
 	default:
 		cfg.ConnectorHealthBatchSize = connectorHealthBatchSize
+	}
+
+	usageRollupBatchSize, err := strconv.Atoi(getEnv("USAGE_ROLLUP_BATCH_SIZE", "1000"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("USAGE_ROLLUP_BATCH_SIZE is not a valid integer: %v", err))
+	case usageRollupBatchSize < 1 || usageRollupBatchSize > maxUsageRollupBatchSize:
+		problems = append(problems, fmt.Sprintf("USAGE_ROLLUP_BATCH_SIZE must be between 1 and %d", maxUsageRollupBatchSize))
+	default:
+		cfg.UsageRollupBatchSize = usageRollupBatchSize
 	}
 
 	allowlist, err := parseCIDRList(os.Getenv("ADMIN_IP_ALLOWLIST"))

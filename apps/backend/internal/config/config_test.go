@@ -34,6 +34,7 @@ func setBaselineEnv(t *testing.T) {
 		"EMAIL_DISPATCH_INTERVAL", "EMAIL_DISPATCH_BATCH_SIZE",
 		"EMAIL_MAX_ATTEMPTS", "EMAIL_OUTBOX_RETENTION",
 		"CONNECTOR_HEALTH_INTERVAL", "CONNECTOR_HEALTH_BATCH_SIZE",
+		"USAGE_ROLLUP_INTERVAL", "USAGE_EVENTS_RETENTION", "USAGE_ROLLUP_BATCH_SIZE",
 		"ADMIN_IP_ALLOWLIST", "ADMIN_REQUIRE_2FA",
 	} {
 		t.Setenv(k, "")
@@ -193,6 +194,103 @@ func TestLoad_AcceptsConnectorHealthBatchSizeBounds(t *testing.T) {
 	t.Setenv("CONNECTOR_HEALTH_BATCH_SIZE", "1000")
 	if cfg := mustLoad(t); cfg.ConnectorHealthBatchSize != 1000 {
 		t.Errorf("upper bound rejected: batch=%d", cfg.ConnectorHealthBatchSize)
+	}
+}
+
+// A deployment that never sets a usage-rollup variable must still boot,
+// with the defaults migration 00014's comment and internal/job/usagerollup's
+// package doc both describe.
+func TestLoad_UsageRollupDefaults(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+
+	if cfg.UsageRollupInterval != 15*time.Minute {
+		t.Errorf("UsageRollupInterval = %v, want 15m", cfg.UsageRollupInterval)
+	}
+	if cfg.UsageEventsRetention != 2160*time.Hour {
+		t.Errorf("UsageEventsRetention = %v, want 2160h (90d)", cfg.UsageEventsRetention)
+	}
+	if cfg.UsageRollupBatchSize != 1000 {
+		t.Errorf("UsageRollupBatchSize = %d, want 1000", cfg.UsageRollupBatchSize)
+	}
+}
+
+func TestLoad_UsageRollupOverrides(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("USAGE_ROLLUP_INTERVAL", "5m")
+	t.Setenv("USAGE_EVENTS_RETENTION", "720h")
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "250")
+
+	cfg := mustLoad(t)
+
+	if cfg.UsageRollupInterval != 5*time.Minute {
+		t.Errorf("UsageRollupInterval = %v, want 5m", cfg.UsageRollupInterval)
+	}
+	if cfg.UsageEventsRetention != 720*time.Hour {
+		t.Errorf("UsageEventsRetention = %v, want 720h", cfg.UsageEventsRetention)
+	}
+	if cfg.UsageRollupBatchSize != 250 {
+		t.Errorf("UsageRollupBatchSize = %d, want 250", cfg.UsageRollupBatchSize)
+	}
+}
+
+func TestLoad_RejectsInvalidUsageRollupDuration(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"USAGE_ROLLUP_INTERVAL", "banana"},
+		{"USAGE_ROLLUP_INTERVAL", "0h"},
+		{"USAGE_ROLLUP_INTERVAL", "-1h"},
+		{"USAGE_EVENTS_RETENTION", "banana"},
+		{"USAGE_EVENTS_RETENTION", "0h"},
+		{"USAGE_EVENTS_RETENTION", "-1h"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_RejectsOutOfRangeUsageRollupBatchSize(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"USAGE_ROLLUP_BATCH_SIZE", "not-a-number"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "0"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "-1"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "10001"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_AcceptsUsageRollupBatchSizeBounds(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "1")
+	if cfg := mustLoad(t); cfg.UsageRollupBatchSize != 1 {
+		t.Errorf("lower bound rejected: batch=%d", cfg.UsageRollupBatchSize)
+	}
+
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "10000")
+	if cfg := mustLoad(t); cfg.UsageRollupBatchSize != 10000 {
+		t.Errorf("upper bound rejected: batch=%d", cfg.UsageRollupBatchSize)
 	}
 }
 
