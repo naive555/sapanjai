@@ -9,6 +9,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,8 @@ import (
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/rbac"
+	"github.com/sapanjai/backend/internal/module/subscription"
+	"github.com/sapanjai/backend/internal/shared/apperror"
 )
 
 // toolCallCost is the floor every tools/call charges against its connector's
@@ -30,6 +33,15 @@ import (
 // none is still worth limiting. Adapters that issue N upstream requests
 // charge N themselves via Service.ChargeRateLimit, per page, mid-execution.
 const toolCallCost = 1
+
+// maxToolCallsPerMonthLimitKey is the plans.limits key gating tool-call
+// volume — step 5 of .claude/plans/2026-09-13-billing-and-usage-metering.md,
+// decision 1: a tool call is a cap, not a charge. Mirrors
+// connector.Service's maxConnectorsLimitKey. An org whose plan omits it, or
+// whose org has no subscription at all, is unlimited
+// (subscription.Service.EnforceLimit's existing semantics — no new ones
+// added here).
+const maxToolCallsPerMonthLimitKey = "max_tool_calls_per_month"
 
 // ServerName and ServerVersion identify this gateway to clients during the
 // initialize handshake.
@@ -59,12 +71,27 @@ type rateLimiter interface {
 // usageRecorder is the subset of *database.Store this depends on, narrowed
 // so unit tests can hand-mock it. No usage-ledger service exists to narrow
 // instead (unlike connectorGetter/rateLimiter), so *database.Store is what
-// gets narrowed here.
+// gets narrowed here. CountUsageEventsForOrgSince is the quota check's read
+// side (step 5); CreateUsageEvent is the metering write side (step 3) —
+// grouped in one interface because both back onto the same usage_events
+// table and the same injected *database.Store.
 type usageRecorder interface {
 	CreateUsageEvent(ctx context.Context, arg db.CreateUsageEventParams) error
+	CountUsageEventsForOrgSince(ctx context.Context, arg db.CountUsageEventsForOrgSinceParams) (int64, error)
 }
 
 var _ usageRecorder = (*database.Store)(nil)
+
+// quotaEnforcer is the subset of *subscription.Service the quota check
+// depends on, narrowed exactly like connector.Service's limitEnforcer — same
+// shape, same reasoning: EnforceLimit already treats a missing subscription,
+// a missing limit key, or -1 as unlimited, so this package adds no new
+// semantics on top of it.
+type quotaEnforcer interface {
+	EnforceLimit(ctx context.Context, organizationID uuid.UUID, key string, currentCount int) error
+}
+
+var _ quotaEnforcer = (*subscription.Service)(nil)
 
 // Service builds per-request *mcp.Server instances scoped to one
 // authenticated principal and one resolved connector, wiring both
@@ -74,6 +101,7 @@ type Service struct {
 	limiter    rateLimiter
 	audit      *auditlog.Service
 	usage      usageRecorder
+	quota      quotaEnforcer
 	log        *slog.Logger
 
 	// sheetsTokens holds one OAuth TokenSource per connector id, shared
@@ -91,21 +119,39 @@ type Service struct {
 }
 
 // NewService builds an mcp Service. limiter may be nil (unit tests), which
-// means no rate limiting rather than a nil-pointer panic; usage follows the
-// same nil-tolerant convention, meaning no usage recording. Neither billing
-// nor rate limiting may ever be a hard dependency of building a Service. An
-// empty masterKey disables file-link minting rather than signing under an
-// empty key.
-func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, usage usageRecorder, log *slog.Logger, masterKey []byte) *Service {
+// means no rate limiting rather than a nil-pointer panic; usage and quota
+// follow the same nil-tolerant convention, meaning no usage recording and no
+// quota enforcement respectively. Neither billing nor rate limiting may ever
+// be a hard dependency of building a Service. An empty masterKey disables
+// file-link minting rather than signing under an empty key.
+func NewService(connectors connectorGetter, limiter rateLimiter, audit *auditlog.Service, usage usageRecorder, quota quotaEnforcer, log *slog.Logger, masterKey []byte) *Service {
 	return &Service{
 		connectors:   connectors,
 		limiter:      limiter,
 		audit:        audit,
 		usage:        usage,
+		quota:        quota,
 		log:          log,
 		sheetsTokens: googlesheets.NewTokenSourceCache(),
 		fileLinkKey:  deriveFileLinkKey(masterKey),
 	}
+}
+
+// currentBillingPeriodStart returns the start of the current UTC calendar
+// month — the same boundary internal/job/usagerollup buckets on
+// (date_trunc('month', occurred_at)), so the quota check below counts
+// exactly the window the rollup and the frontend usage meter will later
+// agree is "this month". Counting usage_events directly for this window
+// (rather than reading usage_rollups) costs one indexed query
+// (idx_usage_events_organization_id_occurred_at, migration 00014) per
+// tools/call, on the gateway's latency path — accepted because the
+// alternative, reading the rollup, is stale by up to USAGE_ROLLUP_INTERVAL
+// for the current, still-open month and would let a customer overshoot by a
+// whole interval's traffic. A cached/buffered counter is explicitly
+// deferred per the plan's §Risks ("measure before building it").
+func currentBillingPeriodStart() time.Time {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // UsageWriteFailures reports how many usage_events inserts have failed since
@@ -225,6 +271,55 @@ func (s *Service) enforce(p *rbac.Principal, conn db.Connector) gomcp.Middleware
 				if !p.Allows(action) {
 					s.auditToolDenied(ctx, p, conn, params.Name, action)
 					return PermissionDenied(action), nil
+				}
+				// Quota check runs after the permission check (an
+				// unpermitted call should never spend budget — same
+				// principle the rate-limit check below states) and before
+				// it, so a call refused for quota never spends rate-limit
+				// budget either: quota is the "can this org call at all
+				// this month" gate, rate-limiting is "how fast can it call
+				// right now", and the cheaper, less contended check goes
+				// first.
+				if s.quota != nil && s.usage != nil {
+					count, countErr := s.usage.CountUsageEventsForOrgSince(ctx, db.CountUsageEventsForOrgSinceParams{
+						OrganizationID: p.OrganizationID,
+						Since:          currentBillingPeriodStart(),
+					})
+					if countErr != nil {
+						// Invariant 3 ("billing never blocks the gateway")
+						// cuts the OPPOSITE way from the rate limiter's
+						// infra-failure branch just below: that check
+						// protects Google's API from us, so it fails
+						// closed. This one protects our own revenue
+						// bookkeeping, and a failure to *determine* the
+						// quota (a DB error counting usage) is not a
+						// genuinely exhausted quota — it is a billing
+						// bookkeeping failure, and CLAUDE.md/invariant 3
+						// forbid that from ever taking down a customer's
+						// data access. So: log loudly, then let the call
+						// through.
+						if s.log != nil {
+							s.log.Error("mcp quota count failed; allowing call through", "error", countErr,
+								"organization_id", p.OrganizationID, "connector_id", conn.ID, "tool", params.Name)
+						}
+					} else if enforceErr := s.quota.EnforceLimit(ctx, p.OrganizationID, maxToolCallsPerMonthLimitKey, int(count)); enforceErr != nil {
+						var appErr *apperror.Error
+						if errors.As(enforceErr, &appErr) && appErr.Code == apperror.LimitExceeded {
+							// The quota is genuinely exhausted: this is the
+							// one branch that actually refuses the call.
+							s.auditQuotaExceeded(ctx, p, conn, params.Name)
+							return QuotaExceeded(), nil
+						}
+						// EnforceLimit's own lookup failed for a reason
+						// other than "limit reached" (e.g. the
+						// subscription/plan read errored). Same fail-open
+						// reasoning as the count failure above: a failure to
+						// determine the quota is not an exceeded quota.
+						if s.log != nil {
+							s.log.Error("mcp quota enforcement failed; allowing call through", "error", enforceErr,
+								"organization_id", p.OrganizationID, "connector_id", conn.ID, "tool", params.Name)
+						}
+					}
 				}
 				// Rate-limit check runs after the permission check (an
 				// unpermitted call should never spend budget) and before
@@ -426,6 +521,18 @@ func (s *Service) auditToolDenied(ctx context.Context, p *rbac.Principal, conn d
 // missing_permission field.
 func (s *Service) auditRateLimitHit(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
 	s.recordAudit(ctx, auditlog.ActionMCPRateLimitHit, p, map[string]any{
+		"connector_id": conn.ID.String(),
+		"tool":         tool,
+	})
+}
+
+// auditQuotaExceeded records mcp.quota.exceeded when a call is refused
+// because its organization has used its full max_tool_calls_per_month quota
+// for the current billing month — a distinct quota failure from
+// mcp.ratelimit.hit; see ActionMCPQuotaExceeded's doc comment for why the
+// two are not folded into one action.
+func (s *Service) auditQuotaExceeded(ctx context.Context, p *rbac.Principal, conn db.Connector, tool string) {
+	s.recordAudit(ctx, auditlog.ActionMCPQuotaExceeded, p, map[string]any{
 		"connector_id": conn.ID.String(),
 		"tool":         tool,
 	})

@@ -53,6 +53,26 @@ func RateLimited(retryAfter time.Duration) *gomcp.CallToolResult {
 		retrySeconds(retryAfter))
 }
 
+// QuotaExceeded builds the result a tools/call returns when the calling
+// organization has used its entire max_tool_calls_per_month quota for the
+// current UTC calendar month (step 5 of
+// .claude/plans/2026-09-13-billing-and-usage-metering.md, decision 1: a
+// tool call is a cap, not a charge). Deliberately a separate helper from
+// RateLimited rather than the same message with a different code: "you are
+// out of monthly quota, ask your organization owner to upgrade the plan"
+// and "slow down, retry in N seconds" call for different agent behavior —
+// an agent that retries a quota-exhausted call after a backoff just spends
+// the wait fetching the identical refusal, where a rate limit's backoff
+// actually helps. Per §Risks in the plan ("the error must say what happened
+// and what to do about it"), the text names both: what happened (monthly
+// quota used up) and what to do (ask the org owner to upgrade; no self-serve
+// retry fixes this).
+func QuotaExceeded() *gomcp.CallToolResult {
+	return errResult("QUOTA_EXCEEDED: this organization has used its full tool-call quota for the " +
+		"current billing month under its current plan. Retrying will not help — ask your " +
+		"organization owner to upgrade the plan, or wait for the quota to reset next month.")
+}
+
 // retrySeconds renders a retry-after as whole seconds, shared with the REST
 // side's rateLimitedMessage (handler.go) so both state it identically.
 func retrySeconds(retryAfter time.Duration) int64 {

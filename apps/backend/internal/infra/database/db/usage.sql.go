@@ -38,6 +38,40 @@ func (q *Queries) CountAuditLogsToolCalledSince(ctx context.Context, since time.
 	return count, err
 }
 
+const countUsageEventsForOrgSince = `-- name: CountUsageEventsForOrgSince :one
+SELECT count(*) FROM usage_events
+WHERE organization_id = $1
+  AND occurred_at >= $2::timestamp
+`
+
+type CountUsageEventsForOrgSinceParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Since          time.Time `json:"since"`
+}
+
+// Step 5 of docs/12-billing-and-metering.md (not yet written; see
+// .claude/plans/2026-09-13-billing-and-usage-metering.md): the current
+// tool-call count subscription.Service.EnforceLimit checks against
+// max_tool_calls_per_month before a tools/call dispatches
+// (internal/module/mcp/service.go). Counts usage_events directly rather
+// than reading usage_rollups, because the rollup for the current, still-open
+// month can be up to USAGE_ROLLUP_INTERVAL stale -- counting raw events
+// matches the cap's window exactly instead of undercounting by up to one
+// interval. Callers pass the start of the current UTC calendar month as
+// `since`, the same boundary internal/job/usagerollup buckets on
+// (date_trunc('month', occurred_at)), so the cap and the rollup agree on
+// what "this month" means. Served by
+// idx_usage_events_organization_id_occurred_at (00014), which leads on
+// organization_id -- unlike CountUsageEventsSince below, which has no
+// organization_id predicate and is served by the occurred_at-only index
+// instead.
+func (q *Queries) CountUsageEventsForOrgSince(ctx context.Context, arg CountUsageEventsForOrgSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsageEventsForOrgSince, arg.OrganizationID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUsageEventsSince = `-- name: CountUsageEventsSince :one
 SELECT count(*) FROM usage_events
 WHERE occurred_at >= $1::timestamp

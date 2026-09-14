@@ -186,7 +186,12 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		return principal.Narrow(scopes), nil
 	}
 	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin, cfg.RedisKeyPrefix)
-	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, store, log, cfg.ConnectorMasterKey)
+	// subSvc (constructed above for /subscription and connector's own
+	// max_connectors check) is reused as-is for the gateway's
+	// max_tool_calls_per_month quota check (step 5 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md) — the same
+	// EnforceLimit method, no new subscription plumbing.
+	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, store, subSvc, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant

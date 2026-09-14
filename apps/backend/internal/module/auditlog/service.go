@@ -55,6 +55,19 @@ const (
 	// failure, not an authorization one).
 	ActionMCPRateLimitHit = "mcp.ratelimit.hit"
 
+	// ActionMCPQuotaExceeded is written when a tools/call is refused because
+	// its organization has used its entire max_tool_calls_per_month quota
+	// for the current UTC calendar month — step 5 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md. Kept distinct
+	// from ActionMCPRateLimitHit even though both are quota failures rather
+	// than authorization ones: a rate-limit hit is a transient upstream-API
+	// throttle a client should retry shortly, while a quota-exceeded refusal
+	// only clears on the next billing period or a plan upgrade, and an
+	// operator triaging refusals needs to tell the two apart at a glance.
+	// Metadata carries connector_id and tool, the same shape as
+	// ActionMCPRateLimitHit.
+	ActionMCPQuotaExceeded = "mcp.quota.exceeded"
+
 	// ActionMCPFileDownloaded is written by GET /mcp/files/:connectorId/
 	// :fileId (internal/module/mcp/handler.go's downloadFile) once a
 	// download has actually streamed — docs/07-sheets-adapter-decisions.md step

@@ -63,7 +63,7 @@ func testDownloadHandler(t *testing.T, masterKey []byte) (*httptest.Server, *rec
 	t.Helper()
 
 	getter := &recordingConnectorGetter{err: errors.New("stop here — this test only cares whether Get was reached")}
-	svc := NewService(getter, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), masterKey)
+	svc := NewService(getter, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), masterKey)
 	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	e := echo.New()
