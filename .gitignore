@@ -14,6 +14,16 @@ apps/frontend/.env.local
 # Go
 apps/backend/tmp/
 apps/backend/bin/
+# `go build ./cmd/x` drops its binary in the package root rather than bin/,
+# so each cmd's name is also a stray ~38MB artifact one `git add -A` from
+# being committed. Each path is anchored (it contains a slash, so it is
+# relative to this file) precisely so it cannot also match the source
+# directories of the same name under apps/backend/cmd/.
+apps/backend/api
+apps/backend/worker
+apps/backend/migrate
+apps/backend/seed
+apps/backend/healthcheck
 
 # K8s secrets
 k8s/secret.yaml
