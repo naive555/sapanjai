@@ -15,6 +15,13 @@ func TestIsSensitive(t *testing.T) {
 		"token", "accessToken", "access_token", "refreshToken", "refresh-token",
 		"cookie", "Set-Cookie", "secret", "apiKey", "api_key",
 		"encryptedConfig", "encrypted_config", "connectorConfig", "masterKey", "master_key", "dataKey",
+		// Stripe credentials (internal/module/billing, step 6). Listed in
+		// every spelling a call site might reach for, because normalizeKey
+		// strips separators but does not match substrings — "stripe_key"
+		// is NOT covered by the bare "apikey"/"secret" entries.
+		"stripeSecretKey", "stripe_secret_key", "STRIPE_SECRET_KEY",
+		"stripeApiKey", "stripe_api_key", "stripeKey", "stripe_key",
+		"webhookSecret", "webhook_secret",
 	}
 	for _, key := range sensitive {
 		if !IsSensitive(key) {

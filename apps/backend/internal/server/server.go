@@ -24,6 +24,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/admin"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/auth"
+	"github.com/sapanjai/backend/internal/module/billing"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/health"
 	"github.com/sapanjai/backend/internal/module/mcp"
@@ -193,6 +194,26 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	// EnforceLimit method, no new subscription plumbing.
 	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, store, subSvc, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
+
+	// Billing (step 6 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md). Both routes
+	// sit on RequirePermission("billing:write"), never RequireOrg — see
+	// billing.PermissionWrite.
+	//
+	// newStripeClient returns nil when STRIPE_SECRET_KEY is unset, and the
+	// routes are mounted anyway: they stay permission-guarded and answer
+	// BILLING_NOT_CONFIGURED (501). Mounting unconditionally is what keeps a
+	// Stripe-less local dev box and a production deployment presenting the
+	// same route surface, so a guard regression cannot hide behind a route
+	// that simply isn't there. This is also the one secret the API holds
+	// that the RESEND_API_KEY precedent would have kept on the worker:
+	// checkout creation is request-driven, so a restricted key (rk_) bounds
+	// the blast radius instead — see config.Config.StripeSecretKey.
+	//
+	// cfg.AppPublicURL, not this API's address: every URL Stripe redirects a
+	// human to is a page in apps/frontend.
+	billingSvc := billing.NewService(store, billing.NewStripeClient(cfg.StripeSecretKey), auditSvc, cfg.AppPublicURL, log)
+	billing.NewHandler(billingSvc).Register(e.Group("/billing"), guards)
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant
 	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission.

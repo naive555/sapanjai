@@ -36,6 +36,7 @@ func setBaselineEnv(t *testing.T) {
 		"CONNECTOR_HEALTH_INTERVAL", "CONNECTOR_HEALTH_BATCH_SIZE",
 		"USAGE_ROLLUP_INTERVAL", "USAGE_EVENTS_RETENTION", "USAGE_ROLLUP_BATCH_SIZE",
 		"ADMIN_IP_ALLOWLIST", "ADMIN_REQUIRE_2FA",
+		"STRIPE_SECRET_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -561,5 +562,112 @@ func TestLoad_RedisKeyPrefixNormalisesAndOptsOut(t *testing.T) {
 				t.Errorf("RedisKeyPrefix = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---- STRIPE_SECRET_KEY (billing, step 6) ----
+
+// TestLoad_StripeKeyUnsetDisablesBillingWithoutFailing is the requirement
+// that a developer with no Stripe account — and CI, which has none either —
+// can still boot the API and run the whole test suite. The posture mirrors
+// RESEND_API_KEY's: unset degrades to a disabled feature, it does not fail
+// startup. The /billing routes stay mounted and permission-guarded and
+// answer BILLING_NOT_CONFIGURED.
+func TestLoad_StripeKeyUnsetDisablesBillingWithoutFailing(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+	if cfg.StripeSecretKey != "" {
+		t.Fatalf("StripeSecretKey = %q, want empty by default", cfg.StripeSecretKey)
+	}
+	if cfg.BillingEnabled() {
+		t.Fatal("BillingEnabled() = true with no STRIPE_SECRET_KEY set")
+	}
+}
+
+func TestLoad_StripeKeyAcceptsRestrictedAndSecretKeys(t *testing.T) {
+	for name, key := range map[string]string{
+		"restricted key (what this deployment should use)": "rk_test_51abcdefgh",
+		"account-wide secret key (accepted, not advised)":  "sk_live_51abcdefgh",
+	} {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_SECRET_KEY", key)
+
+			cfg := mustLoad(t)
+			if cfg.StripeSecretKey != key {
+				t.Fatalf("StripeSecretKey = %q, want %q", cfg.StripeSecretKey, key)
+			}
+			if !cfg.BillingEnabled() {
+				t.Fatal("BillingEnabled() = false with a key set")
+			}
+		})
+	}
+}
+
+func TestLoad_StripeKeyIsTrimmed(t *testing.T) {
+	setBaselineEnv(t)
+	// A key pasted from a dashboard routinely arrives with a trailing
+	// newline; that would otherwise be sent in an Authorization header.
+	t.Setenv("STRIPE_SECRET_KEY", "  rk_test_51abcdefgh\n")
+
+	if got := mustLoad(t).StripeSecretKey; got != "rk_test_51abcdefgh" {
+		t.Fatalf("StripeSecretKey = %q, want the trimmed key", got)
+	}
+}
+
+// TestLoad_StripeKeyRejectsInvalidValues: a key that is present but cannot
+// possibly authenticate is a typo, and it must surface at boot rather than
+// at the first customer's upgrade attempt. Unset is fine (see above); wrong
+// is not.
+func TestLoad_StripeKeyRejectsInvalidValues(t *testing.T) {
+	cases := map[string]struct {
+		key      string
+		wantHint string
+	}{
+		"publishable key pasted into the secret slot": {"pk_live_51abcdefgh", "publishable"},
+		"an unrelated string":                         {"not-a-stripe-key", "restricted key"},
+		"a webhook signing secret":                    {"whsec_abcdefgh", "restricted key"},
+		"only whitespace around nothing":              {"   x   ", "restricted key"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_SECRET_KEY", tc.key)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load succeeded with STRIPE_SECRET_KEY = %q", tc.key)
+			}
+			if !strings.Contains(err.Error(), "STRIPE_SECRET_KEY is invalid") {
+				t.Fatalf("error does not name the variable: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Fatalf("error %q does not contain the hint %q", err.Error(), tc.wantHint)
+			}
+			// The error must never echo the value: it is logged by every
+			// crash-looping replica, and a real key pasted with a typo'd
+			// prefix would end up in those logs.
+			if strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error echoes the configured key: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoad_StripeProblemIsAggregatedWithTheRest(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_SECRET_KEY", "pk_live_nope")
+	t.Setenv("MCP_RATE_LIMIT_PER_MIN", "0")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with two invalid values")
+	}
+	for _, want := range []string{"STRIPE_SECRET_KEY is invalid", "MCP_RATE_LIMIT_PER_MIN must be greater than zero"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is missing %q; Load must report every problem in one pass:\n%v", want, err)
+		}
 	}
 }

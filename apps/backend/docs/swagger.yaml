@@ -571,6 +571,23 @@ definitions:
     required:
     - token
     type: object
+  internal_module_billing.CheckoutRequest:
+    properties:
+      interval:
+        enum:
+        - month
+        - year
+        type: string
+      planId:
+        type: string
+    required:
+    - planId
+    type: object
+  internal_module_billing.RedirectResponse:
+    properties:
+      url:
+        type: string
+    type: object
   internal_module_connector.ConnectorResponse:
     properties:
       createdAt:
@@ -2039,6 +2056,98 @@ paths:
       summary: Verify an email address
       tags:
       - auth
+  /billing/checkout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Checkout payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_billing.CheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.RedirectResponse'
+        "400":
+          description: Missing x-organization-id header / Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: 'Missing permission: billing:write'
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: NOT_FOUND (unknown or non-public plan)
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: PLAN_NOT_PURCHASABLE
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "502":
+          description: BILLING_PROVIDER_ERROR
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start a subscription checkout
+      tags:
+      - billing
+  /billing/portal:
+    post:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.RedirectResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: 'Missing permission: billing:write'
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "502":
+          description: BILLING_PROVIDER_ERROR
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Open the billing portal
+      tags:
+      - billing
   /connectors:
     get:
       parameters:

@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const createOrganization = `-- name: CreateOrganization :one
@@ -22,6 +24,31 @@ type CreateOrganizationParams struct {
 
 func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error) {
 	row := q.db.QueryRow(ctx, createOrganization, arg.Name, arg.Slug)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getOrganizationByID = `-- name: GetOrganizationByID :one
+SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1
+`
+
+// The tenant-facing twin of AdminGetOrganizationByID (queries/admin.sql),
+// which is reachable only from the superadmin console. Added for
+// internal/module/billing, which names an org's lazily-created Stripe
+// Customer after the organization rather than after whichever member
+// happened to click "upgrade" first — a Stripe dashboard full of
+// personal names for company subscriptions is a support problem later.
+// Callers are already org-scoped by RequireOrg/RequirePermission before
+// this runs; it performs no authorization of its own.
+func (q *Queries) GetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error) {
+	row := q.db.QueryRow(ctx, getOrganizationByID, id)
 	var i Organization
 	err := row.Scan(
 		&i.ID,

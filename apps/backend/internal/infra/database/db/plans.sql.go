@@ -8,7 +8,71 @@ package db
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/google/uuid"
 )
+
+const getActivePlanPrice = `-- name: GetActivePlanPrice :one
+SELECT id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at FROM plan_prices
+WHERE plan_id = $1
+  AND currency = $2
+  AND "interval" = $3
+  AND active = true
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetActivePlanPriceParams struct {
+	PlanID          uuid.UUID `json:"plan_id"`
+	Currency        string    `json:"currency"`
+	BillingInterval string    `json:"billing_interval"`
+}
+
+// Resolves the one Stripe Price a checkout should charge. Per plan decision
+// 3 there is exactly one active THB monthly Price per plan today; currency
+// and interval are parameters rather than constants so a second currency is
+// a plan_prices row plus a Stripe Price, not a migration and not a query
+// change. Newest-first so re-pricing a plan is "insert the new row, then
+// deactivate the old one", with no window in which neither is selectable.
+func (q *Queries) GetActivePlanPrice(ctx context.Context, arg GetActivePlanPriceParams) (PlanPrice, error) {
+	row := q.db.QueryRow(ctx, getActivePlanPrice, arg.PlanID, arg.Currency, arg.BillingInterval)
+	var i PlanPrice
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripePriceID,
+		&i.UnitAmount,
+		&i.Currency,
+		&i.Interval,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPlanByID = `-- name: GetPlanByID :one
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE id = $1
+`
+
+// The tenant-facing twin of AdminGetPlanByID (queries/admin.sql), which is
+// reachable only from the superadmin console. internal/module/billing needs
+// to resolve the plan a checkout is for -- and to check is_public before
+// selling it -- without reaching into an Admin*-prefixed query it is not
+// entitled to use.
+func (q *Queries) GetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error) {
+	row := q.db.QueryRow(ctx, getPlanByID, id)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
+	)
+	return i, err
+}
 
 const getPlanByName = `-- name: GetPlanByName :one
 SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE name = $1

@@ -203,6 +203,30 @@ type Config struct {
 	// for every throwaway seeded account is friction with no security
 	// benefit.
 	AdminRequire2FA bool
+
+	// StripeSecretKey authenticates every Stripe API call the billing module
+	// (internal/module/billing) makes: Checkout Session creation, Customer
+	// Portal session creation, and the lazy Customer create behind both.
+	//
+	// This SHOULD be a restricted key ("rk_...") scoped to Checkout, Billing,
+	// and Customer write — not an account-wide secret key. Note the
+	// divergence from the RESEND_API_KEY precedent, where the secret is read
+	// only by cmd/worker so it never sits on the internet-facing service:
+	// starting a checkout is request-driven, so the API must hold this one.
+	// The restriction on the key is what bounds the blast radius instead.
+	//
+	// Optional, and empty by default — the same "degrade, don't fail"
+	// posture RESEND_API_KEY takes. Unset, the /billing routes stay mounted
+	// and stay guarded but answer BILLING_NOT_CONFIGURED, so a developer
+	// with no Stripe account can still boot the API and run the whole test
+	// suite. Set but malformed is a different matter and fails at boot: a
+	// key that cannot possibly work is a typo an operator should hear about
+	// immediately, not at the first customer's upgrade attempt.
+	//
+	// Never log this value. logger.redact.go already censors any attr key
+	// spelled like a Stripe key; there is still no call site that should be
+	// logging it.
+	StripeSecretKey string
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -369,6 +393,11 @@ func Load() (*Config, error) {
 		cfg.AdminIPAllowlist = allowlist
 	}
 
+	cfg.StripeSecretKey = strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY"))
+	if err := validateStripeKey(cfg.StripeSecretKey); err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_SECRET_KEY is invalid: %v", err))
+	}
+
 	require2FA, err := strconv.ParseBool(getEnv("ADMIN_REQUIRE_2FA", "true"))
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("ADMIN_REQUIRE_2FA is not a valid boolean: %v", err))
@@ -422,6 +451,43 @@ func parseCIDRList(raw string) ([]*net.IPNet, error) {
 // the worker wires up email.LogSender instead of email.ResendSender.
 func (c *Config) EmailEnabled() bool {
 	return c.ResendAPIKey != ""
+}
+
+// BillingEnabled reports whether a Stripe key is configured. When false the
+// /billing routes are still registered and still permission-guarded, but
+// every one of them answers apperror.BillingNotConfigured rather than
+// dialling Stripe — mirroring EmailEnabled's degrade-don't-fail posture, and
+// keeping the route surface identical between a Stripe-less local dev box
+// and production so a guard test means the same thing in both.
+func (c *Config) BillingEnabled() bool {
+	return c.StripeSecretKey != ""
+}
+
+// validateStripeKey rejects a STRIPE_SECRET_KEY that cannot possibly
+// authenticate, so the mistake surfaces at boot rather than at the first
+// customer's checkout. "" is valid and means billing is disabled
+// (BillingEnabled).
+//
+// The prefixes Stripe issues for server-side use are "rk_" (restricted, what
+// this deployment should use) and "sk_" (account-wide secret). "pk_" is
+// called out separately because pasting the publishable key into the secret
+// slot is the specific, common mix-up worth naming in the error — it would
+// otherwise fail every Stripe call at runtime with an opaque 401.
+//
+// Note what this does NOT do: it never echoes the key. An invalid-value
+// error that quoted the offending string would put a live credential into
+// the boot log of every crash-looping replica.
+func validateStripeKey(key string) error {
+	switch {
+	case key == "":
+		return nil
+	case strings.HasPrefix(key, "rk_"), strings.HasPrefix(key, "sk_"):
+		return nil
+	case strings.HasPrefix(key, "pk_"):
+		return fmt.Errorf("looks like a publishable key (pk_...); this must be a restricted key (rk_...) or a secret key (sk_...)")
+	default:
+		return fmt.Errorf("must be a Stripe restricted key (rk_...) or secret key (sk_...)")
+	}
 }
 
 // redisKeyPrefix resolves REDIS_KEY_PREFIX, normalising a non-empty value to

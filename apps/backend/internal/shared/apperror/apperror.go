@@ -130,6 +130,35 @@ const (
 	// modes — same reasoning as InvalidCredentials: which one is wrong
 	// must not be observable.
 	InvalidTOTPCode = "INVALID_TOTP_CODE"
+
+	// BillingNotConfigured is every /billing route's answer when
+	// STRIPE_SECRET_KEY is unset (config.Config.BillingEnabled). 501, not
+	// 500: the request was well-formed and the caller was authorized, the
+	// server simply has no payment provider wired up — which is the normal
+	// state of a local dev box and of any self-hosted deployment that never
+	// sells anything. The routes stay mounted and stay permission-guarded so
+	// the route surface, and therefore a guard test, means the same thing
+	// with and without Stripe credentials.
+	BillingNotConfigured = "BILLING_NOT_CONFIGURED"
+
+	// PlanNotPurchasable is POST /billing/checkout's answer for a plan that
+	// exists but has no active plan_prices row for the requested
+	// currency/interval — a catalogue gap (nobody has created the Stripe
+	// Price yet, or every price for it was deactivated), not a bad request.
+	// Deliberately distinct from NotFound: a staff member debugging "why
+	// can't anyone buy Pro" needs to know the plan resolved and the price
+	// didn't. A plan the caller may not buy at all (is_public = false)
+	// resolves to NotFound instead, so a private plan cannot be probed for
+	// existence.
+	PlanNotPurchasable = "PLAN_NOT_PURCHASABLE"
+
+	// BillingProviderError wraps any failure from Stripe itself — network,
+	// 5xx, or a rejected request. 502, because the failure is upstream and
+	// the caller's own request was fine; retrying is the right response, and
+	// a 500 would invite a hunt through this service's logs instead. The
+	// underlying Stripe error is logged (never returned), and it never
+	// carries the API key: see billing.Service's stripeErr helper.
+	BillingProviderError = "BILLING_PROVIDER_ERROR"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -180,6 +209,10 @@ var Map = map[string]mapping{
 	TwoFactorRequired: {403, "Two-factor authentication required"},
 	TOTPNotEnrolled:   {400, "Two-factor authentication not enrolled"},
 	InvalidTOTPCode:   {401, "Invalid two-factor code"},
+
+	BillingNotConfigured: {501, "Billing is not configured"},
+	PlanNotPurchasable:   {409, "Plan is not available for purchase"},
+	BillingProviderError: {502, "Billing provider is unavailable, try again shortly"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

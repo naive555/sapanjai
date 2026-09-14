@@ -1848,6 +1848,150 @@ const docTemplate = `{
                 }
             }
         },
+        "/billing/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Start a subscription checkout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Checkout payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.CheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.RedirectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header / Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:write",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND (unknown or non-public plan)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "PLAN_NOT_PURCHASABLE",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "BILLING_PROVIDER_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/billing/portal": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Open the billing portal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.RedirectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:write",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "BILLING_PROVIDER_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/connectors": {
             "get": {
                 "security": [
@@ -3864,6 +4008,32 @@ const docTemplate = `{
             ],
             "properties": {
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.CheckoutRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "interval": {
+                    "type": "string",
+                    "enum": [
+                        "month",
+                        "year"
+                    ]
+                },
+                "planId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.RedirectResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
                     "type": "string"
                 }
             }

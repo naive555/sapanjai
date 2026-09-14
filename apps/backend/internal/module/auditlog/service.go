@@ -101,6 +101,18 @@ const (
 	// Phase 4 (impersonation) is the only caller, and is out of this
 	// phase's scope.
 	ActionAdminImpersonationStarted = "admin.impersonation.started"
+
+	// ---- Billing (internal/module/billing) ----
+	//
+	// Both are written after the Stripe call succeeds, so a row means a
+	// hosted session really was minted. Neither records an amount, a price,
+	// or anything else that could be mistaken for a payment record —
+	// Stripe is the billing record (plan invariant 1) and audit_logs must
+	// not become a second, drifting one. ActionBillingCheckoutStarted does
+	// NOT mean the org was charged or that its plan changed: nothing about
+	// entitlements moves until the webhook (step 7) calls AssignPlan.
+	ActionBillingCheckoutStarted = "billing.checkout.started"
+	ActionBillingPortalOpened    = "billing.portal.opened"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

@@ -137,6 +137,19 @@ type Querier interface {
 	// pgx.ErrNoRows -> admin.Service maps that to 404.
 	AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
+	// Records the org's lazily-created Stripe Customer (plan decision 4), and
+	// is the Postgres half of billing's no-duplicate-Customer guarantee: the
+	// "stripe_customer_id IS NULL" predicate makes the claim conditional, so
+	// of two concurrent checkout attempts exactly one UPDATE matches a row and
+	// the other returns zero rows (pgx.ErrNoRows) and re-reads the winner's id.
+	//
+	// Deliberately an UPDATE, never an upsert. Creating an org_subscriptions
+	// row is subscription.Service.AssignPlan's job and nobody else's (plan
+	// invariant 5); an org with no row yet resolves to "unlimited" through
+	// EffectiveLimits, so inserting one here would silently change that org's
+	// entitlements as a side effect of a billing click. Rows are created by
+	// the webhook (step 7) when a subscription actually starts.
+	ClaimOrgStripeCustomer(ctx context.Context, arg ClaimOrgStripeCustomerParams) (*string, error)
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies
 	// mid-send leaves rows that become claimable again on their own when the
@@ -222,6 +235,13 @@ type Querier interface {
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
 	EnqueueEmail(ctx context.Context, arg EnqueueEmailParams) (EmailOutbox, error)
+	// Resolves the one Stripe Price a checkout should charge. Per plan decision
+	// 3 there is exactly one active THB monthly Price per plan today; currency
+	// and interval are parameters rather than constants so a second currency is
+	// a plan_prices row plus a Stripe Price, not a migration and not a query
+	// change. Newest-first so re-pricing a plan is "insert the new row, then
+	// deactivate the old one", with no window in which neither is selectable.
+	GetActivePlanPrice(ctx context.Context, arg GetActivePlanPriceParams) (PlanPrice, error)
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
 	GetEmailByID(ctx context.Context, id uuid.UUID) (EmailOutbox, error)
@@ -236,8 +256,27 @@ type Querier interface {
 	GetMCPKeyByHash(ctx context.Context, keyHash string) (GetMCPKeyByHashRow, error)
 	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
+	// The billing module's (internal/module/billing) narrow read of an org's
+	// Stripe linkage. Deliberately separate from GetOrgSubscription, which
+	// exists to serve GET /subscription and whose row shape the frontend and
+	// internal/module/admin both depend on -- widening it with Stripe columns
+	// would push billing state into every caller of the entitlement read path.
+	// Note what is NOT selected: custom_limits and plans.limits. Entitlement
+	// resolution stays subscription.Service.EffectiveLimits' job alone
+	// (plan invariant 1), and nothing here is allowed to become a second
+	// answer to "what may this org do".
+	GetOrgBillingRef(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingRefRow, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
+	// The tenant-facing twin of AdminGetOrganizationByID (queries/admin.sql),
+	// which is reachable only from the superadmin console. Added for
+	// internal/module/billing, which names an org's lazily-created Stripe
+	// Customer after the organization rather than after whichever member
+	// happened to click "upgrade" first — a Stripe dashboard full of
+	// personal names for company subscriptions is a support problem later.
+	// Callers are already org-scoped by RequireOrg/RequirePermission before
+	// this runs; it performs no authorization of its own.
+	GetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
 	// Resolves who to notify about an org-wide event (connector-health alerts
 	// today). Membership.role is either set once at org creation ("owner",
@@ -245,6 +284,12 @@ type Querier interface {
 	// (organization.InviteRequest) -- an org always has exactly one owner row,
 	// never zero or more than one.
 	GetOrganizationOwner(ctx context.Context, organizationID uuid.UUID) (GetOrganizationOwnerRow, error)
+	// The tenant-facing twin of AdminGetPlanByID (queries/admin.sql), which is
+	// reachable only from the superadmin console. internal/module/billing needs
+	// to resolve the plan a checkout is for -- and to check is_public before
+	// selling it -- without reaching into an Admin*-prefixed query it is not
+	// entitled to use.
+	GetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
 	GetPlanByName(ctx context.Context, name string) (Plan, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
