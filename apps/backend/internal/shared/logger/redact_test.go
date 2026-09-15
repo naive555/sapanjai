@@ -22,6 +22,9 @@ func TestIsSensitive(t *testing.T) {
 		"stripeSecretKey", "stripe_secret_key", "STRIPE_SECRET_KEY",
 		"stripeApiKey", "stripe_api_key", "stripeKey", "stripe_key",
 		"webhookSecret", "webhook_secret",
+		// The Stripe-Signature header on POST /billing/webhook (step 7) —
+		// half of a replayable pair with the request body it signs.
+		"stripeSignature", "stripe_signature", "Stripe-Signature",
 	}
 	for _, key := range sensitive {
 		if !IsSensitive(key) {

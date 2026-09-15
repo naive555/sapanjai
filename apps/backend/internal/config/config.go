@@ -227,6 +227,44 @@ type Config struct {
 	// spelled like a Stripe key; there is still no call site that should be
 	// logging it.
 	StripeSecretKey string
+
+	// StripeWebhookSecret ("whsec_...") is the HMAC key POST /billing/webhook
+	// verifies the Stripe-Signature header against. It is the ONLY
+	// authentication that route has — it cannot sit on RequireAuth, because
+	// Stripe presents no JWT — so an empty value does not mean "accept
+	// everything", it means the route answers BILLING_NOT_CONFIGURED and
+	// reconciles nothing.
+	//
+	// A DIFFERENT secret from StripeSecretKey, and not derivable from it:
+	// Stripe issues one per webhook endpoint, and rotating either leaves the
+	// other alone. Optional and empty by default, the same degrade-don't-fail
+	// posture RESEND_API_KEY and STRIPE_SECRET_KEY take, so a developer with
+	// no Stripe account can boot the API and run the whole test suite.
+	//
+	// Set but malformed fails at boot, for the same reason a malformed
+	// STRIPE_SECRET_KEY does: a secret that cannot possibly verify is a typo
+	// an operator should hear about immediately, not discover as a pile of
+	// 400s in the Stripe dashboard's webhook log days later — by which point
+	// Stripe has disabled the endpoint and the renewals it was silently
+	// dropping are unrecoverable without a manual replay.
+	//
+	// Never log this value; logger.redact.go already censors "webhooksecret".
+	StripeWebhookSecret string
+
+	// StripeWebhookIPAllowlist narrows POST /billing/webhook to Stripe's
+	// published egress CIDRs (billing plan step 7's "also allowlist Stripe's
+	// published IPs on the webhook route — ADMIN_IP_ALLOWLIST is the existing
+	// pattern to copy"). Same parsing, same middleware
+	// (internal/middleware.IPAllowlist), same 404-not-403 rejection.
+	//
+	// Defence in depth only, never the primary control: the signature check
+	// is what actually authenticates a delivery, and this list would be
+	// worthless on its own. Which is also why it defaults to unset/disabled —
+	// Stripe's IP ranges change, a stale list silently drops live billing
+	// events, and c.RealIP() is only as trustworthy as the proxy chain in
+	// front of this API (see server.go's e.IPExtractor comment). An operator
+	// who sets it must have a plan for keeping it current.
+	StripeWebhookIPAllowlist []*net.IPNet
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -398,6 +436,18 @@ func Load() (*Config, error) {
 		problems = append(problems, fmt.Sprintf("STRIPE_SECRET_KEY is invalid: %v", err))
 	}
 
+	cfg.StripeWebhookSecret = strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	if err := validateStripeWebhookSecret(cfg.StripeWebhookSecret); err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_WEBHOOK_SECRET is invalid: %v", err))
+	}
+
+	webhookAllowlist, err := parseCIDRList(os.Getenv("STRIPE_WEBHOOK_IP_ALLOWLIST"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_WEBHOOK_IP_ALLOWLIST is invalid: %v", err))
+	} else {
+		cfg.StripeWebhookIPAllowlist = webhookAllowlist
+	}
+
 	require2FA, err := strconv.ParseBool(getEnv("ADMIN_REQUIRE_2FA", "true"))
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("ADMIN_REQUIRE_2FA is not a valid boolean: %v", err))
@@ -487,6 +537,43 @@ func validateStripeKey(key string) error {
 		return fmt.Errorf("looks like a publishable key (pk_...); this must be a restricted key (rk_...) or a secret key (sk_...)")
 	default:
 		return fmt.Errorf("must be a Stripe restricted key (rk_...) or secret key (sk_...)")
+	}
+}
+
+// WebhookEnabled reports whether a Stripe webhook signing secret is
+// configured. When false, POST /billing/webhook is still mounted and still
+// IP-gated, but answers apperror.BillingNotConfigured rather than pretending
+// to verify anything — the same posture BillingEnabled takes, and tracked
+// separately because the two secrets are issued, rotated, and can be
+// forgotten independently.
+func (c *Config) WebhookEnabled() bool {
+	return c.StripeWebhookSecret != ""
+}
+
+// validateStripeWebhookSecret rejects a STRIPE_WEBHOOK_SECRET that cannot
+// possibly verify a signature, so the mistake surfaces at boot rather than
+// as a silent pile of 400s in Stripe's webhook log. "" is valid and means
+// the webhook is disabled (WebhookEnabled).
+//
+// Stripe issues endpoint signing secrets as "whsec_...". The common mix-up
+// worth naming is pasting an API key ("sk_"/"rk_"/"pk_") into this slot —
+// the two live next to each other on the same dashboard page, and every
+// delivery would then fail signature verification with nothing to explain
+// why.
+//
+// Like validateStripeKey, this never echoes the value: an invalid-value
+// error quoting the offending string would put a live signing secret into
+// the boot log of every crash-looping replica.
+func validateStripeWebhookSecret(secret string) error {
+	switch {
+	case secret == "":
+		return nil
+	case strings.HasPrefix(secret, "whsec_"):
+		return nil
+	case strings.HasPrefix(secret, "sk_"), strings.HasPrefix(secret, "rk_"), strings.HasPrefix(secret, "pk_"):
+		return fmt.Errorf("looks like a Stripe API key; this must be the endpoint signing secret (whsec_...)")
+	default:
+		return fmt.Errorf("must be a Stripe webhook signing secret (whsec_...)")
 	}
 }
 

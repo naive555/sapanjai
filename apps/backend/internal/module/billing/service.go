@@ -79,6 +79,15 @@ type billingStore interface {
 	GetOrgBillingRef(ctx context.Context, organizationID uuid.UUID) (db.GetOrgBillingRefRow, error)
 	ClaimOrgStripeCustomer(ctx context.Context, arg db.ClaimOrgStripeCustomerParams) (*string, error)
 	GetOrganizationByID(ctx context.Context, id uuid.UUID) (db.Organization, error)
+
+	// WithTx is the webhook's (webhook.go) alone. The stripe_events claim
+	// and the state change it guards must commit or roll back together, or
+	// a failure mid-processing leaves the event permanently marked handled
+	// and turns Stripe's retry into a silent no-op. Every query the webhook
+	// runs goes through the db.Querier this hands out, which is also how
+	// subscription.Service.AssignPlanTx joins the same transaction — see
+	// Service.reconcile.
+	WithTx(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 // Service implements POST /billing/checkout and POST /billing/portal.
@@ -88,6 +97,18 @@ type Service struct {
 	audit  *auditlog.Service
 	log    *slog.Logger
 
+	// webhooks verifies POST /billing/webhook bodies. Separate from stripe
+	// above because STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are
+	// independently configurable: a deployment can hold one and not the
+	// other, and each half degrades to BILLING_NOT_CONFIGURED on its own
+	// rather than dragging the other down.
+	webhooks stripeWebhooks
+
+	// subs is the narrow seam onto subscription.Service. The webhook moves
+	// plan_id only through it (plan invariant 5); nothing in this package
+	// upserts org_subscriptions.
+	subs planAssigner
+
 	// appPublicURL is the browser-facing FRONTEND origin (config.AppPublicURL),
 	// not this API's. Every URL Stripe redirects a human to — checkout
 	// success, checkout cancel, portal return — is a page in apps/frontend,
@@ -96,13 +117,30 @@ type Service struct {
 	appPublicURL string
 }
 
-// NewService builds a billing Service. stripeClient may be nil, which is
-// what server.go passes when STRIPE_SECRET_KEY is unset: the routes still
-// mount and still enforce their permission guard, but every one of them
-// answers apperror.BillingNotConfigured. That is deliberate — see
+// NewService builds a billing Service. stripeClient and webhooks may each
+// be nil, which is what server.go passes when STRIPE_SECRET_KEY /
+// STRIPE_WEBHOOK_SECRET are unset: the routes still mount and still enforce
+// their guards, but the ones that need the missing half answer
+// apperror.BillingNotConfigured. That is deliberate — see
 // config.Config.BillingEnabled.
-func NewService(store billingStore, stripeClient stripeAPI, audit *auditlog.Service, appPublicURL string, log *slog.Logger) *Service {
-	return &Service{store: store, stripe: stripeClient, audit: audit, appPublicURL: appPublicURL, log: log}
+func NewService(
+	store billingStore,
+	stripeClient stripeAPI,
+	webhooks stripeWebhooks,
+	subs planAssigner,
+	audit *auditlog.Service,
+	appPublicURL string,
+	log *slog.Logger,
+) *Service {
+	return &Service{
+		store:        store,
+		stripe:       stripeClient,
+		webhooks:     webhooks,
+		subs:         subs,
+		audit:        audit,
+		appPublicURL: appPublicURL,
+		log:          log,
+	}
 }
 
 // Checkout starts a Stripe Checkout Session in subscription mode for

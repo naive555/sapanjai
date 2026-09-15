@@ -588,6 +588,11 @@ definitions:
       url:
         type: string
     type: object
+  internal_module_billing.WebhookResponse:
+    properties:
+      received:
+        type: boolean
+    type: object
   internal_module_connector.ConnectorResponse:
     properties:
       createdAt:
@@ -2146,6 +2151,38 @@ paths:
       security:
       - BearerAuth: []
       summary: Open the billing portal
+      tags:
+      - billing
+  /billing/webhook:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Stripe webhook signature
+        in: header
+        name: Stripe-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.WebhookResponse'
+        "400":
+          description: WEBHOOK_SIGNATURE_INVALID / Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Route not found (caller outside STRIPE_WEBHOOK_IP_ALLOWLIST)
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      summary: Stripe webhook receiver
       tags:
       - billing
   /connectors:

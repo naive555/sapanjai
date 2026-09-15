@@ -166,6 +166,23 @@ type Querier interface {
 	// containing FOR UPDATE has side effects and is always materialised, so the
 	// lock-and-limit happens exactly once.
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
+	// Webhook idempotency (step 7 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md). Stripe retries,
+	// so the same event id can arrive many times; the id is the primary key of
+	// stripe_events (migration 00013), so the second delivery conflicts.
+	//
+	// ON CONFLICT DO NOTHING ... RETURNING makes "already processed" a
+	// pgx.ErrNoRows rather than a driver-level unique-violation the caller
+	// would have to sniff a SQLSTATE for -- and, crucially, it does NOT abort
+	// the surrounding transaction the way a raised 23505 would.
+	//
+	// The claim is issued INSIDE the same transaction as the state change it
+	// guards (billing.Service.reconcile). That ordering is the whole point: a
+	// failure after the claim rolls the claim back too, so Stripe's retry
+	// reprocesses the event instead of finding it marked handled and silently
+	// doing nothing. Claim-then-process in separate transactions loses the
+	// state change forever with no error anywhere.
+	ClaimStripeEvent(ctx context.Context, arg ClaimStripeEventParams) (string, error)
 	// Backs POST /admin/2fa/confirm: stamps confirmed_at and stores the ten
 	// recovery-code hashes generated at confirm time (never at enroll time,
 	// since enroll may be called repeatedly before a confirm ever lands).
@@ -235,6 +252,17 @@ type Querier interface {
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
 	EnqueueEmail(ctx context.Context, arg EnqueueEmailParams) (EmailOutbox, error)
+	// Maps a Stripe Customer back to its tenant. Backed by the partial unique
+	// index idx_org_subscriptions_stripe_customer_id (migration 00013), so a
+	// given customer id identifies exactly one organization -- which is what
+	// makes it impossible for an event carrying org A's identifiers to land on
+	// org B's row.
+	FindOrgByStripeCustomerID(ctx context.Context, stripeCustomerID string) (uuid.UUID, error)
+	// The subscription-id twin of FindOrgByStripeCustomerID, backed by
+	// idx_org_subscriptions_stripe_subscription_id. Preferred over the customer
+	// lookup when both are available: a Customer can in principle outlive and
+	// outnumber its Subscriptions, while a Subscription belongs to exactly one.
+	FindOrgByStripeSubscriptionID(ctx context.Context, stripeSubscriptionID string) (uuid.UUID, error)
 	// Resolves the one Stripe Price a checkout should charge. Per plan decision
 	// 3 there is exactly one active THB monthly Price per plan today; currency
 	// and interval are parameters rather than constants so a second currency is
@@ -266,6 +294,23 @@ type Querier interface {
 	// (plan invariant 1), and nothing here is allowed to become a second
 	// answer to "what may this org do".
 	GetOrgBillingRef(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingRefRow, error)
+	// The webhook's (internal/module/billing, step 7) read of everything it
+	// needs to decide whether an incoming Stripe event is newer than what is
+	// already stored, taken FOR UPDATE.
+	//
+	// FOR UPDATE, not a plain SELECT: two deliveries for the same organization
+	// can be in flight at once (Stripe retries while the first attempt is still
+	// running, or a subscription.updated and an invoice.paid arrive together).
+	// Without the row lock both transactions would read the same watermark,
+	// both would decide they are newer, and the older one could commit last.
+	// The lock serializes them, so the "is this event stale" check and the
+	// write that advances the watermark are one atomic step.
+	//
+	// Deliberately does not select custom_limits or plans.limits: entitlement
+	// resolution is subscription.Service.EffectiveLimits' job alone (plan
+	// invariant 1), and this must not become a second answer to "what may this
+	// org do".
+	GetOrgBillingSyncForUpdate(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingSyncForUpdateRow, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
 	// The tenant-facing twin of AdminGetOrganizationByID (queries/admin.sql),
@@ -291,6 +336,20 @@ type Querier interface {
 	// entitled to use.
 	GetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
 	GetPlanByName(ctx context.Context, name string) (Plan, error)
+	// Resolves the entitlement plan a Stripe Subscription is actually paying
+	// for, from the Price id on its line item. This is the webhook's PRIMARY
+	// plan resolution and metadata.plan_id is only the fallback, deliberately:
+	// the Customer Portal lets a customer switch plans without this application
+	// being involved, which changes the Price on the subscription but leaves
+	// the plan_id this code stamped into metadata at checkout time frozen at
+	// whatever they bought originally. Trusting metadata there would keep
+	// billing them for the new plan while entitling them to the old one.
+	//
+	// Not filtered on plan_prices.active: a plan re-priced after a customer
+	// subscribed leaves that customer on the old, now-inactive Price, and their
+	// renewal events must still resolve to the plan. `active` governs what may
+	// be SOLD (GetActivePlanPrice), not what an existing subscription means.
+	GetPlanByStripePriceID(ctx context.Context, stripePriceID string) (Plan, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
@@ -377,6 +436,31 @@ type Querier interface {
 	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
+	// Writes the Stripe linkage columns of an org_subscriptions row that
+	// already exists, plus the out-of-order watermark (stripe_event_at,
+	// migration 00016).
+	//
+	// An UPDATE, never an upsert, and it touches neither plan_id nor
+	// custom_limits. Creating the row and moving plan_id is
+	// subscription.Service.AssignPlan's job and nobody else's (plan invariant
+	// 5); custom_limits is the admin override that must survive a billing event
+	// (invariant 2). What is left -- customer id, subscription id, status,
+	// period end, cancellation flag -- is billing's own bookkeeping, the same
+	// ownership ClaimOrgStripeCustomer already has over stripe_customer_id.
+	//
+	// Every value column is nullable-optional and COALESCEs to its current
+	// value, because the handled events carry different subsets: a
+	// checkout.session.completed knows the customer and subscription ids but
+	// not the authoritative status (customer.subscription.created, arriving
+	// alongside it, does), and an invoice.payment_failed knows the status but
+	// not the period end. "Absent" must mean "leave alone", never "set to
+	// NULL" -- otherwise each event would erase what the last one learned.
+	//
+	// clear_subscription is the one exception, and it is plan decision 4:
+	// "stripe_subscription_id IS NULL" is the canonical "not paying" signal, so
+	// a cancellation CLEARS the column rather than leaving it pointing at a
+	// dead Stripe object.
+	UpdateOrgStripeSubscription(ctx context.Context, arg UpdateOrgStripeSubscriptionParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	// Backs POST /admin/2fa/verify's recovery-code path: persists the
 	// caller-supplied remaining set after one hash is removed, so a recovery

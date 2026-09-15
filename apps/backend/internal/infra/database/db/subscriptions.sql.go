@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimOrgStripeCustomer = `-- name: ClaimOrgStripeCustomer :one
@@ -42,6 +43,39 @@ func (q *Queries) ClaimOrgStripeCustomer(ctx context.Context, arg ClaimOrgStripe
 	var stripe_customer_id *string
 	err := row.Scan(&stripe_customer_id)
 	return stripe_customer_id, err
+}
+
+const findOrgByStripeCustomerID = `-- name: FindOrgByStripeCustomerID :one
+SELECT organization_id FROM org_subscriptions
+WHERE stripe_customer_id = $1::text
+`
+
+// Maps a Stripe Customer back to its tenant. Backed by the partial unique
+// index idx_org_subscriptions_stripe_customer_id (migration 00013), so a
+// given customer id identifies exactly one organization -- which is what
+// makes it impossible for an event carrying org A's identifiers to land on
+// org B's row.
+func (q *Queries) FindOrgByStripeCustomerID(ctx context.Context, stripeCustomerID string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findOrgByStripeCustomerID, stripeCustomerID)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
+}
+
+const findOrgByStripeSubscriptionID = `-- name: FindOrgByStripeSubscriptionID :one
+SELECT organization_id FROM org_subscriptions
+WHERE stripe_subscription_id = $1::text
+`
+
+// The subscription-id twin of FindOrgByStripeCustomerID, backed by
+// idx_org_subscriptions_stripe_subscription_id. Preferred over the customer
+// lookup when both are available: a Customer can in principle outlive and
+// outnumber its Subscriptions, while a Subscription belongs to exactly one.
+func (q *Queries) FindOrgByStripeSubscriptionID(ctx context.Context, stripeSubscriptionID string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findOrgByStripeSubscriptionID, stripeSubscriptionID)
+	var organization_id uuid.UUID
+	err := row.Scan(&organization_id)
+	return organization_id, err
 }
 
 const getOrgBillingRef = `-- name: GetOrgBillingRef :one
@@ -76,6 +110,57 @@ func (q *Queries) GetOrgBillingRef(ctx context.Context, organizationID uuid.UUID
 		&i.StripeCustomerID,
 		&i.StripeSubscriptionID,
 		&i.Status,
+	)
+	return i, err
+}
+
+const getOrgBillingSyncForUpdate = `-- name: GetOrgBillingSyncForUpdate :one
+SELECT organization_id, plan_id, stripe_customer_id, stripe_subscription_id,
+       status, current_period_end, cancel_at_period_end, stripe_event_at
+FROM org_subscriptions
+WHERE organization_id = $1
+FOR UPDATE
+`
+
+type GetOrgBillingSyncForUpdateRow struct {
+	OrganizationID       uuid.UUID        `json:"organization_id"`
+	PlanID               uuid.UUID        `json:"plan_id"`
+	StripeCustomerID     *string          `json:"stripe_customer_id"`
+	StripeSubscriptionID *string          `json:"stripe_subscription_id"`
+	Status               *string          `json:"status"`
+	CurrentPeriodEnd     pgtype.Timestamp `json:"current_period_end"`
+	CancelAtPeriodEnd    bool             `json:"cancel_at_period_end"`
+	StripeEventAt        pgtype.Timestamp `json:"stripe_event_at"`
+}
+
+// The webhook's (internal/module/billing, step 7) read of everything it
+// needs to decide whether an incoming Stripe event is newer than what is
+// already stored, taken FOR UPDATE.
+//
+// FOR UPDATE, not a plain SELECT: two deliveries for the same organization
+// can be in flight at once (Stripe retries while the first attempt is still
+// running, or a subscription.updated and an invoice.paid arrive together).
+// Without the row lock both transactions would read the same watermark,
+// both would decide they are newer, and the older one could commit last.
+// The lock serializes them, so the "is this event stale" check and the
+// write that advances the watermark are one atomic step.
+//
+// Deliberately does not select custom_limits or plans.limits: entitlement
+// resolution is subscription.Service.EffectiveLimits' job alone (plan
+// invariant 1), and this must not become a second answer to "what may this
+// org do".
+func (q *Queries) GetOrgBillingSyncForUpdate(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingSyncForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getOrgBillingSyncForUpdate, organizationID)
+	var i GetOrgBillingSyncForUpdateRow
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.PlanID,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.Status,
+		&i.CurrentPeriodEnd,
+		&i.CancelAtPeriodEnd,
+		&i.StripeEventAt,
 	)
 	return i, err
 }
@@ -140,6 +225,71 @@ func (q *Queries) GetOrgSubscriptionWithPlan(ctx context.Context, organizationID
 	var i GetOrgSubscriptionWithPlanRow
 	err := row.Scan(&i.CustomLimits, &i.PlanLimits)
 	return i, err
+}
+
+const updateOrgStripeSubscription = `-- name: UpdateOrgStripeSubscription :exec
+UPDATE org_subscriptions
+SET
+  stripe_customer_id = COALESCE($1::text, stripe_customer_id),
+  stripe_subscription_id = CASE
+    WHEN $2::boolean THEN NULL
+    ELSE COALESCE($3::text, stripe_subscription_id)
+  END,
+  status = COALESCE($4::text, status),
+  current_period_end = COALESCE($5::timestamp, current_period_end),
+  cancel_at_period_end = COALESCE($6::boolean, cancel_at_period_end),
+  stripe_event_at = $7::timestamp,
+  updated_at = now()
+WHERE organization_id = $8
+`
+
+type UpdateOrgStripeSubscriptionParams struct {
+	StripeCustomerID     *string          `json:"stripe_customer_id"`
+	ClearSubscription    bool             `json:"clear_subscription"`
+	StripeSubscriptionID *string          `json:"stripe_subscription_id"`
+	Status               *string          `json:"status"`
+	CurrentPeriodEnd     pgtype.Timestamp `json:"current_period_end"`
+	CancelAtPeriodEnd    *bool            `json:"cancel_at_period_end"`
+	StripeEventAt        time.Time        `json:"stripe_event_at"`
+	OrganizationID       uuid.UUID        `json:"organization_id"`
+}
+
+// Writes the Stripe linkage columns of an org_subscriptions row that
+// already exists, plus the out-of-order watermark (stripe_event_at,
+// migration 00016).
+//
+// An UPDATE, never an upsert, and it touches neither plan_id nor
+// custom_limits. Creating the row and moving plan_id is
+// subscription.Service.AssignPlan's job and nobody else's (plan invariant
+// 5); custom_limits is the admin override that must survive a billing event
+// (invariant 2). What is left -- customer id, subscription id, status,
+// period end, cancellation flag -- is billing's own bookkeeping, the same
+// ownership ClaimOrgStripeCustomer already has over stripe_customer_id.
+//
+// Every value column is nullable-optional and COALESCEs to its current
+// value, because the handled events carry different subsets: a
+// checkout.session.completed knows the customer and subscription ids but
+// not the authoritative status (customer.subscription.created, arriving
+// alongside it, does), and an invoice.payment_failed knows the status but
+// not the period end. "Absent" must mean "leave alone", never "set to
+// NULL" -- otherwise each event would erase what the last one learned.
+//
+// clear_subscription is the one exception, and it is plan decision 4:
+// "stripe_subscription_id IS NULL" is the canonical "not paying" signal, so
+// a cancellation CLEARS the column rather than leaving it pointing at a
+// dead Stripe object.
+func (q *Queries) UpdateOrgStripeSubscription(ctx context.Context, arg UpdateOrgStripeSubscriptionParams) error {
+	_, err := q.db.Exec(ctx, updateOrgStripeSubscription,
+		arg.StripeCustomerID,
+		arg.ClearSubscription,
+		arg.StripeSubscriptionID,
+		arg.Status,
+		arg.CurrentPeriodEnd,
+		arg.CancelAtPeriodEnd,
+		arg.StripeEventAt,
+		arg.OrganizationID,
+	)
+	return err
 }
 
 const upsertOrgSubscription = `-- name: UpsertOrgSubscription :exec

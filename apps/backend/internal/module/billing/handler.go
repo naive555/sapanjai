@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"io"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -45,7 +46,7 @@ func NewHandler(service *Service) *Handler {
 //
 // POST /billing/webhook is deliberately absent: Stripe presents no JWT and
 // no x-organization-id, so it cannot live on this guarded group at all. It
-// is step 7 of the billing plan and mounts separately.
+// mounts separately, via RegisterWebhook.
 func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/checkout", h.checkout, guards.RequirePermission(PermissionWrite))
 	g.POST("/portal", h.portal, guards.RequirePermission(PermissionWrite))
@@ -111,4 +112,80 @@ func (h *Handler) portal(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, RedirectResponse{URL: url})
+}
+
+// WebhookPath is POST /billing/webhook's absolute path. It is mounted
+// directly on the Echo instance by RegisterWebhook, NOT on the group
+// Register uses, and the constant is exported so server.go and the
+// integration tests name the same string.
+const WebhookPath = "/billing/webhook"
+
+// maxWebhookBodyBytes caps the body this route will read. Stripe event
+// payloads are well under this; the cap exists because the route is
+// unauthenticated by necessity, so an unbounded io.ReadAll on it is a free
+// memory-exhaustion primitive for anyone who finds the URL. Rejection is a
+// 400, the same as any other body that cannot be verified.
+const maxWebhookBodyBytes = 1 << 20 // 1 MiB
+
+// RegisterWebhook mounts POST /billing/webhook.
+//
+// Mounted on the Echo instance rather than on a group, and with no auth
+// guard of any kind, because Stripe presents no JWT and no
+// x-organization-id — a webhook behind RequireAuth/RequireOrg/
+// RequirePermission could never be reached by Stripe at all. Its
+// authentication is the Stripe-Signature HMAC, checked in
+// Service.HandleWebhook before anything is written.
+//
+// Deliberately NOT e.Group("/billing", ...): Echo's Group registers
+// catch-all RouteNotFound entries for its prefix as soon as it carries
+// middleware, so a second group on "/billing" would quietly wrap the
+// already-mounted guarded routes' 404 behaviour in this route's middleware.
+// One explicit route has no such side effect.
+//
+// middleware is the caller's (server.go) IP allowlist, applied per-route.
+func (h *Handler) RegisterWebhook(e *echo.Echo, middleware ...echo.MiddlewareFunc) {
+	e.POST(WebhookPath, h.webhook, middleware...)
+}
+
+// webhook verifies and reconciles one Stripe event.
+//
+// # The raw body
+//
+// Signature verification is an HMAC over the EXACT bytes Stripe sent, so
+// this reads and retains them before anything else can touch the reader,
+// and never calls c.Bind (or httpx.BindAndValidate, or anything else that
+// would consume c.Request().Body). In Echo the failure is concrete and
+// quiet: a consumed body leaves an empty reader, the HMAC is computed over
+// nothing, and verification fails — or, worse, passes in a test that
+// helpfully re-supplies the body.
+//
+// This also depends on the global middleware stack staying body-blind.
+// Recover, RequestID, and requestLogger (server.go) all are. Nothing that
+// reads a request body may be added globally.
+// @Summary  Stripe webhook receiver
+// @Tags     billing
+// @Accept   json
+// @Produce  json
+// @Param    Stripe-Signature  header    string  true  "Stripe webhook signature"
+// @Success  200               {object}  WebhookResponse
+// @Failure  400               {object}  httpx.ErrorResponse  "WEBHOOK_SIGNATURE_INVALID / Invalid request body"
+// @Failure  404               {object}  httpx.ErrorResponse  "Route not found (caller outside STRIPE_WEBHOOK_IP_ALLOWLIST)"
+// @Failure  501               {object}  httpx.ErrorResponse  "BILLING_NOT_CONFIGURED"
+// @Router   /billing/webhook [post]
+func (h *Handler) webhook(c echo.Context) error {
+	req := c.Request()
+
+	payload, err := io.ReadAll(http.MaxBytesReader(c.Response(), req.Body, maxWebhookBodyBytes))
+	if err != nil {
+		// Oversized or truncated. Nothing to verify, so it stops here;
+		// the error is not echoed back, it could quote the body's size
+		// and shape to an anonymous caller for no benefit.
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+
+	if err := h.service.HandleWebhook(req.Context(), payload, req.Header.Get("Stripe-Signature")); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, WebhookResponse{Received: true})
 }

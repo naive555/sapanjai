@@ -88,6 +88,7 @@ type OrgSubscription struct {
 	Status               *string          `json:"status"`
 	CurrentPeriodEnd     pgtype.Timestamp `json:"current_period_end"`
 	CancelAtPeriodEnd    bool             `json:"cancel_at_period_end"`
+	StripeEventAt        pgtype.Timestamp `json:"stripe_event_at"`
 }
 
 type Organization struct {

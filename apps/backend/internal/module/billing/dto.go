@@ -28,3 +28,15 @@ type CheckoutRequest struct {
 type RedirectResponse struct {
 	URL string `json:"url"`
 }
+
+// WebhookResponse is POST /billing/webhook's 200 body.
+//
+// Stripe only reads the status code, so the body exists for humans: a
+// `curl` or a Stripe CLI `trigger` against a misconfigured deployment gets
+// something legible back instead of an empty 200 that could equally have
+// come from a proxy. There is deliberately nothing in it about what the
+// event did — an unauthenticated caller who guesses a body should learn
+// nothing, and a caller holding the signing secret can read the audit log.
+type WebhookResponse struct {
+	Received bool `json:"received"`
+}

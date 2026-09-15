@@ -159,6 +159,19 @@ const (
 	// underlying Stripe error is logged (never returned), and it never
 	// carries the API key: see billing.Service's stripeErr helper.
 	BillingProviderError = "BILLING_PROVIDER_ERROR"
+
+	// WebhookSignatureInvalid is POST /billing/webhook's answer to a body
+	// whose Stripe-Signature header does not verify against
+	// STRIPE_WEBHOOK_SECRET, is absent, is malformed, or is outside the
+	// SDK's 5-minute timestamp tolerance. 400, and nothing is written:
+	// verification runs before the first database call.
+	//
+	// One code for all four failure modes, on purpose and for the same
+	// reason InvalidCredentials is one code: this route is reachable by
+	// anyone on the internet, and telling them whether their forged
+	// signature was merely stale is free help. The concrete reason is
+	// logged, never returned.
+	WebhookSignatureInvalid = "WEBHOOK_SIGNATURE_INVALID"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -213,6 +226,8 @@ var Map = map[string]mapping{
 	BillingNotConfigured: {501, "Billing is not configured"},
 	PlanNotPurchasable:   {409, "Plan is not available for purchase"},
 	BillingProviderError: {502, "Billing provider is unavailable, try again shortly"},
+
+	WebhookSignatureInvalid: {400, "Invalid webhook signature"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

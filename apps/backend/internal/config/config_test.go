@@ -671,3 +671,158 @@ func TestLoad_StripeProblemIsAggregatedWithTheRest(t *testing.T) {
 		}
 	}
 }
+
+// ---- STRIPE_WEBHOOK_SECRET / STRIPE_WEBHOOK_IP_ALLOWLIST (webhook, step 7) ----
+
+// TestLoad_StripeWebhookSecretUnsetDisablesTheWebhookWithoutFailing mirrors
+// STRIPE_SECRET_KEY's posture, and for the same reason: CI and a developer
+// laptop have no Stripe account, and the whole test suite has to run
+// without one. Unset means POST /billing/webhook answers
+// BILLING_NOT_CONFIGURED — never "accept everything", which is the one way
+// an empty signing secret could be catastrophic.
+func TestLoad_StripeWebhookSecretUnsetDisablesTheWebhookWithoutFailing(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+	if cfg.StripeWebhookSecret != "" {
+		t.Fatalf("StripeWebhookSecret = %q, want empty by default", cfg.StripeWebhookSecret)
+	}
+	if cfg.WebhookEnabled() {
+		t.Fatal("WebhookEnabled() = true with no secret configured")
+	}
+}
+
+// The two Stripe secrets are issued and rotated independently, so a
+// deployment can legitimately hold either one alone.
+func TestLoad_StripeWebhookSecretIsIndependentOfTheAPIKey(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_abcdefghijklmnop")
+
+	cfg := mustLoad(t)
+	if !cfg.WebhookEnabled() {
+		t.Fatal("WebhookEnabled() = false with a secret configured")
+	}
+	if cfg.BillingEnabled() {
+		t.Fatal("BillingEnabled() = true with no STRIPE_SECRET_KEY; the two must not be coupled")
+	}
+}
+
+func TestLoad_StripeWebhookSecretIsTrimmed(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "  whsec_abcdefghijklmnop\n")
+
+	if got := mustLoad(t).StripeWebhookSecret; got != "whsec_abcdefghijklmnop" {
+		t.Fatalf("StripeWebhookSecret = %q, want the trimmed secret", got)
+	}
+}
+
+// A signing secret that cannot possibly verify is a typo, and it must
+// surface at boot. The alternative is discovering it as a pile of 400s in
+// Stripe's webhook log days later — by which point Stripe has disabled the
+// endpoint and the renewals it silently dropped need a manual replay.
+func TestLoad_StripeWebhookSecretRejectsInvalidValues(t *testing.T) {
+	cases := map[string]struct {
+		secret   string
+		wantHint string
+	}{
+		// The specific, likely mix-up: the API keys and the signing secret
+		// live on adjacent Stripe dashboard pages.
+		"restricted key pasted into the webhook slot": {"rk_live_51abcdefgh", "API key"},
+		"secret key pasted into the webhook slot":     {"sk_live_51abcdefgh", "API key"},
+		"publishable key":                {"pk_live_51abcdefgh", "API key"},
+		"an unrelated string":            {"not-a-secret", "whsec_"},
+		"only whitespace around nothing": {"   x   ", "whsec_"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_WEBHOOK_SECRET", tc.secret)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load succeeded with STRIPE_WEBHOOK_SECRET = %q", tc.secret)
+			}
+			if !strings.Contains(err.Error(), "STRIPE_WEBHOOK_SECRET is invalid") {
+				t.Fatalf("error does not name the variable: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Fatalf("error %q does not contain the hint %q", err.Error(), tc.wantHint)
+			}
+			// Never echo the value: a live signing secret would otherwise
+			// land in the boot log of every crash-looping replica.
+			if strings.Contains(err.Error(), tc.secret) {
+				t.Fatalf("error echoes the configured secret: %v", err)
+			}
+		})
+	}
+}
+
+// Unset must disable the allowlist entirely. Stripe's published egress
+// ranges change, and a stale list silently drops live billing events — so
+// "off" is the only safe default for a control that is defence in depth
+// behind the signature, never instead of it.
+func TestLoad_StripeWebhookIPAllowlist_UnsetDisablesCheck(t *testing.T) {
+	setBaselineEnv(t)
+
+	if got := mustLoad(t).StripeWebhookIPAllowlist; got != nil {
+		t.Errorf("StripeWebhookIPAllowlist = %v, want nil (unset disables the check)", got)
+	}
+}
+
+func TestLoad_StripeWebhookIPAllowlist_ParsesValidList(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "3.18.12.63/32, 35.154.171.200/32,2600:1f00::/32")
+
+	cfg := mustLoad(t)
+	if len(cfg.StripeWebhookIPAllowlist) != 3 {
+		t.Fatalf("StripeWebhookIPAllowlist has %d entries, want 3: %v",
+			len(cfg.StripeWebhookIPAllowlist), cfg.StripeWebhookIPAllowlist)
+	}
+	want := []string{"3.18.12.63/32", "35.154.171.200/32", "2600:1f00::/32"}
+	for i, n := range cfg.StripeWebhookIPAllowlist {
+		if got := n.String(); got != want[i] {
+			t.Errorf("StripeWebhookIPAllowlist[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+// A single typo'd entry must fail the whole load rather than silently
+// narrowing the list — the same reasoning ADMIN_IP_ALLOWLIST follows, with
+// a sharper failure mode here: a silently narrowed webhook allowlist drops
+// paying customers' subscription events.
+func TestLoad_StripeWebhookIPAllowlist_MalformedEntryFailsLoad(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "3.18.12.63/32,not-a-cidr")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with a malformed STRIPE_WEBHOOK_IP_ALLOWLIST entry")
+	}
+	if !strings.Contains(err.Error(), "STRIPE_WEBHOOK_IP_ALLOWLIST is invalid") {
+		t.Fatalf("error does not name the variable: %v", err)
+	}
+}
+
+// Both webhook problems, and an unrelated one, must be reported in one
+// pass — Load's whole contract.
+func TestLoad_StripeWebhookProblemsAreAggregated(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "sk_live_wrong_slot")
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "nope")
+	t.Setenv("STRIPE_SECRET_KEY", "pk_live_nope")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with three invalid values")
+	}
+	for _, want := range []string{
+		"STRIPE_SECRET_KEY is invalid",
+		"STRIPE_WEBHOOK_SECRET is invalid",
+		"STRIPE_WEBHOOK_IP_ALLOWLIST is invalid",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is missing %q; Load must report every problem in one pass:\n%v", want, err)
+		}
+	}
+}

@@ -113,6 +113,17 @@ const (
 	// entitlements moves until the webhook (step 7) calls AssignPlan.
 	ActionBillingCheckoutStarted = "billing.checkout.started"
 	ActionBillingPortalOpened    = "billing.portal.opened"
+
+	// ActionBillingSubscriptionSynced is written by POST /billing/webhook
+	// after a Stripe event has been reconciled into org_subscriptions. It
+	// carries no user id — Stripe is not a user — and no Stripe customer or
+	// subscription id: audit_logs must not become a second billing record
+	// (plan invariant 1). Its metadata is the event type, the plan the org
+	// ended up on, and the subscription status, which is what a support
+	// question ("why did this org's plan change on Tuesday?") actually
+	// needs. It is written AFTER the reconciling transaction commits, so a
+	// best-effort audit write can never roll one back.
+	ActionBillingSubscriptionSynced = "billing.subscription.synced"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is

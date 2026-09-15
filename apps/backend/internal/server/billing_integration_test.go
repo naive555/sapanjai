@@ -9,6 +9,7 @@ import (
 
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
+	"github.com/sapanjai/backend/internal/module/billing"
 )
 
 // The /billing integration tests run against the real server, the real RBAC
@@ -483,13 +484,24 @@ func TestIntegration_Billing_RouteSurface(t *testing.T) {
 		}
 	}
 
-	// POST /billing/webhook is step 7 and is deliberately NOT mounted on
-	// this guarded group: Stripe presents no JWT and no x-organization-id,
-	// so a webhook route living behind RequirePermission could never be
-	// reached by Stripe at all. Assert its absence now so it cannot land
-	// here by accident later.
-	resp, body := doJSON(t, client, ts.URL, http.MethodPost, "/billing/webhook", map[string]any{}, headers)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("POST /billing/webhook: status = %d, want 404 (step 7 has not landed); body = %v", resp.StatusCode, body)
+	// POST /billing/webhook exists (step 7) but is deliberately NOT on this
+	// guarded group: Stripe presents no JWT and no x-organization-id, so a
+	// webhook behind RequirePermission could never be reached by Stripe at
+	// all. Sending it a fully authenticated request proves the negative —
+	// it is answered on its own terms (501 here, since this suite
+	// configures no STRIPE_WEBHOOK_SECRET), never 403 for a missing
+	// billing:write and never 400 for a missing x-organization-id.
+	// billing_webhook_integration_test.go covers the route itself.
+	resp, body := doJSON(t, client, ts.URL, http.MethodPost, billing.WebhookPath, map[string]any{}, headers)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("POST /billing/webhook: status = %d, want 501; body = %v", resp.StatusCode, body)
+	}
+
+	// And it is reachable with no credentials at all, which is the whole
+	// point of mounting it outside the group.
+	resp, body = doJSON(t, client, ts.URL, http.MethodPost, billing.WebhookPath, map[string]any{}, nil)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("POST /billing/webhook unauthenticated: status = %d — an auth guard is in front of it; body = %v",
+			resp.StatusCode, body)
 	}
 }

@@ -1992,6 +1992,55 @@ const docTemplate = `{
                 }
             }
         },
+        "/billing/webhook": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Stripe webhook receiver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stripe webhook signature",
+                        "name": "Stripe-Signature",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.WebhookResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "WEBHOOK_SIGNATURE_INVALID / Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Route not found (caller outside STRIPE_WEBHOOK_IP_ALLOWLIST)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/connectors": {
             "get": {
                 "security": [
@@ -4035,6 +4084,14 @@ const docTemplate = `{
             "properties": {
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.WebhookResponse": {
+            "type": "object",
+            "properties": {
+                "received": {
+                    "type": "boolean"
                 }
             }
         },

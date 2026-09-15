@@ -43,6 +43,13 @@ var sensitiveKeys = map[string]struct{}{
 	"stripeapikey":    {},
 	"stripekey":       {},
 	"webhooksecret":   {},
+	// The Stripe-Signature header on POST /billing/webhook. Not a
+	// credential — it is an HMAC of the request body — but it is one half
+	// of a replayable pair with that body, and logging it is explicitly
+	// forbidden by the webhook's own rules. No call site logs it today;
+	// this is the belt to that braces, in the one place CLAUDE.md says new
+	// sensitive keys belong.
+	"stripesignature": {},
 }
 
 // IsSensitive reports whether a log attribute or query parameter with this key

@@ -27,6 +27,11 @@ type mockBillingStore struct {
 	getOrgBillingRef       func(ctx context.Context, organizationID uuid.UUID) (db.GetOrgBillingRefRow, error)
 	claimOrgStripeCustomer func(ctx context.Context, arg db.ClaimOrgStripeCustomerParams) (*string, error)
 	getOrganizationByID    func(ctx context.Context, id uuid.UUID) (db.Organization, error)
+
+	// withTx backs the webhook's one transaction (webhook_test.go). Left
+	// nil by the Checkout/Portal tests, which never reach it — a nil field
+	// panics loudly rather than passing quietly if that ever changes.
+	withTx func(ctx context.Context, fn func(q db.Querier) error) error
 }
 
 func (m *mockBillingStore) GetPlanByID(ctx context.Context, id uuid.UUID) (db.Plan, error) {
@@ -43,6 +48,9 @@ func (m *mockBillingStore) ClaimOrgStripeCustomer(ctx context.Context, arg db.Cl
 }
 func (m *mockBillingStore) GetOrganizationByID(ctx context.Context, id uuid.UUID) (db.Organization, error) {
 	return m.getOrganizationByID(ctx, id)
+}
+func (m *mockBillingStore) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
+	return m.withTx(ctx, fn)
 }
 
 var _ billingStore = (*mockBillingStore)(nil)
@@ -191,8 +199,11 @@ func withClaimableRow(store *mockBillingStore, claimed *[]db.ClaimOrgStripeCusto
 	return store
 }
 
+// newService builds a Service for the Checkout/Portal tests: no webhook
+// verifier and no plan assigner, because neither route touches either. The
+// webhook tests build their own (newWebhookService, webhook_test.go).
 func newService(store billingStore, sc stripeAPI) *Service {
-	return NewService(store, sc, newTestAudit(), testPublicURL, newTestLog())
+	return NewService(store, sc, nil, nil, newTestAudit(), testPublicURL, newTestLog())
 }
 
 // ---- Checkout ----

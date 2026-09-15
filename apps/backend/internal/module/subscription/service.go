@@ -98,13 +98,43 @@ func (s *Service) GetSubscription(ctx context.Context, organizationID uuid.UUID)
 	return &row, nil
 }
 
+// PlanWriter is the one write AssignPlan performs, named as an interface so
+// a caller that is already inside a transaction can hand its own tx-bound
+// db.Querier in (AssignPlanTx) instead of having this service reach for its
+// own pool connection.
+//
+// It exists for internal/module/billing's Stripe webhook (step 7 of
+// .claude/plans/2026-09-13-billing-and-usage-metering.md), which must claim
+// the event id in stripe_events and move the org's plan in ONE transaction:
+// claiming in a separate transaction and then failing would leave the event
+// permanently marked handled, turning Stripe's retry into a silent no-op.
+// Handing the seam a Querier is the alternative to the thing plan invariant
+// 5 forbids -- billing growing an org_subscriptions upsert of its own.
+//
+// *database.Store, *db.Queries, and the tx-bound Querier from Store.WithTx
+// all satisfy it.
+type PlanWriter interface {
+	UpsertOrgSubscription(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
+}
+
 // AssignPlan upserts organizationID's subscription to planID, creating the
 // row if none exists or switching the plan if one does. Mirrors
 // SubscriptionService.assignPlan. A well-formed but nonexistent planID
 // surfaces as a foreign-key violation (500), matching the source, which has
 // no PLAN_NOT_FOUND check either.
 func (s *Service) AssignPlan(ctx context.Context, organizationID, planID uuid.UUID) error {
-	return s.store.UpsertOrgSubscription(ctx, db.UpsertOrgSubscriptionParams{
+	return s.AssignPlanTx(ctx, s.store, organizationID, planID)
+}
+
+// AssignPlanTx is AssignPlan against a caller-supplied writer, so the upsert
+// can join a transaction the caller already owns. AssignPlan is exactly this
+// method bound to this service's own store, so there is one implementation
+// of the upsert and one place its semantics live -- in particular the fact
+// that UpsertOrgSubscription's ON CONFLICT sets plan_id and updated_at and
+// deliberately does NOT touch custom_limits, which is how an admin override
+// survives a plan change (plan invariant 2).
+func (s *Service) AssignPlanTx(ctx context.Context, w PlanWriter, organizationID, planID uuid.UUID) error {
+	return w.UpsertOrgSubscription(ctx, db.UpsertOrgSubscriptionParams{
 		OrganizationID: organizationID,
 		PlanID:         planID,
 	})

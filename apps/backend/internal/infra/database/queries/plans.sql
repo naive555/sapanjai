@@ -31,3 +31,21 @@ WHERE plan_id = @plan_id
   AND active = true
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: GetPlanByStripePriceID :one
+-- Resolves the entitlement plan a Stripe Subscription is actually paying
+-- for, from the Price id on its line item. This is the webhook's PRIMARY
+-- plan resolution and metadata.plan_id is only the fallback, deliberately:
+-- the Customer Portal lets a customer switch plans without this application
+-- being involved, which changes the Price on the subscription but leaves
+-- the plan_id this code stamped into metadata at checkout time frozen at
+-- whatever they bought originally. Trusting metadata there would keep
+-- billing them for the new plan while entitling them to the old one.
+--
+-- Not filtered on plan_prices.active: a plan re-priced after a customer
+-- subscribed leaves that customer on the old, now-inactive Price, and their
+-- renewal events must still resolve to the plan. `active` governs what may
+-- be SOLD (GetActivePlanPrice), not what an existing subscription means.
+SELECT p.* FROM plans p
+JOIN plan_prices pp ON pp.plan_id = p.id
+WHERE pp.stripe_price_id = @stripe_price_id::text;

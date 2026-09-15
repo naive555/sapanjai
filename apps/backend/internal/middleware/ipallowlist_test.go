@@ -17,17 +17,17 @@ func mustCIDR(t *testing.T, s string) *net.IPNet {
 	return n
 }
 
-// AdminIPAllowlist is applied to the /admin GROUP in server.go, meaning it
+// IPAllowlist is applied to the /admin GROUP in server.go, meaning it
 // runs before any RequireAuth/RequirePlatformRole middleware in the chain —
 // these tests assert that ordering has teeth by proving `next` (which
 // stands in for the rest of the chain, auth included) is never invoked for
 // a rejected request.
-func TestAdminIPAllowlist_EmptyDisablesCheck(t *testing.T) {
+func TestIPAllowlist_EmptyDisablesCheck(t *testing.T) {
 	called := false
 	next := func(c echo.Context) error { called = true; return c.String(http.StatusOK, "ok") }
 
 	c, rec := newTestContext(http.MethodGet, "/admin/me", nil)
-	err := AdminIPAllowlist(nil)(next)(c)
+	err := IPAllowlist(nil)(next)(c)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestAdminIPAllowlist_EmptyDisablesCheck(t *testing.T) {
 	}
 }
 
-func TestAdminIPAllowlist_OffCIDR_Rejects404BeforeNext(t *testing.T) {
+func TestIPAllowlist_OffCIDR_Rejects404BeforeNext(t *testing.T) {
 	// httptest.NewRequest defaults RemoteAddr to 192.0.2.1:1234 (TEST-NET-1,
 	// RFC 5737) — deliberately outside the allowlist below so this exercises
 	// the real c.RealIP() resolution, not a stubbed header.
@@ -51,7 +51,7 @@ func TestAdminIPAllowlist_OffCIDR_Rejects404BeforeNext(t *testing.T) {
 	c, _ := newTestContext(http.MethodGet, "/admin/me", map[string]string{
 		"Authorization": "Bearer some-token-that-must-never-be-inspected",
 	})
-	err := AdminIPAllowlist([]*net.IPNet{mustCIDR(t, "10.0.0.0/8")})(next)(c)
+	err := IPAllowlist([]*net.IPNet{mustCIDR(t, "10.0.0.0/8")})(next)(c)
 
 	// The middleware's own raw error carries echo's generic 404 message
 	// ("Not Found", from echo.NewHTTPError's default); server.go's global
@@ -65,12 +65,12 @@ func TestAdminIPAllowlist_OffCIDR_Rejects404BeforeNext(t *testing.T) {
 	assertHTTPError(t, err, http.StatusNotFound, "Not Found")
 }
 
-func TestAdminIPAllowlist_OnCIDR_CallsNext(t *testing.T) {
+func TestIPAllowlist_OnCIDR_CallsNext(t *testing.T) {
 	called := false
 	next := func(c echo.Context) error { called = true; return c.String(http.StatusOK, "ok") }
 
 	c, rec := newTestContext(http.MethodGet, "/admin/me", nil)
-	err := AdminIPAllowlist([]*net.IPNet{mustCIDR(t, "192.0.2.0/24")})(next)(c)
+	err := IPAllowlist([]*net.IPNet{mustCIDR(t, "192.0.2.0/24")})(next)(c)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
