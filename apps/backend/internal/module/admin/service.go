@@ -128,11 +128,27 @@ type adminStore interface {
 	// see database.Store.WithTx's own doc comment.
 	WithTx(ctx context.Context, fn func(q db.Querier) error) error
 
+	// AdminListPlans, not subscriptionResolver.ListPlans: the tenant
+	// catalogue now filters on is_public (queries/plans.sql's
+	// ListPublicPlans, billing plan step 8), and the console that SETS
+	// is_public must still see the plans it hid. Two callers, two
+	// different questions, two queries.
+	AdminListPlans(ctx context.Context) ([]db.Plan, error)
 	AdminGetPlanByID(ctx context.Context, id uuid.UUID) (db.Plan, error)
 	AdminCreatePlan(ctx context.Context, arg db.AdminCreatePlanParams) (db.Plan, error)
 	AdminUpdatePlan(ctx context.Context, arg db.AdminUpdatePlanParams) (db.Plan, error)
 	AdminDeletePlan(ctx context.Context, id uuid.UUID) error
 	AdminCountSubscriptionsByPlan(ctx context.Context, planID uuid.UUID) (int64, error)
+
+	// plan_prices (migration 00013, billing plan step 8). No update-amount
+	// and no delete member here, deliberately -- queries/admin.sql's
+	// plan_prices block comment has the reasoning, and the absence is
+	// enforced by this interface not naming them.
+	AdminListPlanPrices(ctx context.Context, planID uuid.UUID) ([]db.PlanPrice, error)
+	AdminCreatePlanPrice(ctx context.Context, arg db.AdminCreatePlanPriceParams) (db.PlanPrice, error)
+	AdminGetPlanPrice(ctx context.Context, arg db.AdminGetPlanPriceParams) (db.PlanPrice, error)
+	AdminSetPlanPriceActive(ctx context.Context, arg db.AdminSetPlanPriceActiveParams) (db.PlanPrice, error)
+	AdminCountActivePlanPricesFor(ctx context.Context, arg db.AdminCountActivePlanPricesForParams) (int64, error)
 
 	// ---- Phase 6: TOTP step-up (Task 6.3) ----
 	UpsertUserTOTPSecret(ctx context.Context, arg db.UpsertUserTOTPSecretParams) error
@@ -167,7 +183,6 @@ type adminAuth interface {
 type subscriptionResolver interface {
 	GetSubscription(ctx context.Context, organizationID uuid.UUID) (*db.GetOrgSubscriptionRow, error)
 	EffectiveLimits(ctx context.Context, organizationID uuid.UUID) (map[string]float64, error)
-	ListPlans(ctx context.Context) ([]db.Plan, error)
 
 	// AssignPlan backs POST /admin/organizations/:orgId/plan (Task 3.3) —
 	// delegates to subscription.Service's existing upsert rather than
@@ -731,18 +746,54 @@ func (s *Service) SystemStats(ctx context.Context) (StatsResponse, error) {
 	}, nil
 }
 
-// ListPlans returns every subscription plan. Plans is a tiny, seeded table
-// with no staff-facing filters, so this bypasses cachedCount entirely.
+// ListPlans returns every subscription plan, public and hidden alike.
+// Plans is a tiny table with no staff-facing filters, so this bypasses
+// cachedCount entirely.
+//
+// Reads AdminListPlans rather than the tenant catalogue: GET /plans now
+// hides is_public = false rows (queries/plans.sql's ListPublicPlans), and
+// a console that could not see a plan it had hidden could not un-hide it.
 func (s *Service) ListPlans(ctx context.Context) (PlansListResponse, error) {
-	plans, err := s.sub.ListPlans(ctx)
+	plans, err := s.store.AdminListPlans(ctx)
 	if err != nil {
 		return PlansListResponse{}, err
 	}
 	items := make([]PlanItem, len(plans))
 	for i, p := range plans {
-		items[i] = PlanItem{ID: p.ID, Name: p.Name, Limits: p.Limits, CreatedAt: p.CreatedAt}
+		items[i] = toPlanItem(p)
 	}
 	return PlansListResponse{Items: items, Total: int64(len(items))}, nil
+}
+
+// toPlanItem maps a db.Plan row to its response DTO field by field --
+// CLAUDE.md's admin ground rule, and the reason migration 00013's three
+// new columns did not appear in a staff response until this function was
+// edited to name them.
+func toPlanItem(p db.Plan) PlanItem {
+	return PlanItem{
+		ID:              p.ID,
+		Name:            p.Name,
+		Limits:          p.Limits,
+		StripeProductID: p.StripeProductID,
+		IsPublic:        p.IsPublic,
+		SortOrder:       p.SortOrder,
+		CreatedAt:       p.CreatedAt,
+	}
+}
+
+// toPlanPriceItem is toPlanItem's plan_prices twin, field by field for the
+// same reason.
+func toPlanPriceItem(p db.PlanPrice) PlanPriceItem {
+	return PlanPriceItem{
+		ID:            p.ID,
+		PlanID:        p.PlanID,
+		StripePriceID: p.StripePriceID,
+		UnitAmount:    p.UnitAmount,
+		Currency:      p.Currency,
+		Interval:      p.Interval,
+		Active:        p.Active,
+		CreatedAt:     p.CreatedAt,
+	}
 }
 
 // ==== Mutations (execution plan Phase 3) ====
@@ -961,11 +1012,27 @@ func (s *Service) SetBan(ctx context.Context, actx AdminContext, targetID uuid.U
 
 // requiredPlanLimitKeys are the limit keys upstream code actually enforces
 // (subscription.Service.EnforceLimit's callers, and cmd/seed's default
-// plans) — every plan must define all three, -1 meaning unlimited. A
+// plans) — every plan must define all four, -1 meaning unlimited. A
 // limits blob may carry additional keys beyond these; validatePlanLimits
 // only rejects what code elsewhere depends on being present and
 // well-typed.
-var requiredPlanLimitKeys = []string{"max_members", "max_roles", "max_connectors"}
+//
+// max_tool_calls_per_month joined the list in billing plan step 8, and the
+// list's own definition is the argument: step 5 made it enforced on the
+// MCP gateway's hot path (internal/module/mcp/service.go calls EnforceLimit
+// with it before a tools/call dispatches), so by "the keys upstream code
+// actually enforces" it belongs here, and migration 00015 already
+// backfilled it onto every seeded plan.
+//
+// Leaving it out was not neutral. EnforceLimit treats a MISSING key as
+// unlimited by design ("No subscription, no limit for key, or a limit of
+// -1 ... all pass"), so a superadmin who created a plan through this route
+// and simply didn't think about tool calls produced a silently uncapped
+// tier — the one limit that maps directly to an upstream API bill, failing
+// open. The cost of requiring it is that every create AND update must now
+// supply it; a PUT that omits it is a 422 rather than a plan that quietly
+// becomes unlimited, which is the trade this list exists to make.
+var requiredPlanLimitKeys = []string{"max_members", "max_roles", "max_connectors", "max_tool_calls_per_month"}
 
 // validateLimitValues rejects any limit whose value is not a whole number.
 // json.Unmarshal decodes a JSON number into float64, so "integer" is
@@ -1014,31 +1081,82 @@ func validateCustomLimits(limits map[string]any) error {
 	return validateLimitValues(limits)
 }
 
+// PlanInput is the validated, defaults-applied plan body CreatePlan and
+// UpdatePlan both take. A struct rather than five positional arguments
+// because the last three are a *string, a bool and an int32 that would be
+// trivially transposable at a call site, and because create and update
+// take exactly the same set (admin.sql's AdminUpdatePlan: a PUT is a full
+// replace, not a PATCH).
+//
+// Defaults for absent optional fields are applied in the handler, not
+// here: "absent means published" is a wire-format decision belonging to
+// the DTO (PlanCreateRequest's doc comment), and by the time a PlanInput
+// exists every field is a decision somebody made.
+type PlanInput struct {
+	Name            string
+	Limits          map[string]any
+	StripeProductID *string
+	IsPublic        bool
+	SortOrder       int32
+}
+
+// PlanPriceInput is PlanInput's plan_prices twin: the validated,
+// defaults-applied body of POST /admin/plans/:planId/prices. There is no
+// update counterpart — a price is never edited in place (see the
+// plan_prices block comment further down).
+type PlanPriceInput struct {
+	StripePriceID string
+	UnitAmount    int64
+	Currency      string
+	Interval      string
+	Active        bool
+}
+
 // CreatePlan creates a new subscription plan (Task 3.5). No re-auth: D4's
 // re-auth list is delete-org/grant-role/ban specifically — plan CRUD
-// shapes pricing tiers, not tenant or staff access.
-func (s *Service) CreatePlan(ctx context.Context, actx AdminContext, name string, limits map[string]any) (PlanItem, error) {
-	b, err := json.Marshal(limits)
+// shapes pricing tiers, not tenant or staff access. Billing plan step 8
+// widened what a plan carries (stripe_product_id/is_public/sort_order) but
+// did not change that: none of them grant anyone access to anything, and a
+// mispriced tier is fixed by another PUT.
+func (s *Service) CreatePlan(ctx context.Context, actx AdminContext, in PlanInput) (PlanItem, error) {
+	b, err := json.Marshal(in.Limits)
 	if err != nil {
 		return PlanItem{}, err
 	}
-	plan, err := s.store.AdminCreatePlan(ctx, db.AdminCreatePlanParams{Name: name, Limits: b})
+	plan, err := s.store.AdminCreatePlan(ctx, db.AdminCreatePlanParams{
+		Name:            in.Name,
+		Limits:          b,
+		StripeProductID: in.StripeProductID,
+		IsPublic:        in.IsPublic,
+		SortOrder:       in.SortOrder,
+	})
 	if err != nil {
 		return PlanItem{}, err
 	}
 	s.audit.Record(ctx, auditlog.ActionAdminPlanCreated, &actx.AdminID, nil,
-		adminAuditMetadata(actx, map[string]any{"planId": plan.ID, "name": plan.Name}))
-	return PlanItem{ID: plan.ID, Name: plan.Name, Limits: plan.Limits, CreatedAt: plan.CreatedAt}, nil
+		adminAuditMetadata(actx, map[string]any{
+			"planId": plan.ID, "name": plan.Name, "isPublic": plan.IsPublic,
+		}))
+	return toPlanItem(plan), nil
 }
 
-// UpdatePlan replaces planID's name+limits together (Task 3.5) — not a
-// partial PATCH; admin.sql's AdminUpdatePlan doc comment has the reasoning.
-func (s *Service) UpdatePlan(ctx context.Context, actx AdminContext, planID uuid.UUID, name string, limits map[string]any) (PlanItem, error) {
-	b, err := json.Marshal(limits)
+// UpdatePlan replaces planID's name, limits, and catalogue columns
+// together (Task 3.5) — not a partial PATCH; admin.sql's AdminUpdatePlan
+// doc comment and PlanUpdateRequest's have the reasoning and the
+// re-publishes-a-hidden-plan consequence.
+func (s *Service) UpdatePlan(ctx context.Context, actx AdminContext, planID uuid.UUID, in PlanInput) (PlanItem, error) {
+	b, err := json.Marshal(in.Limits)
 	if err != nil {
 		return PlanItem{}, err
 	}
-	plan, err := s.store.AdminUpdatePlan(ctx, db.AdminUpdatePlanParams{ID: planID, Name: name, Limits: b})
+	plan, err := s.store.AdminUpdatePlan(ctx, db.AdminUpdatePlanParams{
+		ID:              planID,
+		Name:            in.Name,
+		Limits:          b,
+		StripeProductID: in.StripeProductID,
+		IsPublic:        in.IsPublic,
+		SortOrder:       in.SortOrder,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PlanItem{}, apperror.New(apperror.NotFound)
@@ -1046,8 +1164,10 @@ func (s *Service) UpdatePlan(ctx context.Context, actx AdminContext, planID uuid
 		return PlanItem{}, err
 	}
 	s.audit.Record(ctx, auditlog.ActionAdminPlanUpdated, &actx.AdminID, nil,
-		adminAuditMetadata(actx, map[string]any{"planId": plan.ID, "name": plan.Name}))
-	return PlanItem{ID: plan.ID, Name: plan.Name, Limits: plan.Limits, CreatedAt: plan.CreatedAt}, nil
+		adminAuditMetadata(actx, map[string]any{
+			"planId": plan.ID, "name": plan.Name, "isPublic": plan.IsPublic,
+		}))
+	return toPlanItem(plan), nil
 }
 
 // DeletePlan deletes planID (Task 3.5), refusing with PLAN_IN_USE if any
@@ -1079,6 +1199,156 @@ func (s *Service) DeletePlan(ctx context.Context, actx AdminContext, planID uuid
 	s.audit.Record(ctx, auditlog.ActionAdminPlanDeleted, &actx.AdminID, nil,
 		adminAuditMetadata(actx, map[string]any{"planId": plan.ID, "name": plan.Name}))
 	return nil
+}
+
+// ---- plan_prices (billing plan step 8) ----
+//
+// Three methods, and the two that do not exist are as deliberate as the
+// three that do. There is no UpdatePlanPriceAmount and no DeletePlanPrice:
+//
+//   * A Stripe Price is immutable. Editing unit_amount here would make the
+//     local catalogue disagree with the thing that actually charges the
+//     card, and the console would then display a price nobody pays.
+//   * Deleting a row destroys GetPlanByStripePriceID's ability to resolve
+//     an EXISTING subscriber's entitlement plan from the Price on their
+//     subscription — including a subscriber sitting on a long-deactivated
+//     price, which is the normal state of anyone who bought before the
+//     last re-pricing. `active` governs what may be SOLD, not what an
+//     existing subscription MEANS, and only a delete conflates the two.
+//
+// Re-pricing is therefore insert-then-deactivate, and SetPlanPriceActive's
+// PLAN_PRICE_LAST_ACTIVE guard enforces that order rather than trusting
+// it. queries/admin.sql's plan_prices block comment is the other half of
+// this note.
+
+// ListPlanPrices returns every price for planID, active and inactive.
+// Verifies the plan exists first so an unknown planId is a 404 rather than
+// an empty list — "this plan has no prices" and "this plan does not exist"
+// are different answers to a staff member debugging a checkout.
+func (s *Service) ListPlanPrices(ctx context.Context, planID uuid.UUID) (PlanPricesListResponse, error) {
+	if _, err := s.store.AdminGetPlanByID(ctx, planID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PlanPricesListResponse{}, apperror.New(apperror.NotFound)
+		}
+		return PlanPricesListResponse{}, err
+	}
+
+	rows, err := s.store.AdminListPlanPrices(ctx, planID)
+	if err != nil {
+		return PlanPricesListResponse{}, err
+	}
+	items := make([]PlanPriceItem, len(rows))
+	for i, r := range rows {
+		items[i] = toPlanPriceItem(r)
+	}
+	return PlanPricesListResponse{Items: items, Total: int64(len(items))}, nil
+}
+
+// CreatePlanPrice records an already-created Stripe Price against planID.
+// It does not call Stripe: stripe-go is confined to
+// internal/module/billing/stripe.go, and this module deals in strings.
+// No re-auth, same reasoning as CreatePlan.
+func (s *Service) CreatePlanPrice(ctx context.Context, actx AdminContext, planID uuid.UUID, in PlanPriceInput) (PlanPriceItem, error) {
+	if _, err := s.store.AdminGetPlanByID(ctx, planID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PlanPriceItem{}, apperror.New(apperror.NotFound)
+		}
+		return PlanPriceItem{}, err
+	}
+
+	price, err := s.store.AdminCreatePlanPrice(ctx, db.AdminCreatePlanPriceParams{
+		PlanID:          planID,
+		StripePriceID:   in.StripePriceID,
+		UnitAmount:      in.UnitAmount,
+		Currency:        in.Currency,
+		BillingInterval: in.Interval,
+		Active:          in.Active,
+	})
+	if err != nil {
+		return PlanPriceItem{}, err
+	}
+
+	s.audit.Record(ctx, auditlog.ActionAdminPlanPriceCreated, &actx.AdminID, nil,
+		adminAuditMetadata(actx, map[string]any{
+			"planId":        planID,
+			"priceId":       price.ID,
+			"stripePriceId": price.StripePriceID,
+			"unitAmount":    price.UnitAmount,
+			"currency":      price.Currency,
+			"interval":      price.Interval,
+			"active":        price.Active,
+		}))
+	return toPlanPriceItem(price), nil
+}
+
+// SetPlanPriceActive flips priceID's active flag — the only mutation an
+// existing price row accepts.
+//
+// Refuses with PLAN_PRICE_LAST_ACTIVE when deactivating would leave a
+// PUBLIC plan with no active price for that currency/interval, because
+// GET /plans would keep offering it while POST /billing/checkout answered
+// PLAN_NOT_PURCHASABLE to everyone who clicked. Scoped to public plans on
+// purpose: a hidden plan is not being sold, so there is nothing to make
+// incoherent, and retiring a tier stays possible (hide it, then deactivate
+// its prices). Activating is never refused.
+func (s *Service) SetPlanPriceActive(ctx context.Context, actx AdminContext, planID, priceID uuid.UUID, active bool) (PlanPriceItem, error) {
+	plan, err := s.store.AdminGetPlanByID(ctx, planID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PlanPriceItem{}, apperror.New(apperror.NotFound)
+		}
+		return PlanPriceItem{}, err
+	}
+
+	current, err := s.store.AdminGetPlanPrice(ctx, db.AdminGetPlanPriceParams{ID: priceID, PlanID: planID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PlanPriceItem{}, apperror.New(apperror.NotFound)
+		}
+		return PlanPriceItem{}, err
+	}
+
+	// Only a real active -> inactive transition can strand a public plan.
+	// Re-deactivating an already-inactive price is a no-op that must not
+	// be rejected, or a retried request would fail where the first
+	// succeeded.
+	if !active && current.Active && plan.IsPublic {
+		remaining, err := s.store.AdminCountActivePlanPricesFor(ctx, db.AdminCountActivePlanPricesForParams{
+			PlanID:          planID,
+			Currency:        current.Currency,
+			BillingInterval: current.Interval,
+		})
+		if err != nil {
+			return PlanPriceItem{}, err
+		}
+		if remaining <= 1 {
+			return PlanPriceItem{}, apperror.New(apperror.PlanPriceLastActive)
+		}
+	}
+
+	price, err := s.store.AdminSetPlanPriceActive(ctx, db.AdminSetPlanPriceActiveParams{
+		ID: priceID, PlanID: planID, Active: active,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PlanPriceItem{}, apperror.New(apperror.NotFound)
+		}
+		return PlanPriceItem{}, err
+	}
+
+	action := auditlog.ActionAdminPlanPriceDeactivated
+	if active {
+		action = auditlog.ActionAdminPlanPriceActivated
+	}
+	s.audit.Record(ctx, action, &actx.AdminID, nil,
+		adminAuditMetadata(actx, map[string]any{
+			"planId":        planID,
+			"priceId":       price.ID,
+			"stripePriceId": price.StripePriceID,
+			"currency":      price.Currency,
+			"interval":      price.Interval,
+		}))
+	return toPlanPriceItem(price), nil
 }
 
 // ---- filter-key builders ----

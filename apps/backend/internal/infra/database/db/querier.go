@@ -13,6 +13,13 @@ import (
 
 type Querier interface {
 	AdminCountActiveMCPKeys(ctx context.Context) (int64, error)
+	// Counts the active prices a checkout could actually resolve for one
+	// (plan, currency, interval) triple — the exact selector GetActivePlanPrice
+	// (queries/plans.sql) uses. Backs the PLAN_PRICE_LAST_ACTIVE guard: a
+	// public plan whose last active price for a triple is deactivated becomes
+	// visible-but-unbuyable, which is the same incoherence is_public exists to
+	// prevent, arrived at from the other side.
+	AdminCountActivePlanPricesFor(ctx context.Context, arg AdminCountActivePlanPricesForParams) (int64, error)
 	AdminCountActiveSessions(ctx context.Context) (int64, error)
 	AdminCountActiveSessionsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	AdminCountAllAuditLogs(ctx context.Context) (int64, error)
@@ -54,7 +61,20 @@ type Querier interface {
 	// neither the source app nor this one adds a dedicated
 	// PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
 	// typo caught on the next attempt.
+	//
+	// stripe_product_id/is_public/sort_order (migration 00013) are written
+	// here rather than left to their column defaults so that a plan can be
+	// created already hidden — a staff member wiring up a new tier creates the
+	// Stripe Product, creates the plan with is_public = false, adds its
+	// plan_prices row, and only then publishes it. Creating every plan
+	// published-by-default would put a priceless tier in the tenant catalogue
+	// for the length of that workflow.
 	AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error)
+	// plan_prices.stripe_price_id carries a UNIQUE constraint; a colliding id
+	// surfaces as a raw constraint-violation error (500), the same tolerance
+	// AdminCreatePlan documents for a colliding plan name — the same 2-5
+	// person staff console, and the same typo caught on the next attempt.
+	AdminCreatePlanPrice(ctx context.Context, arg AdminCreatePlanPriceParams) (PlanPrice, error)
 	// memberships/connectors/mcp_api_keys/org_subscriptions all cascade
 	// (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
 	// no FK (00004), so audit rows deliberately survive the org — see
@@ -78,6 +98,11 @@ type Querier interface {
 	// specifically to keep it that way as the schema evolves.
 	AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
 	AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
+	// Scoped by plan_id as well as id: a price id that belongs to a different
+	// plan than the one in the route resolves to no row, and therefore to the
+	// same 404 an unknown id would — the route's path must agree with the row
+	// it acts on, not merely contain a valid uuid somewhere.
+	AdminGetPlanPrice(ctx context.Context, arg AdminGetPlanPriceParams) (PlanPrice, error)
 	// Cross-org connector metadata only — no encrypted_config column in this
 	// SELECT, ever (docs/11-admin-panel.md §7). Also used, filtered by
 	// organization_id alone, to populate the connector list nested in
@@ -94,6 +119,40 @@ type Querier interface {
 	// member*connector*key combination. plan_name is NULL for an org with no
 	// subscription row.
 	AdminListOrganizations(ctx context.Context, arg AdminListOrganizationsParams) ([]AdminListOrganizationsRow, error)
+	// ---- plan_prices (migration 00013) ----
+	//
+	// There is deliberately no query here that edits a price's unit_amount,
+	// currency, or interval, and none that deletes a row. A Stripe Price is
+	// immutable once created (you deactivate and supersede rather than edit),
+	// and plan_prices mirrors Stripe rather than diverging from it:
+	//
+	//   * An UPDATE of unit_amount would leave the local row disagreeing with
+	//     the Stripe Price it names, and Stripe is what actually charges the
+	//     card. The console would then display a price nobody is paying.
+	//   * A DELETE would break GetPlanByStripePriceID (queries/plans.sql),
+	//     which resolves an EXISTING subscriber's entitlement plan from the
+	//     Price id on their subscription — including subscribers on a price
+	//     that was long since deactivated. That query's own doc comment is
+	//     explicit that `active` governs what may be SOLD, not what an
+	//     existing subscription means; deleting the row destroys the second
+	//     meaning along with the first, permanently, for a paying customer.
+	//
+	// Re-pricing is therefore: create the new Stripe Price, insert its row
+	// here, then deactivate the old one. That ordering is what
+	// GetActivePlanPrice's "newest-first, no window in which neither is
+	// selectable" comment describes, and AdminCountActivePlanPricesFor below
+	// is what enforces it.
+	// Every price for a plan, active and inactive alike. Inactive rows are the
+	// point as much as active ones: they are the plan's price history, and a
+	// staff member asking "what is this customer paying" is reading a price
+	// that may well no longer be sellable.
+	AdminListPlanPrices(ctx context.Context, planID uuid.UUID) ([]PlanPrice, error)
+	// The staff-console twin of ListPublicPlans (queries/plans.sql), and
+	// deliberately NOT filtered on is_public: the console is where is_public is
+	// set, so it must still see (and be able to un-hide) what it hid. Ordered
+	// by the same sort_order, created_at the tenant catalogue uses, so the
+	// console previews the order a customer will actually see.
+	AdminListPlans(ctx context.Context) ([]Plan, error)
 	// search matches email or display_name. role is nullable text taking
 	// 'superadmin', 'support', 'none' (meaning platform_role IS NULL), or NULL
 	// (no filter) — a single text param rather than a separate bool so the
@@ -131,10 +190,24 @@ type Querier interface {
 	// that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
 	// is NOT NULL and there is nothing here to attach custom_limits to.
 	AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCustomLimitsParams) (int64, error)
-	// A full replace (name + limits together), not a partial PATCH — mirrors
-	// the shape of POST /admin/plans, and a plan's whole point is that its
-	// limits are reviewed together, not merged field-by-field. 0 rows ->
-	// pgx.ErrNoRows -> admin.Service maps that to 404.
+	// The ONLY mutation of an existing plan_prices row (see the block comment
+	// above). Same plan_id scoping as AdminGetPlanPrice.
+	AdminSetPlanPriceActive(ctx context.Context, arg AdminSetPlanPriceActiveParams) (PlanPrice, error)
+	// A full replace (name + limits + the migration-00013 catalogue columns
+	// together), not a partial PATCH — mirrors the shape of POST /admin/plans,
+	// and a plan's whole point is that its limits are reviewed together, not
+	// merged field-by-field. 0 rows -> pgx.ErrNoRows -> admin.Service maps
+	// that to 404.
+	//
+	// Full replace extends to is_public/sort_order/stripe_product_id
+	// deliberately, and admin.PlanUpdateRequest's doc comment carries the
+	// consequence: a PUT that omits isPublic re-publishes a hidden plan,
+	// exactly as a PUT that omits a limit key today drops that limit. The
+	// console renders the current values into the form and sends them all
+	// back; anything else would be a PATCH, which this is explicitly not.
+	//
+	// Deliberately does NOT touch plan_prices. A price is never edited in
+	// place (see AdminCreatePlanPrice), so there is nothing here to cascade.
 	AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
 	// Records the org's lazily-created Stripe Customer (plan decision 4), and
@@ -369,7 +442,20 @@ type Querier interface {
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationMembersRow, error)
 	ListPermissionActionsByUserOrg(ctx context.Context, arg ListPermissionActionsByUserOrgParams) ([]string, error)
 	ListPermissionsByRoleIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]Permission, error)
-	ListPlans(ctx context.Context) ([]Plan, error)
+	// The tenant-facing catalogue behind GET /plans. Filtered on is_public
+	// (migration 00013) and ordered by sort_order, because those two columns
+	// became settable by the superadmin console in step 8 and an unfiltered
+	// catalogue makes them lie: POST /billing/checkout already refuses a
+	// non-public plan with NOT_FOUND (billing.Service, plan step 6), so a plan
+	// listed here but hidden from checkout renders a "Choose plan" button that
+	// cannot work. One predicate keeps the two surfaces telling the same story.
+	//
+	// Note this is a WEAKER statement than a permission check: is_public is a
+	// catalogue/merchandising flag (a draft tier, a legacy tier nobody new may
+	// buy), not a security boundary. Nothing secret lives in a plan row — the
+	// console-only view is AdminListPlans (queries/admin.sql), which is
+	// deliberately unfiltered.
+	ListPublicPlans(ctx context.Context) ([]Plan, error)
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
 	// Terminal: the attempt budget is spent. Bodies are dropped for the same
 	// reason as MarkEmailSent -- an undelivered token is no less live.

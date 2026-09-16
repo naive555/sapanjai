@@ -24,7 +24,7 @@ type subStore interface {
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionRow, error)
 	UpsertOrgSubscription(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
-	ListPlans(ctx context.Context) ([]db.Plan, error)
+	ListPublicPlans(ctx context.Context) ([]db.Plan, error)
 }
 
 // Service resolves and enforces subscription plan limits.
@@ -140,14 +140,22 @@ func (s *Service) AssignPlanTx(ctx context.Context, w PlanWriter, organizationID
 	})
 }
 
-// ListPlans returns every available subscription plan, oldest first (seed
-// insertion order). Not present in the source app — added in Phase 6 for the
-// frontend's plan picker, which is gone now that a tenant cannot change its
-// own plan (see Handler.Register). It stays as the read-only catalogue the
-// subscription page renders; see docs/03 "Deviations resolved during Phase
-// 6".
-func (s *Service) ListPlans(ctx context.Context) ([]db.Plan, error) {
-	return s.store.ListPlans(ctx)
+// ListPublicPlans returns the tenant-facing plan catalogue: is_public
+// plans only, ordered by sort_order then created_at. Not present in the
+// source app — added in Phase 6 for the frontend's plan picker, which is
+// gone now that a tenant cannot change its own plan (see Handler.Register).
+// It stays as the read-only catalogue the subscription page renders; see
+// docs/03 "Deviations resolved during Phase 6".
+//
+// Renamed from ListPlans and narrowed in billing plan step 8, because the
+// superadmin console can now SET plans.is_public (migration 00013) and the
+// two ends had drifted apart: POST /billing/checkout already refuses a
+// non-public plan with NOT_FOUND, so an unfiltered catalogue advertised
+// tiers nobody could buy. The console's own unfiltered view is
+// admin.Service.ListPlans, which reads AdminListPlans instead — the name
+// change is what makes a caller notice which of the two it wants.
+func (s *Service) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
+	return s.store.ListPublicPlans(ctx)
 }
 
 // EnforceLimit returns apperror.LimitExceeded when currentCount has reached

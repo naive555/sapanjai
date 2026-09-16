@@ -96,6 +96,21 @@ const (
 	// PlanInUse guards against deleting a plan with active subscriptions.
 	PlanInUse = "PLAN_IN_USE"
 
+	// PlanPriceLastActive is PATCH /admin/plans/:planId/prices/:priceId's
+	// answer to deactivating the only active price a public plan has for
+	// that currency/interval. Deactivating it would leave the plan listed
+	// in the tenant catalogue (plans.is_public = true) but unbuyable —
+	// POST /billing/checkout would resolve the plan and then fail with
+	// PLAN_NOT_PURCHASABLE for every customer who clicked it.
+	//
+	// The guard is not a prohibition on re-pricing, it is an ordering
+	// constraint on it: insert the new plan_prices row FIRST, then
+	// deactivate the old one, which is exactly the order
+	// GetActivePlanPrice's "no window in which neither is selectable" doc
+	// comment describes. To retire a tier outright, hide it first
+	// (is_public = false) and then deactivate its prices.
+	PlanPriceLastActive = "PLAN_PRICE_LAST_ACTIVE"
+
 	// ImpersonationReadOnly is returned when an impersonated session (see
 	// docs/11-admin-panel.md §5) attempts a non-GET/HEAD/OPTIONS request.
 	ImpersonationReadOnly = "IMPERSONATION_READ_ONLY"
@@ -215,6 +230,7 @@ var Map = map[string]mapping{
 	TargetIsPlatformStaff:  {409, "Demote this account before banning or deleting it"},
 	SuperadminLimit:        {409, "Too many superadmin accounts"},
 	PlanInUse:              {409, "Plan has active subscriptions"},
+	PlanPriceLastActive:    {409, "Cannot deactivate a public plan's only active price"},
 	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
 	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
 	OrgConfirmMismatch:     {400, "Confirmation does not match the organization's slug"},

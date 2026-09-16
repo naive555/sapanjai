@@ -6,8 +6,21 @@ ON CONFLICT (name) DO NOTHING;
 -- name: GetPlanByName :one
 SELECT * FROM plans WHERE name = $1;
 
--- name: ListPlans :many
-SELECT * FROM plans ORDER BY created_at ASC;
+-- name: ListPublicPlans :many
+-- The tenant-facing catalogue behind GET /plans. Filtered on is_public
+-- (migration 00013) and ordered by sort_order, because those two columns
+-- became settable by the superadmin console in step 8 and an unfiltered
+-- catalogue makes them lie: POST /billing/checkout already refuses a
+-- non-public plan with NOT_FOUND (billing.Service, plan step 6), so a plan
+-- listed here but hidden from checkout renders a "Choose plan" button that
+-- cannot work. One predicate keeps the two surfaces telling the same story.
+--
+-- Note this is a WEAKER statement than a permission check: is_public is a
+-- catalogue/merchandising flag (a draft tier, a legacy tier nobody new may
+-- buy), not a security boundary. Nothing secret lives in a plan row — the
+-- console-only view is AdminListPlans (queries/admin.sql), which is
+-- deliberately unfiltered.
+SELECT * FROM plans WHERE is_public = true ORDER BY sort_order ASC, created_at ASC;
 
 -- name: GetPlanByID :one
 -- The tenant-facing twin of AdminGetPlanByID (queries/admin.sql), which is

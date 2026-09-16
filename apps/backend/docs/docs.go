@@ -993,6 +993,206 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/plans/{planId}/prices": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List a plan's Stripe prices",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPricesListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Record a Stripe Price for a plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Price payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/plans/{planId}/prices/{priceId}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Activate or deactivate a plan price",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Price ID",
+                        "name": "priceId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "active flag",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceActiveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "PLAN_PRICE_LAST_ACTIVE",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/system/stats": {
             "get": {
                 "security": [
@@ -2870,7 +3070,7 @@ const docTemplate = `{
                 "tags": [
                     "subscription"
                 ],
-                "summary": "List subscription plans",
+                "summary": "List public subscription plans",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -3617,6 +3817,9 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "object",
                     "additionalProperties": {}
@@ -3625,6 +3828,15 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "sortOrder": {
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": -32768
+                },
+                "stripeProductId": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },
@@ -3637,6 +3849,9 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "array",
                     "items": {
@@ -3645,6 +3860,94 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "sortOrder": {
+                    "type": "integer"
+                },
+                "stripeProductId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceActiveRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceCreateRequest": {
+            "type": "object",
+            "required": [
+                "currency",
+                "interval",
+                "stripePriceId"
+            ],
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string",
+                    "enum": [
+                        "month",
+                        "year"
+                    ]
+                },
+                "stripePriceId": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "unitAmount": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceItem": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "planId": {
+                    "type": "string"
+                },
+                "stripePriceId": {
+                    "type": "string"
+                },
+                "unitAmount": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.PlanPricesListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -3655,6 +3958,9 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "object",
                     "additionalProperties": {}
@@ -3663,6 +3969,15 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "sortOrder": {
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": -32768
+                },
+                "stripeProductId": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },

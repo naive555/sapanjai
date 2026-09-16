@@ -276,12 +276,21 @@ definitions:
     type: object
   internal_module_admin.PlanCreateRequest:
     properties:
+      isPublic:
+        type: boolean
       limits:
         additionalProperties: {}
         type: object
       name:
         maxLength: 100
         minLength: 1
+        type: string
+      sortOrder:
+        maximum: 32767
+        minimum: -32768
+        type: integer
+      stripeProductId:
+        maxLength: 255
         type: string
     required:
     - limits
@@ -293,21 +302,91 @@ definitions:
         type: string
       id:
         type: string
+      isPublic:
+        type: boolean
       limits:
         items:
           type: integer
         type: array
       name:
         type: string
+      sortOrder:
+        type: integer
+      stripeProductId:
+        type: string
+    type: object
+  internal_module_admin.PlanPriceActiveRequest:
+    properties:
+      active:
+        type: boolean
+    type: object
+  internal_module_admin.PlanPriceCreateRequest:
+    properties:
+      active:
+        type: boolean
+      currency:
+        type: string
+      interval:
+        enum:
+        - month
+        - year
+        type: string
+      stripePriceId:
+        maxLength: 255
+        type: string
+      unitAmount:
+        minimum: 0
+        type: integer
+    required:
+    - currency
+    - interval
+    - stripePriceId
+    type: object
+  internal_module_admin.PlanPriceItem:
+    properties:
+      active:
+        type: boolean
+      createdAt:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      interval:
+        type: string
+      planId:
+        type: string
+      stripePriceId:
+        type: string
+      unitAmount:
+        type: integer
+    type: object
+  internal_module_admin.PlanPricesListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        type: array
+      total:
+        type: integer
     type: object
   internal_module_admin.PlanUpdateRequest:
     properties:
+      isPublic:
+        type: boolean
       limits:
         additionalProperties: {}
         type: object
       name:
         maxLength: 100
         minLength: 1
+        type: string
+      sortOrder:
+        maximum: 32767
+        minimum: -32768
+        type: integer
+      stripeProductId:
+        maxLength: 255
         type: string
     required:
     - limits
@@ -1512,6 +1591,134 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a subscription plan
+      tags:
+      - admin
+  /admin/plans/{planId}/prices:
+    get:
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPricesListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List a plan's Stripe prices
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      - description: Price payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanPriceCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Record a Stripe Price for a plan
+      tags:
+      - admin
+  /admin/plans/{planId}/prices/{priceId}:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      - description: Price ID
+        in: path
+        name: priceId
+        required: true
+        type: string
+      - description: active flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanPriceActiveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: PLAN_PRICE_LAST_ACTIVE
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Activate or deactivate a plan price
       tags:
       - admin
   /admin/system/stats:
@@ -2721,7 +2928,7 @@ paths:
             $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: List subscription plans
+      summary: List public subscription plans
       tags:
       - subscription
   /rbac/assign:

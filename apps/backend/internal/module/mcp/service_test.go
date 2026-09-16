@@ -571,8 +571,8 @@ func (f *fakeSubStore) UpsertOrgSubscription(ctx context.Context, arg db.UpsertO
 	return errors.New("fakeSubStore: UpsertOrgSubscription not used by this test")
 }
 
-func (f *fakeSubStore) ListPlans(ctx context.Context) ([]db.Plan, error) {
-	return nil, errors.New("fakeSubStore: ListPlans not used by this test")
+func (f *fakeSubStore) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
+	return nil, errors.New("fakeSubStore: ListPublicPlans not used by this test")
 }
 
 // TestQuota_CustomLimitsOverridePlan_EndToEnd is invariant 2 ("custom_limits

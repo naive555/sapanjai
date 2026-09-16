@@ -97,6 +97,21 @@ const (
 	ActionAdminPlanUpdated         = "admin.plan.updated"
 	ActionAdminPlanDeleted         = "admin.plan.deleted"
 
+	// plan_prices mutations (billing plan step 8). Activation and
+	// deactivation are separate actions rather than one
+	// "admin.plan_price.active_changed" carrying a boolean, mirroring the
+	// ActionAdminUserBanned/Unbanned pair above: a staff member filtering
+	// GET /admin/audit-logs for "who stopped selling Pro" should not have
+	// to read metadata to tell the two directions apart.
+	//
+	// Metadata carries the plan id, the price row's id, and its Stripe
+	// Price id (price_...) — a catalogue identifier, not a secret. It never
+	// carries the Stripe API key or webhook signing secret, which are
+	// config, not row data, and never reach this package at all.
+	ActionAdminPlanPriceCreated     = "admin.plan_price.created"
+	ActionAdminPlanPriceActivated   = "admin.plan_price.activated"
+	ActionAdminPlanPriceDeactivated = "admin.plan_price.deactivated"
+
 	// ActionAdminImpersonationStarted is declared now but not yet written —
 	// Phase 4 (impersonation) is the only caller, and is out of this
 	// phase's scope.

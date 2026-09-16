@@ -80,8 +80,11 @@ func (h *Handler) get(c echo.Context) error {
 	return c.JSON(http.StatusOK, toSubscriptionResponse(*sub))
 }
 
-// listPlans returns every available subscription plan.
-// @Summary  List subscription plans
+// listPlans returns the public subscription plan catalogue. Plans with
+// is_public = false (migration 00013, settable from the superadmin
+// console) are omitted: POST /billing/checkout refuses them, so listing
+// one here would render a plan card whose button cannot work.
+// @Summary  List public subscription plans
 // @Tags     subscription
 // @Security BearerAuth
 // @Produce  json
@@ -89,7 +92,7 @@ func (h *Handler) get(c echo.Context) error {
 // @Failure  401  {object}  httpx.ErrorResponse  "Unauthorized"
 // @Router   /plans [get]
 func (h *Handler) listPlans(c echo.Context) error {
-	plans, err := h.service.ListPlans(c.Request().Context())
+	plans, err := h.service.ListPublicPlans(c.Request().Context())
 	if err != nil {
 		return err
 	}

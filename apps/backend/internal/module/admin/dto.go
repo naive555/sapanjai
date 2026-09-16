@@ -343,11 +343,58 @@ type StatsResponse struct {
 // ---- Plans ----
 
 // PlanItem is one row of GET /admin/plans.
+//
+// Mapped field-by-field from db.Plan in admin.Service, never a struct
+// embed (CLAUDE.md's admin ground rule) — which is exactly why the three
+// columns migration 00013 added had to be listed here explicitly before
+// the console could show them, and why a future column is invisible until
+// somebody decides it should not be.
+//
+// StripeProductID ("prod_...") is a catalogue IDENTIFIER, not a secret. It
+// names a Product in the platform's own Stripe account, is visible to
+// anyone who reads a Checkout page, and is precisely what a staff member
+// needs in order to find the plan in the Stripe Dashboard. The things that
+// must never appear in an admin response are the API key ("sk_"/"rk_"),
+// the webhook signing secret ("whsec_"), and any customer payment detail
+// (card brand/last4/expiry, bank details, billing address) — see the
+// forbidden list in internal/server/admin_integration_test.go, which draws
+// that line and tests it.
 type PlanItem struct {
-	ID        uuid.UUID       `json:"id"`
-	Name      string          `json:"name"`
-	Limits    json.RawMessage `json:"limits"`
-	CreatedAt time.Time       `json:"createdAt"`
+	ID              uuid.UUID       `json:"id"`
+	Name            string          `json:"name"`
+	Limits          json.RawMessage `json:"limits"`
+	StripeProductID *string         `json:"stripeProductId"`
+	IsPublic        bool            `json:"isPublic"`
+	SortOrder       int32           `json:"sortOrder"`
+	CreatedAt       time.Time       `json:"createdAt"`
+}
+
+// PlanPriceItem is one row of GET /admin/plans/:planId/prices, mapped
+// field-by-field from db.PlanPrice.
+//
+// StripePriceID ("price_...") is an identifier on the same footing as
+// PlanItem.StripeProductID: it is what a Checkout Session is created
+// against and what a staff member pastes into the Stripe Dashboard to see
+// why a subscription is charging what it charges. UnitAmount is in the
+// currency's smallest unit (satang for THB), matching Stripe's own
+// representation, so the console formats it and this DTO does not.
+type PlanPriceItem struct {
+	ID            uuid.UUID `json:"id"`
+	PlanID        uuid.UUID `json:"planId"`
+	StripePriceID string    `json:"stripePriceId"`
+	UnitAmount    int64     `json:"unitAmount"`
+	Currency      string    `json:"currency"`
+	Interval      string    `json:"interval"`
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// PlanPricesListResponse is GET /admin/plans/:planId/prices's body. Like
+// PlansListResponse, Total is len(Items) — a plan has a handful of prices
+// at most, there are no filters, and nothing here is worth a cachedCount.
+type PlanPricesListResponse struct {
+	Items []PlanPriceItem `json:"items"`
+	Total int64           `json:"total"`
 }
 
 // PlansListResponse is GET /admin/plans's body. Plans is a tiny, seeded
@@ -425,16 +472,79 @@ type BanRequest struct {
 }
 
 // PlanCreateRequest is the POST /admin/plans body.
+//
+// StripeProductID/IsPublic/SortOrder are pointers so "absent" is
+// distinguishable from "false"/"zero": absent means the documented default
+// (no Stripe Product linked yet, published, sort position 0) rather than a
+// value the caller silently didn't choose.
+//
+// IsPublic defaults to TRUE for backwards compatibility with the shape
+// this route had before migration 00013 — a POST that names only a plan
+// and its limits still produces a plan customers can see, as it always
+// did. A staff member wiring up a paid tier should nevertheless send
+// isPublic:false, add the plan_prices row, and publish last; see
+// AdminCreatePlan's doc comment.
 type PlanCreateRequest struct {
-	Name   string         `json:"name" validate:"required,min=1,max=100"`
-	Limits map[string]any `json:"limits" validate:"required"`
+	Name            string         `json:"name" validate:"required,min=1,max=100"`
+	Limits          map[string]any `json:"limits" validate:"required"`
+	StripeProductID *string        `json:"stripeProductId" validate:"omitempty,startswith=prod_,max=255"`
+	IsPublic        *bool          `json:"isPublic"`
+	SortOrder       *int32         `json:"sortOrder" validate:"omitempty,min=-32768,max=32767"`
 }
 
 // PlanUpdateRequest is the PUT /admin/plans/:planId body — a full replace
-// of name+limits together (admin.sql's AdminUpdatePlan doc comment).
+// of name + limits + the migration-00013 catalogue columns together
+// (admin.sql's AdminUpdatePlan doc comment).
+//
+// FULL REPLACE, and the consequence is worth stating plainly: a PUT that
+// omits isPublic RE-PUBLISHES a hidden plan, because absent means the
+// create-time default and the create-time default is true. That is the
+// same semantic the route already had for limits — a PUT omitting a limit
+// key drops that limit — and the console renders the plan's current values
+// into the form and posts them all back. It is a PUT, not a PATCH, on
+// purpose: a plan's fields are reviewed together.
 type PlanUpdateRequest struct {
-	Name   string         `json:"name" validate:"required,min=1,max=100"`
-	Limits map[string]any `json:"limits" validate:"required"`
+	Name            string         `json:"name" validate:"required,min=1,max=100"`
+	Limits          map[string]any `json:"limits" validate:"required"`
+	StripeProductID *string        `json:"stripeProductId" validate:"omitempty,startswith=prod_,max=255"`
+	IsPublic        *bool          `json:"isPublic"`
+	SortOrder       *int32         `json:"sortOrder" validate:"omitempty,min=-32768,max=32767"`
+}
+
+// PlanPriceCreateRequest is the POST /admin/plans/:planId/prices body.
+//
+// There is no update-the-amount twin of this type, on purpose: a Stripe
+// Price is immutable once created, so re-pricing is "insert the new row,
+// then deactivate the old one" (queries/admin.sql's plan_prices block
+// comment has the full reasoning, including why a DELETE would break an
+// existing subscriber's entitlement resolution).
+//
+// StripePriceID is required and must already exist in Stripe — this route
+// records a Price, it does not create one. Nothing here calls Stripe: the
+// stripe-go SDK is confined to internal/module/billing/stripe.go, and the
+// admin module deals in strings read from and written to Postgres.
+//
+// Active defaults to true: the overwhelmingly common reason to add a price
+// is to start selling at it. Adding one pre-deactivated is possible
+// (active:false) and is how a price can be staged ahead of a launch.
+type PlanPriceCreateRequest struct {
+	StripePriceID string `json:"stripePriceId" validate:"required,startswith=price_,max=255"`
+	UnitAmount    int64  `json:"unitAmount" validate:"min=0"`
+	Currency      string `json:"currency" validate:"required,len=3,lowercase,alpha"`
+	Interval      string `json:"interval" validate:"required,oneof=month year"`
+	Active        *bool  `json:"active"`
+}
+
+// PlanPriceActiveRequest is the PATCH /admin/plans/:planId/prices/:priceId
+// body — the only mutation an existing price row accepts.
+//
+// Active is a pointer and is checked for nil in the handler rather than
+// carrying `validate:"required"`: go-playground/validator dereferences a
+// pointer before applying `required`, so a legitimate {"active": false}
+// would be rejected as "missing". The same trap PlatformRoleRequest.Role
+// avoids by being `omitempty`.
+type PlanPriceActiveRequest struct {
+	Active *bool `json:"active"`
 }
 
 // ---- Impersonation (execution plan Phase 4) ----

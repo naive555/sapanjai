@@ -32,7 +32,7 @@ func (m *mockSubStore) UpsertOrgSubscription(ctx context.Context, arg db.UpsertO
 	return m.upsertOrgSubscription(ctx, arg)
 }
 
-func (m *mockSubStore) ListPlans(ctx context.Context) ([]db.Plan, error) {
+func (m *mockSubStore) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
 	return m.listPlans(ctx)
 }
 
@@ -237,7 +237,7 @@ func TestAssignPlan_ForwardsToUpsert(t *testing.T) {
 	}
 }
 
-func TestListPlans_ReturnsRows(t *testing.T) {
+func TestListPublicPlans_ReturnsRows(t *testing.T) {
 	want := []db.Plan{{Name: "free"}, {Name: "pro"}, {Name: "enterprise"}}
 	svc := NewService(&mockSubStore{
 		listPlans: func(ctx context.Context) ([]db.Plan, error) {
@@ -245,16 +245,16 @@ func TestListPlans_ReturnsRows(t *testing.T) {
 		},
 	})
 
-	got, err := svc.ListPlans(context.Background())
+	got, err := svc.ListPublicPlans(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
 	if len(got) != len(want) {
-		t.Fatalf("ListPlans() returned %d rows, want %d", len(got), len(want))
+		t.Fatalf("ListPublicPlans() returned %d rows, want %d", len(got), len(want))
 	}
 }
 
-func TestListPlans_DatabaseErrorPropagates(t *testing.T) {
+func TestListPublicPlans_DatabaseErrorPropagates(t *testing.T) {
 	dbErr := errors.New("connection reset")
 	svc := NewService(&mockSubStore{
 		listPlans: func(ctx context.Context) ([]db.Plan, error) {
@@ -262,7 +262,7 @@ func TestListPlans_DatabaseErrorPropagates(t *testing.T) {
 		},
 	})
 
-	_, err := svc.ListPlans(context.Background())
+	_, err := svc.ListPublicPlans(context.Background())
 	if !errors.Is(err, dbErr) {
 		t.Fatalf("expected the raw db error to propagate, got %v", err)
 	}

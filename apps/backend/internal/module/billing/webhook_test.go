@@ -267,7 +267,7 @@ func (fakeSubStore) GetOrgSubscriptionWithPlan(context.Context, uuid.UUID) (db.G
 func (fakeSubStore) GetOrgSubscription(context.Context, uuid.UUID) (db.GetOrgSubscriptionRow, error) {
 	return db.GetOrgSubscriptionRow{}, pgx.ErrNoRows
 }
-func (fakeSubStore) ListPlans(context.Context) ([]db.Plan, error) { return nil, nil }
+func (fakeSubStore) ListPublicPlans(context.Context) ([]db.Plan, error) { return nil, nil }
 
 // ---- payload + signature helpers ----
 
