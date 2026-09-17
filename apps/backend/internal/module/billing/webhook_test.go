@@ -253,7 +253,12 @@ func newWebhookService(f *fakeDB, secret string) *Service {
 			return nil
 		},
 	}
-	return NewService(store, nil, NewStripeWebhooks(secret), subscription.NewService(fakeSubStore{f}),
+	// Same instance for both subscription seams (subs and limits) — this
+	// test never calls Usage, but it mirrors server.go's real wiring
+	// rather than leaving limits nil for no reason a reader would have to
+	// go verify.
+	subs := subscription.NewService(fakeSubStore{f})
+	return NewService(store, nil, NewStripeWebhooks(secret), subs, subs,
 		newTestAudit(), testPublicURL, newTestLog())
 }
 

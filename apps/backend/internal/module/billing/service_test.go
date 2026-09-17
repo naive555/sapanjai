@@ -32,6 +32,14 @@ type mockBillingStore struct {
 	// nil by the Checkout/Portal tests, which never reach it — a nil field
 	// panics loudly rather than passing quietly if that ever changes.
 	withTx func(ctx context.Context, fn func(q db.Querier) error) error
+
+	// countUsageEventsForOrgSince/listUsageRollupsForOrgPeriod back
+	// GET /billing/usage (usage.go, usage_test.go). Left nil by every test
+	// in this file, none of which call Usage — the usage tests build their
+	// own store literal instead of going through this shared mock, since
+	// they need neither the Checkout/Portal fields above nor withTx.
+	countUsageEventsForOrgSince  func(ctx context.Context, arg db.CountUsageEventsForOrgSinceParams) (int64, error)
+	listUsageRollupsForOrgPeriod func(ctx context.Context, arg db.ListUsageRollupsForOrgPeriodParams) ([]db.ListUsageRollupsForOrgPeriodRow, error)
 }
 
 func (m *mockBillingStore) GetPlanByID(ctx context.Context, id uuid.UUID) (db.Plan, error) {
@@ -51,6 +59,12 @@ func (m *mockBillingStore) GetOrganizationByID(ctx context.Context, id uuid.UUID
 }
 func (m *mockBillingStore) WithTx(ctx context.Context, fn func(q db.Querier) error) error {
 	return m.withTx(ctx, fn)
+}
+func (m *mockBillingStore) CountUsageEventsForOrgSince(ctx context.Context, arg db.CountUsageEventsForOrgSinceParams) (int64, error) {
+	return m.countUsageEventsForOrgSince(ctx, arg)
+}
+func (m *mockBillingStore) ListUsageRollupsForOrgPeriod(ctx context.Context, arg db.ListUsageRollupsForOrgPeriodParams) ([]db.ListUsageRollupsForOrgPeriodRow, error) {
+	return m.listUsageRollupsForOrgPeriod(ctx, arg)
 }
 
 var _ billingStore = (*mockBillingStore)(nil)
@@ -200,10 +214,13 @@ func withClaimableRow(store *mockBillingStore, claimed *[]db.ClaimOrgStripeCusto
 }
 
 // newService builds a Service for the Checkout/Portal tests: no webhook
-// verifier and no plan assigner, because neither route touches either. The
-// webhook tests build their own (newWebhookService, webhook_test.go).
+// verifier, no plan assigner, and no limit resolver, because none of the
+// three routes exercised through this helper touch any of them. The
+// webhook tests build their own (newWebhookService, webhook_test.go); the
+// usage tests build their own too (usage_test.go), with a real
+// limitResolver.
 func newService(store billingStore, sc stripeAPI) *Service {
-	return NewService(store, sc, nil, nil, newTestAudit(), testPublicURL, newTestLog())
+	return NewService(store, sc, nil, nil, nil, newTestAudit(), testPublicURL, newTestLog())
 }
 
 // ---- Checkout ----

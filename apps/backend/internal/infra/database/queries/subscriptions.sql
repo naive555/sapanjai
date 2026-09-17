@@ -5,8 +5,26 @@ JOIN plans p ON p.id = s.plan_id
 WHERE s.organization_id = $1;
 
 -- name: GetOrgSubscription :one
+-- Backs GET /subscription. Widened in billing plan step 9 to carry Stripe
+-- STATE (status, current_period_end, cancel_at_period_end,
+-- stripe_subscription_id) alongside the entitlement columns it already
+-- selected -- the handler's toSubscriptionResponse maps status/
+-- current_period_end/cancel_at_period_end straight through (none of them
+-- identify a Stripe object, they describe a lifecycle) but only ever turns
+-- stripe_subscription_id into a boolean (HasActiveSubscription), never
+-- serializes it: "stripe_subscription_id IS NULL" is decision 4's
+-- canonical "not paying" signal, and the raw id itself is Stripe linkage
+-- with no business leaving the backend, the same reasoning
+-- GetOrgBillingRef's comment gives for the billing module's narrower read.
+--
+-- Still not custom_limits/plan.limits' second answer to "what may this org
+-- do" -- those two columns were already here before this change, serving
+-- SubscriptionResponse.Plan/.CustomLimits as before; nothing about
+-- entitlement resolution moves. subscription.Service.EffectiveLimits stays
+-- the only place that merge happens (plan invariant 1).
 SELECT
   s.id, s.organization_id, s.plan_id, s.custom_limits, s.created_at, s.updated_at,
+  s.status, s.current_period_end, s.cancel_at_period_end, s.stripe_subscription_id,
   p.id         AS plan_pid,
   p.name       AS plan_name,
   p.limits     AS plan_plimits,

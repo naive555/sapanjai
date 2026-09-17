@@ -117,6 +117,57 @@ func (q *Queries) CreateUsageEvent(ctx context.Context, arg CreateUsageEventPara
 	return err
 }
 
+const listUsageRollupsForOrgPeriod = `-- name: ListUsageRollupsForOrgPeriod :many
+SELECT tool, call_count FROM usage_rollups
+WHERE organization_id = $1 AND period_start = $2
+ORDER BY tool ASC
+`
+
+type ListUsageRollupsForOrgPeriodParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PeriodStart    time.Time `json:"period_start"`
+}
+
+type ListUsageRollupsForOrgPeriodRow struct {
+	Tool      string `json:"tool"`
+	CallCount int32  `json:"call_count"`
+}
+
+// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+// per-tool breakdown behind GET /billing/usage's `byTool` field
+// (internal/module/billing). Reads usage_rollups, NOT usage_events, unlike
+// CountUsageEventsForOrgSince above -- deliberately, and asymmetrically.
+// CountUsageEventsForOrgSince has to be exact because it is the number the
+// gateway's own quota check (internal/module/mcp/service.go:305) enforces
+// against; this is a per-tool breakdown a customer finds informative, not
+// the enforced number, so it is allowed to lag by up to
+// USAGE_ROLLUP_INTERVAL for the still-open current month
+// (internal/job/usagerollup) rather than paying the cost of grouping the
+// full month's usage_events on every page load of the usage meter. Callers
+// pass the same UTC-calendar-month `period_start` the rollup job buckets
+// on, matching CountUsageEventsForOrgSince's `since`. Served by the unique
+// index the natural key (organization_id, period_start, tool) already
+// creates (migration 00014) -- no new index needed.
+func (q *Queries) ListUsageRollupsForOrgPeriod(ctx context.Context, arg ListUsageRollupsForOrgPeriodParams) ([]ListUsageRollupsForOrgPeriodRow, error) {
+	rows, err := q.db.Query(ctx, listUsageRollupsForOrgPeriod, arg.OrganizationID, arg.PeriodStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsageRollupsForOrgPeriodRow
+	for rows.Next() {
+		var i ListUsageRollupsForOrgPeriodRow
+		if err := rows.Scan(&i.Tool, &i.CallCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneUsageEvents = `-- name: PruneUsageEvents :execrows
 DELETE FROM usage_events
 WHERE id IN (

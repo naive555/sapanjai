@@ -10,7 +10,8 @@ import (
 	"github.com/sapanjai/backend/internal/shared/httpx"
 )
 
-// PermissionWrite gates both /billing routes.
+// PermissionWrite gates the two money-changing /billing routes: checkout
+// and portal.
 //
 // Not RequireOrg, which is membership-only. That distinction is the entire
 // reason POST /subscription/assign was deleted from the template: sitting on
@@ -19,19 +20,29 @@ import (
 // what an org pays for is at least as sensitive, so both routes here take an
 // RBAC action (plan invariant 4 / decision 2).
 //
-// One action for both, not a read/write split. The Portal can cancel the
-// subscription, change the payment method, and expose invoices carrying a
-// billing address — it is if anything the more dangerous of the two, so it
-// never gets the weaker guard. There is no billing:read action here because
-// neither route reads anything; the usage and invoice views that will carry
-// billing:read are a later step.
+// One action for both, not a read/write split between them. The Portal can
+// cancel the subscription, change the payment method, and expose invoices
+// carrying a billing address — it is if anything the more dangerous of the
+// two, so it never gets a weaker guard than Checkout.
 //
 // The RBAC engine's owner bypass (rbac.Service.HasPermission) means an owner
 // needs no special case, and a customer can delegate billing to a finance
 // person by granting this one action without making them an org owner.
 const PermissionWrite = "billing:write"
 
-// Handler implements the two /billing routes.
+// PermissionRead gates GET /billing/usage — the read view PermissionWrite's
+// doc comment used to describe as "a later step" (billing plan step 9,
+// this one). Deliberately narrower than PermissionWrite: reading how many
+// calls an org has made this month cannot cancel a subscription or move
+// money, so it does not need checkout/portal's guard — a finance person
+// granted only billing:read can watch the meter without also being able to
+// change what the org pays for. The invoice view the original comment also
+// promised is not part of this step; see the plan for what remains.
+const PermissionRead = "billing:read"
+
+// Handler implements the three RBAC-guarded /billing routes (checkout,
+// portal, usage) plus the separately-mounted webhook (RegisterWebhook,
+// below).
 type Handler struct {
 	service *Service
 }
@@ -50,6 +61,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/checkout", h.checkout, guards.RequirePermission(PermissionWrite))
 	g.POST("/portal", h.portal, guards.RequirePermission(PermissionWrite))
+	g.GET("/usage", h.usage, guards.RequirePermission(PermissionRead))
 }
 
 // checkout starts a Stripe Checkout Session for the caller's active
@@ -112,6 +124,32 @@ func (h *Handler) portal(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, RedirectResponse{URL: url})
+}
+
+// usage returns the caller's active organization's tool-call usage for the
+// current UTC calendar month: the live count the gateway's own quota check
+// enforces against, the resolved monthly cap, and a per-tool breakdown.
+// See Service.Usage for how each field is resolved.
+//
+// organizationID is appmw.OrgID(c), the same guard-verified header every
+// other /billing and /subscription route reads it from — there is no input
+// through which a caller can read another org's usage.
+// @Summary  Get the organization's current tool-call usage
+// @Tags     billing
+// @Security BearerAuth
+// @Produce  json
+// @Param    x-organization-id  header    string  true  "Active organization ID"
+// @Success  200                {object}  UsageResponse
+// @Failure  400                {object}  httpx.ErrorResponse  "Missing x-organization-id header"
+// @Failure  403                {object}  httpx.ErrorResponse  "Missing permission: billing:read"
+// @Router   /billing/usage [get]
+func (h *Handler) usage(c echo.Context) error {
+	resp, err := h.service.Usage(c.Request().Context(), appmw.OrgID(c))
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // WebhookPath is POST /billing/webhook's absolute path. It is mounted

@@ -45,6 +45,32 @@ WHERE plan_id = @plan_id
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: ListActivePlanPricesForPublicPlans :many
+-- Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+-- price rows behind GET /plans' `prices` array (internal/module/subscription).
+-- One query for every public plan's active prices, not N+1 per plan --
+-- joins against plans.is_public rather than taking a list of plan ids, so
+-- GET /plans stays a single round trip regardless of the catalogue's size.
+-- Ordered by plan_id (so the handler can group rows by a single pass over
+-- a sorted slice, mirroring ListPublicPlans' own ordering contract) then
+-- interval/currency for a stable, deterministic rendering order within a
+-- plan. Filtered on active = true for the same reason GetActivePlanPrice
+-- is: a deactivated price cannot be charged (POST /billing/checkout would
+-- refuse it with PLAN_NOT_PURCHASABLE), so it has no business appearing on
+-- a catalogue a customer reads before clicking "Subscribe".
+--
+-- Deliberately does NOT select stripe_price_id. That id is Stripe linkage
+-- with no business on a tenant-facing catalogue -- the same reasoning that
+-- keeps stripe_customer_id/stripe_subscription_id off GET /subscription
+-- (GetOrgBillingRef's comment) -- and unlike those two, this one would be
+-- directly usable against Stripe's own API by anyone who read it off this
+-- response.
+SELECT pp.plan_id, pp.unit_amount, pp.currency, pp."interval"
+FROM plan_prices pp
+JOIN plans p ON p.id = pp.plan_id
+WHERE p.is_public = true AND pp.active = true
+ORDER BY pp.plan_id, pp."interval", pp.currency;
+
 -- name: GetPlanByStripePriceID :one
 -- Resolves the entitlement plan a Stripe Subscription is actually paying
 -- for, from the Price id on its line item. This is the webhook's PRIMARY

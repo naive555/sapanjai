@@ -25,6 +25,7 @@ type subStore interface {
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionRow, error)
 	UpsertOrgSubscription(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
 	ListPublicPlans(ctx context.Context) ([]db.Plan, error)
+	ListActivePlanPricesForPublicPlans(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error)
 }
 
 // Service resolves and enforces subscription plan limits.
@@ -156,6 +157,17 @@ func (s *Service) AssignPlanTx(ctx context.Context, w PlanWriter, organizationID
 // change is what makes a caller notice which of the two it wants.
 func (s *Service) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
 	return s.store.ListPublicPlans(ctx)
+}
+
+// ListPublicPlanPrices returns the active price rows for every public
+// plan, for Handler.listPlans to group by plan id into each PlanResponse's
+// Prices field (billing plan step 9). A separate method rather than
+// widening ListPublicPlans' own return shape: GET /subscription embeds a
+// PlanResponse too (toSubscriptionResponse) and has no use for its prices,
+// so paying for this query only where it is actually rendered — the plan
+// listing — keeps GET /subscription at the one query it already ran.
+func (s *Service) ListPublicPlanPrices(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+	return s.store.ListActivePlanPricesForPublicPlans(ctx)
 }
 
 // EnforceLimit returns apperror.LimitExceeded when currentCount has reached

@@ -384,6 +384,23 @@ type Querier interface {
 	// invariant 1), and this must not become a second answer to "what may this
 	// org do".
 	GetOrgBillingSyncForUpdate(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingSyncForUpdateRow, error)
+	// Backs GET /subscription. Widened in billing plan step 9 to carry Stripe
+	// STATE (status, current_period_end, cancel_at_period_end,
+	// stripe_subscription_id) alongside the entitlement columns it already
+	// selected -- the handler's toSubscriptionResponse maps status/
+	// current_period_end/cancel_at_period_end straight through (none of them
+	// identify a Stripe object, they describe a lifecycle) but only ever turns
+	// stripe_subscription_id into a boolean (HasActiveSubscription), never
+	// serializes it: "stripe_subscription_id IS NULL" is decision 4's
+	// canonical "not paying" signal, and the raw id itself is Stripe linkage
+	// with no business leaving the backend, the same reasoning
+	// GetOrgBillingRef's comment gives for the billing module's narrower read.
+	//
+	// Still not custom_limits/plan.limits' second answer to "what may this org
+	// do" -- those two columns were already here before this change, serving
+	// SubscriptionResponse.Plan/.CustomLimits as before; nothing about
+	// entitlement resolution moves. subscription.Service.EffectiveLimits stays
+	// the only place that merge happens (plan invariant 1).
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
 	// The tenant-facing twin of AdminGetOrganizationByID (queries/admin.sql),
@@ -428,6 +445,26 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTotp, error)
+	// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+	// price rows behind GET /plans' `prices` array (internal/module/subscription).
+	// One query for every public plan's active prices, not N+1 per plan --
+	// joins against plans.is_public rather than taking a list of plan ids, so
+	// GET /plans stays a single round trip regardless of the catalogue's size.
+	// Ordered by plan_id (so the handler can group rows by a single pass over
+	// a sorted slice, mirroring ListPublicPlans' own ordering contract) then
+	// interval/currency for a stable, deterministic rendering order within a
+	// plan. Filtered on active = true for the same reason GetActivePlanPrice
+	// is: a deactivated price cannot be charged (POST /billing/checkout would
+	// refuse it with PLAN_NOT_PURCHASABLE), so it has no business appearing on
+	// a catalogue a customer reads before clicking "Subscribe".
+	//
+	// Deliberately does NOT select stripe_price_id. That id is Stripe linkage
+	// with no business on a tenant-facing catalogue -- the same reasoning that
+	// keeps stripe_customer_id/stripe_subscription_id off GET /subscription
+	// (GetOrgBillingRef's comment) -- and unlike those two, this one would be
+	// directly usable against Stripe's own API by anyone who read it off this
+	// response.
+	ListActivePlanPricesForPublicPlans(ctx context.Context) ([]ListActivePlanPricesForPublicPlansRow, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
 	// Cross-org sweep for the connector-health background job
 	// (internal/job/connectorhealth) -- deliberately not organization-scoped,
@@ -457,6 +494,22 @@ type Querier interface {
 	// deliberately unfiltered.
 	ListPublicPlans(ctx context.Context) ([]Plan, error)
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
+	// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+	// per-tool breakdown behind GET /billing/usage's `byTool` field
+	// (internal/module/billing). Reads usage_rollups, NOT usage_events, unlike
+	// CountUsageEventsForOrgSince above -- deliberately, and asymmetrically.
+	// CountUsageEventsForOrgSince has to be exact because it is the number the
+	// gateway's own quota check (internal/module/mcp/service.go:305) enforces
+	// against; this is a per-tool breakdown a customer finds informative, not
+	// the enforced number, so it is allowed to lag by up to
+	// USAGE_ROLLUP_INTERVAL for the still-open current month
+	// (internal/job/usagerollup) rather than paying the cost of grouping the
+	// full month's usage_events on every page load of the usage meter. Callers
+	// pass the same UTC-calendar-month `period_start` the rollup job buckets
+	// on, matching CountUsageEventsForOrgSince's `since`. Served by the unique
+	// index the natural key (organization_id, period_start, tool) already
+	// creates (migration 00014) -- no new index needed.
+	ListUsageRollupsForOrgPeriod(ctx context.Context, arg ListUsageRollupsForOrgPeriodParams) ([]ListUsageRollupsForOrgPeriodRow, error)
 	// Terminal: the attempt budget is spent. Bodies are dropped for the same
 	// reason as MarkEmailSent -- an undelivered token is no less live.
 	MarkEmailFailed(ctx context.Context, arg MarkEmailFailedParams) error

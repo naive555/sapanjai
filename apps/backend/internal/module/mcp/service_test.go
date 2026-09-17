@@ -575,6 +575,10 @@ func (f *fakeSubStore) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
 	return nil, errors.New("fakeSubStore: ListPublicPlans not used by this test")
 }
 
+func (f *fakeSubStore) ListActivePlanPricesForPublicPlans(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+	return nil, errors.New("fakeSubStore: ListActivePlanPricesForPublicPlans not used by this test")
+}
+
 // TestQuota_CustomLimitsOverridePlan_EndToEnd is invariant 2 ("custom_limits
 // still wins") made concrete for this key, wired through a real
 // subscription.Service rather than fakeQuotaEnforcer -- per the task's

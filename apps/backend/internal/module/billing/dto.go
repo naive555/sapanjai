@@ -1,5 +1,7 @@
 package billing
 
+import "time"
+
 // CheckoutRequest is the POST /billing/checkout body.
 //
 // PlanID is a string carrying a UUID rather than a uuid.UUID, following
@@ -39,4 +41,64 @@ type RedirectResponse struct {
 // nothing, and a caller holding the signing secret can read the audit log.
 type WebhookResponse struct {
 	Received bool `json:"received"`
+}
+
+// UsageResponse is GET /billing/usage's body: the caller's active
+// organization's tool-call usage for the current UTC calendar month.
+//
+// Answers from Postgres alone (plan invariant 1), same as GET /subscription
+// — this route makes no Stripe call. See Service.Usage for how each field
+// is resolved and why CallCount and ByTool deliberately read from two
+// different tables.
+type UsageResponse struct {
+	// PeriodStart/PeriodEnd bound the current UTC calendar month as
+	// [PeriodStart, PeriodEnd) — the exact boundary
+	// date_trunc('month', occurred_at) buckets on, and the same window
+	// CountUsageEventsForOrgSince and internal/job/usagerollup both use.
+	// Exposed so the frontend never has to derive "this month" itself in
+	// the viewer's local timezone and risk disagreeing with what the
+	// backend actually enforces.
+	PeriodStart time.Time `json:"periodStart"`
+	PeriodEnd   time.Time `json:"periodEnd"`
+
+	// CallCount is the LIVE usage_events count for the current period —
+	// the exact query and window internal/module/mcp/service.go's quota
+	// check runs before every tools/call dispatch. Deliberately not a
+	// usage_rollups sum: that rollup for the still-open current month can
+	// be up to USAGE_ROLLUP_INTERVAL stale, and a meter that reads under
+	// the cap it is metering is a support ticket — a customer staring at
+	// "47 / 50" while their 48th call is refused a moment later.
+	CallCount int64 `json:"callCount"`
+
+	// Limit is max_tool_calls_per_month, resolved through
+	// subscription.Service.GetLimit — plan limits overlaid by
+	// custom_limits, the same precedence EnforceLimit checks against.
+	//
+	// nil (JSON null) means unlimited, and deliberately collapses BOTH of
+	// EnforceLimit's existing "no limit" cases into the one encoding
+	// rather than inventing a third state on the wire: a plan whose limits
+	// omit the key, and an org with no subscription row at all. The
+	// existing -1 sentinel (used elsewhere as "enterprise/unlimited") is
+	// translated to nil here rather than round-tripped as -1, because a
+	// frontend rendering "-1 calls remaining" is worse than one null
+	// check — see the subscription page's formatLimit "∞" convention,
+	// which this mirrors.
+	Limit *int64 `json:"limit"`
+
+	// ByTool is a per-tool breakdown for the current period, read from
+	// usage_rollups (ListUsageRollupsForOrgPeriod) rather than
+	// usage_events — see that query's comment for why this field is
+	// allowed to lag CallCount by up to USAGE_ROLLUP_INTERVAL: it is a
+	// breakdown a customer finds informative, not the number enforcement
+	// depends on. Empty, never null, before the rollup job has folded the
+	// current period's events even once (e.g. an org's first day on a new
+	// month).
+	ByTool []ToolUsageResponse `json:"byTool"`
+}
+
+// ToolUsageResponse is one usage_rollups row: a tool name and how many
+// times it was called in the current period. See UsageResponse.ByTool.
+type ToolUsageResponse struct {
+	Tool      string `json:"tool"`
+	CallCount int32  `json:"callCount"`
 }

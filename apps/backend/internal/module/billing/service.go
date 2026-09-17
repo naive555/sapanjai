@@ -80,6 +80,14 @@ type billingStore interface {
 	ClaimOrgStripeCustomer(ctx context.Context, arg db.ClaimOrgStripeCustomerParams) (*string, error)
 	GetOrganizationByID(ctx context.Context, id uuid.UUID) (db.Organization, error)
 
+	// ---- GET /billing/usage (usage.go), billing plan step 9 ----
+	// Both read usage_events/usage_rollups, never write either — this
+	// package has no ledger writer of its own; internal/module/mcp is the
+	// hot-path writer (CreateUsageEvent) and internal/job/usagerollup is
+	// the rollup writer, and billing only ever reads what they produced.
+	CountUsageEventsForOrgSince(ctx context.Context, arg db.CountUsageEventsForOrgSinceParams) (int64, error)
+	ListUsageRollupsForOrgPeriod(ctx context.Context, arg db.ListUsageRollupsForOrgPeriodParams) ([]db.ListUsageRollupsForOrgPeriodRow, error)
+
 	// WithTx is the webhook's (webhook.go) alone. The stripe_events claim
 	// and the state change it guards must commit or roll back together, or
 	// a failure mid-processing leaves the event permanently marked handled
@@ -109,6 +117,16 @@ type Service struct {
 	// upserts org_subscriptions.
 	subs planAssigner
 
+	// limits is GET /billing/usage's seam onto subscription.Service
+	// (usage.go) — a second, separate narrow interface rather than a
+	// method added to planAssigner, because the two exist for unrelated
+	// reasons: planAssigner is the webhook's write path, limits is a read
+	// path with no transaction involved. In practice both are satisfied by
+	// the same *subscription.Service instance (see server.go), but the
+	// package depends on two single-method interfaces rather than one
+	// wider one, so each call site's actual dependency stays legible.
+	limits limitResolver
+
 	// appPublicURL is the browser-facing FRONTEND origin (config.AppPublicURL),
 	// not this API's. Every URL Stripe redirects a human to — checkout
 	// success, checkout cancel, portal return — is a page in apps/frontend,
@@ -122,12 +140,17 @@ type Service struct {
 // STRIPE_WEBHOOK_SECRET are unset: the routes still mount and still enforce
 // their guards, but the ones that need the missing half answer
 // apperror.BillingNotConfigured. That is deliberate — see
-// config.Config.BillingEnabled.
+// config.Config.BillingEnabled. limits carries no such Stripe-configured
+// branch — GET /billing/usage answers from Postgres alone (plan invariant
+// 1) and server.go always has a live *subscription.Service to hand it, so
+// unlike stripeClient/webhooks it is not expected to be nil in production;
+// tests that never call Usage are the one place it is left nil.
 func NewService(
 	store billingStore,
 	stripeClient stripeAPI,
 	webhooks stripeWebhooks,
 	subs planAssigner,
+	limits limitResolver,
 	audit *auditlog.Service,
 	appPublicURL string,
 	log *slog.Logger,
@@ -137,6 +160,7 @@ func NewService(
 		stripe:       stripeClient,
 		webhooks:     webhooks,
 		subs:         subs,
+		limits:       limits,
 		audit:        audit,
 		appPublicURL: appPublicURL,
 		log:          log,

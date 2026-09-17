@@ -216,11 +216,17 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	// subSvc is injected as billing's narrow planAssigner seam, following
 	// internal/module/admin's subscriptionResolver: the org_subscriptions
 	// upsert has exactly one implementation and billing does not grow a
-	// second (plan invariant 5).
+	// second (plan invariant 5). It is also injected a second time as the
+	// limitResolver seam GET /billing/usage reads through (billing plan
+	// step 9) — one *subscription.Service instance satisfying two narrow,
+	// single-method interfaces, rather than billing widening either one
+	// into something a reader has to trace back to figure out which half
+	// is actually used where.
 	billingSvc := billing.NewService(
 		store,
 		billing.NewStripeClient(cfg.StripeSecretKey),
 		billing.NewStripeWebhooks(cfg.StripeWebhookSecret),
+		subSvc,
 		subSvc,
 		auditSvc,
 		cfg.AppPublicURL,

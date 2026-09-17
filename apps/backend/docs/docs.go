@@ -2192,6 +2192,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/billing/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Get the organization's current tool-call usage",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.UsageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:read",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/billing/webhook": {
             "post": {
                 "consumes": [
@@ -4402,6 +4447,44 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_module_billing.ToolUsageResponse": {
+            "type": "object",
+            "properties": {
+                "callCount": {
+                    "type": "integer"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.UsageResponse": {
+            "type": "object",
+            "properties": {
+                "byTool": {
+                    "description": "ByTool is a per-tool breakdown for the current period, read from\nusage_rollups (ListUsageRollupsForOrgPeriod) rather than\nusage_events — see that query's comment for why this field is\nallowed to lag CallCount by up to USAGE_ROLLUP_INTERVAL: it is a\nbreakdown a customer finds informative, not the number enforcement\ndepends on. Empty, never null, before the rollup job has folded the\ncurrent period's events even once (e.g. an org's first day on a new\nmonth).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_billing.ToolUsageResponse"
+                    }
+                },
+                "callCount": {
+                    "description": "CallCount is the LIVE usage_events count for the current period —\nthe exact query and window internal/module/mcp/service.go's quota\ncheck runs before every tools/call dispatch. Deliberately not a\nusage_rollups sum: that rollup for the still-open current month can\nbe up to USAGE_ROLLUP_INTERVAL stale, and a meter that reads under\nthe cap it is metering is a support ticket — a customer staring at\n\"47 / 50\" while their 48th call is refused a moment later.",
+                    "type": "integer"
+                },
+                "limit": {
+                    "description": "Limit is max_tool_calls_per_month, resolved through\nsubscription.Service.GetLimit — plan limits overlaid by\ncustom_limits, the same precedence EnforceLimit checks against.\n\nnil (JSON null) means unlimited, and deliberately collapses BOTH of\nEnforceLimit's existing \"no limit\" cases into the one encoding\nrather than inventing a third state on the wire: a plan whose limits\nomit the key, and an org with no subscription row at all. The\nexisting -1 sentinel (used elsewhere as \"enterprise/unlimited\") is\ntranslated to nil here rather than round-tripped as -1, because a\nfrontend rendering \"-1 calls remaining\" is worse than one null\ncheck — see the subscription page's formatLimit \"∞\" convention,\nwhich this mirrors.",
+                    "type": "integer"
+                },
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "description": "PeriodStart/PeriodEnd bound the current UTC calendar month as\n[PeriodStart, PeriodEnd) — the exact boundary\ndate_trunc('month', occurred_at) buckets on, and the same window\nCountUsageEventsForOrgSince and internal/job/usagerollup both use.\nExposed so the frontend never has to derive \"this month\" itself in\nthe viewer's local timezone and risk disagreeing with what the\nbackend actually enforces.",
+                    "type": "string"
+                }
+            }
+        },
         "internal_module_billing.WebhookResponse": {
             "type": "object",
             "properties": {
@@ -4804,6 +4887,20 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_module_subscription.PlanPriceResponse": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "unitAmount": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_module_subscription.PlanResponse": {
             "type": "object",
             "properties": {
@@ -4821,13 +4918,26 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "prices": {
+                    "description": "Prices is this plan's active, purchasable prices (billing plan step\n9) — empty, never null, for a plan with none configured yet (e.g. a\nfreshly published plan whose admin hasn't added a price, or the\n\"free\" plan, which is never meant to be bought through Checkout at\nall). Only populated on GET /plans' listing (Handler.listPlans);\nSubscriptionResponse.Plan leaves it empty rather than paying for a\nsecond query GET /subscription has no use for.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_subscription.PlanPriceResponse"
+                    }
                 }
             }
         },
         "internal_module_subscription.SubscriptionResponse": {
             "type": "object",
             "properties": {
+                "cancelAtPeriodEnd": {
+                    "type": "boolean"
+                },
                 "createdAt": {
+                    "type": "string"
+                },
+                "currentPeriodEnd": {
                     "type": "string"
                 },
                 "customLimits": {
@@ -4835,6 +4945,10 @@ const docTemplate = `{
                     "items": {
                         "type": "integer"
                     }
+                },
+                "hasActiveSubscription": {
+                    "description": "HasActiveSubscription restates decision 4's canonical \"is this org\npaying\" signal (\"stripe_subscription_id IS NULL\" means not paying)\nas a boolean instead of exposing the id it's derived from. The\nfrontend uses it to decide whether \"Manage billing\" has anything to\nopen the Portal onto — an org that has never subscribed has no\ninvoices, no payment method, and nothing to manage.",
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"
@@ -4846,6 +4960,10 @@ const docTemplate = `{
                     "$ref": "#/definitions/internal_module_subscription.PlanResponse"
                 },
                 "planId": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "---- Stripe state (billing plan step 9) ----\n\nStatus mirrors Stripe's own subscription status string verbatim\n(active/past_due/canceled/...) when a Subscription exists, else nil.\nA lifecycle label, not an identifier — unlike stripe_subscription_id\nand stripe_customer_id, which this response never carries at all\n(GetOrgSubscription's comment explains why: they're Stripe linkage\nwith no business leaving the backend, the same reasoning\nPlanPriceResponse's doc comment gives for omitting stripe_price_id).",
                     "type": "string"
                 },
                 "updatedAt": {

@@ -505,3 +505,163 @@ func TestIntegration_Billing_RouteSurface(t *testing.T) {
 			resp.StatusCode, body)
 	}
 }
+
+// ---- GET /billing/usage (billing plan step 9) ----
+
+// TestIntegration_Billing_Usage_ReadPermissionSucceeds is the mirror of
+// TestIntegration_Billing_GuardsRejectAPlainMember's "a role granting only
+// billing:read is still denied" sub-test: billing:read is exactly the
+// permission this ONE route needs, so a caller holding only it must
+// succeed here, not just fail elsewhere. Unlike checkout/portal, this
+// route needs no Stripe key at all (plan invariant 1 — it answers from
+// Postgres alone), so 200 is the actual happy path, not a "past the guard"
+// 501 stand-in.
+func TestIntegration_Billing_Usage_ReadPermissionSucceeds(t *testing.T) {
+	ts, _, store := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "billing-usage-read")
+	planID := createPlan(t, store, map[string]int{"max_tool_calls_per_month": 100})
+	assignPlanDirect(t, store, uuid.MustParse(org.ID), planID)
+
+	reader := registerUser(t, client, ts.URL, "billing-usage-reader")
+	inviteMember(t, client, ts.URL, org, reader.Email, "member")
+	grantRole(t, client, ts.URL, org, reader.UserID, []string{billing.PermissionRead})
+
+	readerHeaders := map[string]string{
+		"Authorization":     "Bearer " + reader.AccessToken,
+		"x-organization-id": org.ID,
+	}
+
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, readerHeaders)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %v", resp.StatusCode, body)
+	}
+	if body["callCount"] != 0.0 {
+		t.Errorf("callCount = %v, want 0 (no usage recorded yet)", body["callCount"])
+	}
+	if body["limit"] != 100.0 {
+		t.Errorf("limit = %v, want 100 (from the assigned plan)", body["limit"])
+	}
+	if _, ok := body["periodStart"]; !ok {
+		t.Errorf("missing periodStart: %v", body)
+	}
+	if _, ok := body["periodEnd"]; !ok {
+		t.Errorf("missing periodEnd: %v", body)
+	}
+	if byTool, ok := body["byTool"].([]any); !ok || len(byTool) != 0 {
+		t.Errorf("byTool = %v, want an empty array", body["byTool"])
+	}
+}
+
+// TestIntegration_Billing_Usage_GuardsRejectEveryoneElse is
+// TestIntegration_Billing_GuardsRejectAPlainMember's shape, applied to the
+// read route: a plain member is denied, billing:write alone does not imply
+// billing:read (the two guard different routes for different reasons — see
+// PermissionRead's doc comment), and the owner bypasses RBAC as always.
+func TestIntegration_Billing_Usage_GuardsRejectEveryoneElse(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	client := ts.Client()
+
+	org := createOrgWithOwner(t, client, ts.URL, "billing-usage-denied")
+	member := registerUser(t, client, ts.URL, "billing-usage-member")
+	inviteMember(t, client, ts.URL, org, member.Email, "member")
+
+	memberHeaders := map[string]string{
+		"Authorization":     "Bearer " + member.AccessToken,
+		"x-organization-id": org.ID,
+	}
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, memberHeaders)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("plain member: status = %d, want 403; body = %v", resp.StatusCode, body)
+	}
+	if body["message"] != "Missing permission: "+billing.PermissionRead {
+		t.Fatalf("message = %v, want %q", body["message"], "Missing permission: "+billing.PermissionRead)
+	}
+
+	t.Run("billing:write alone does not imply billing:read", func(t *testing.T) {
+		writer := registerUser(t, client, ts.URL, "billing-usage-writer")
+		inviteMember(t, client, ts.URL, org, writer.Email, "member")
+		grantRole(t, client, ts.URL, org, writer.UserID, []string{billing.PermissionWrite})
+
+		writerHeaders := map[string]string{
+			"Authorization":     "Bearer " + writer.AccessToken,
+			"x-organization-id": org.ID,
+		}
+		resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, writerHeaders)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("billing:write only: status = %d, want 403; body = %v", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("the owner bypasses RBAC and needs no explicit grant", func(t *testing.T) {
+		ownerHeaders := map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		}
+		resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, ownerHeaders)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("owner: status = %d, want 200; body = %v", resp.StatusCode, body)
+		}
+	})
+}
+
+// TestIntegration_Billing_Usage_TenantIsolation is the class SECURITY.md
+// names first, restated for the usage ledger: org A's usage_events must
+// never be counted into org B's GET /billing/usage response, even though
+// both are read from the exact same table with organization_id as the only
+// boundary between them.
+func TestIntegration_Billing_Usage_TenantIsolation(t *testing.T) {
+	ts, _, store := setupTestServer(t)
+	client := ts.Client()
+	ctx := context.Background()
+
+	orgA := createOrgWithOwner(t, client, ts.URL, "billing-usage-iso-a")
+	orgB := createOrgWithOwner(t, client, ts.URL, "billing-usage-iso-b")
+	orgAID := uuid.MustParse(orgA.ID)
+
+	// Three usage events for org A only.
+	for i := 0; i < 3; i++ {
+		if err := store.CreateUsageEvent(ctx, db.CreateUsageEventParams{
+			OrganizationID: orgAID,
+			Tool:           "sheets_query_rows",
+		}); err != nil {
+			t.Fatalf("CreateUsageEvent: %v", err)
+		}
+	}
+
+	headersFor := func(org createdOrg) map[string]string {
+		return map[string]string{
+			"Authorization":     "Bearer " + org.Owner.AccessToken,
+			"x-organization-id": org.ID,
+		}
+	}
+
+	respA, bodyA := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, headersFor(orgA))
+	if respA.StatusCode != http.StatusOK {
+		t.Fatalf("org A: status = %d, want 200; body = %v", respA.StatusCode, bodyA)
+	}
+	if bodyA["callCount"] != 3.0 {
+		t.Fatalf("org A callCount = %v, want 3", bodyA["callCount"])
+	}
+
+	respB, bodyB := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, headersFor(orgB))
+	if respB.StatusCode != http.StatusOK {
+		t.Fatalf("org B: status = %d, want 200; body = %v", respB.StatusCode, bodyB)
+	}
+	if bodyB["callCount"] != 0.0 {
+		t.Fatalf("org B callCount = %v, want 0 — org A's usage events leaked across tenants", bodyB["callCount"])
+	}
+
+	// And org B's owner cannot read org A's usage by naming org A's id
+	// with its own (org-B-only) credentials — mirrors
+	// TestIntegration_Billing_TenantIsolation's cross-tenant sub-test.
+	crossHeaders := map[string]string{
+		"Authorization":     "Bearer " + orgB.Owner.AccessToken,
+		"x-organization-id": orgA.ID,
+	}
+	resp, body := doJSON(t, client, ts.URL, http.MethodGet, "/billing/usage", nil, crossHeaders)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-tenant usage read: status = %d, want 403; body = %v", resp.StatusCode, body)
+	}
+}

@@ -166,11 +166,25 @@ export function assignRole(input: { userId: string; roleId: string }) {
 
 // ---- Subscription ----
 
+// One purchasable interval/currency combination under a plan (billing plan
+// step 9). Deliberately no stripePriceId — that's Stripe linkage with no
+// business reaching the browser; see PlanResponse's own comment below and
+// the backend's PlanPriceResponse doc comment (subscription/dto.go).
+export interface PlanPriceResponse {
+  unitAmount: number;
+  currency: string;
+  interval: "month" | "year";
+}
+
 export interface PlanResponse {
   id: string;
   name: string;
   limits: Record<string, unknown>;
   createdAt: string;
+  // Always [] on the plan embedded in SubscriptionResponse (GET
+  // /subscription has no use for another plan's prices); populated on
+  // GET /plans, one entry per active price.
+  prices: PlanPriceResponse[];
 }
 
 export interface SubscriptionResponse {
@@ -181,6 +195,20 @@ export interface SubscriptionResponse {
   createdAt: string;
   updatedAt: string;
   plan: PlanResponse;
+  // ---- Stripe state (billing plan step 9) ----
+  // status mirrors Stripe's subscription status verbatim
+  // (active/past_due/canceled/...) once a Subscription exists; null before
+  // then. Never stripeSubscriptionId/stripeCustomerId — those never leave
+  // the backend (subscription/dto.go's SubscriptionResponse comment).
+  status: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  // The canonical "is this org paying" signal (decision 4:
+  // stripe_subscription_id IS NULL means not paying), restated as a
+  // boolean rather than exposing the id it's derived from. Drives whether
+  // "Manage billing" renders at all — an org that's never subscribed has
+  // no payment method or invoices to manage.
+  hasActiveSubscription: boolean;
 }
 
 // null when the org has no subscription assigned yet.
@@ -188,16 +216,59 @@ export function getSubscription() {
   return apiRequest<SubscriptionResponse | null>("/subscription");
 }
 
-// The plan catalogue, read-only. Originally added in Phase 6 to populate a
-// plan picker on the subscription page; that picker is gone — a tenant
-// cannot change its own plan any more (POST /subscription/assign was
-// removed, since RequireOrg is membership-only and let any `member` move
-// their org onto any plan). The list stays so the page can show which plan
-// the org is on against the others it could be moved to; a plan's name and
-// limits are not secret. Changing a plan is now
-// POST /admin/organizations/:orgId/plan, superadmin-only.
+// The plan catalogue, read-only in the sense that this call cannot change
+// anything — but unlike its Phase 6 origin, a tenant now CAN move onto a
+// public plan, via POST /billing/checkout below rather than a direct write
+// here. A plan's name, limits, and prices are not secret. Changing a plan
+// directly (bypassing Stripe) is still POST /admin/organizations/:orgId/plan,
+// superadmin-only.
 export function listPlans() {
   return apiRequest<PlanResponse[]>("/plans");
+}
+
+// ---- Billing ----
+//
+// Both routes below return a hosted Stripe URL to redirect the browser to
+// — window.location.assign(url), never Stripe.js, never an embedded flow
+// (billing/dto.go's RedirectResponse comment). Both can answer 403 (missing
+// billing:write — there's no permission model on the frontend, so the
+// button always renders and a denial comes back from the call itself),
+// 501 BILLING_NOT_CONFIGURED (no STRIPE_SECRET_KEY — the local-dev
+// default), and 502 BILLING_PROVIDER_ERROR; checkout can also answer 409
+// PLAN_NOT_PURCHASABLE and 404 (unknown/non-public plan).
+export interface RedirectResponse {
+  url: string;
+}
+
+export function startCheckout(input: { planId: string; interval?: "month" | "year" }) {
+  return apiRequest<RedirectResponse>("/billing/checkout", { method: "POST", body: input });
+}
+
+export function openBillingPortal() {
+  return apiRequest<RedirectResponse>("/billing/portal", { method: "POST" });
+}
+
+// One usage_rollups row: a tool and how many times it was called this
+// period. See UsageResponse.byTool — allowed to lag callCount below.
+export interface ToolUsageResponse {
+  tool: string;
+  callCount: number;
+}
+
+// GET /billing/usage's body. limit is null for unlimited — both "plan
+// omits max_tool_calls_per_month" and "org has no subscription at all"
+// collapse to the same null rather than round-tripping the backend's -1
+// sentinel (billing/dto.go's UsageResponse.Limit comment).
+export interface UsageResponse {
+  periodStart: string;
+  periodEnd: string;
+  callCount: number;
+  limit: number | null;
+  byTool: ToolUsageResponse[];
+}
+
+export function getUsage() {
+  return apiRequest<UsageResponse>("/billing/usage");
 }
 
 // ---- Connectors ----

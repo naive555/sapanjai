@@ -85,6 +85,26 @@ SELECT count(*) FROM audit_logs
 WHERE action = 'mcp.tool.called'
   AND created_at >= sqlc.arg('since')::timestamp;
 
+-- name: ListUsageRollupsForOrgPeriod :many
+-- Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+-- per-tool breakdown behind GET /billing/usage's `byTool` field
+-- (internal/module/billing). Reads usage_rollups, NOT usage_events, unlike
+-- CountUsageEventsForOrgSince above -- deliberately, and asymmetrically.
+-- CountUsageEventsForOrgSince has to be exact because it is the number the
+-- gateway's own quota check (internal/module/mcp/service.go:305) enforces
+-- against; this is a per-tool breakdown a customer finds informative, not
+-- the enforced number, so it is allowed to lag by up to
+-- USAGE_ROLLUP_INTERVAL for the still-open current month
+-- (internal/job/usagerollup) rather than paying the cost of grouping the
+-- full month's usage_events on every page load of the usage meter. Callers
+-- pass the same UTC-calendar-month `period_start` the rollup job buckets
+-- on, matching CountUsageEventsForOrgSince's `since`. Served by the unique
+-- index the natural key (organization_id, period_start, tool) already
+-- creates (migration 00014) -- no new index needed.
+SELECT tool, call_count FROM usage_rollups
+WHERE organization_id = $1 AND period_start = $2
+ORDER BY tool ASC;
+
 -- name: PruneUsageEvents :execrows
 -- Deletes usage_events rows older than retention, batch-at-a-time like
 -- PruneEmailOutbox (email_outbox.sql) and DeleteExpiredSessions
