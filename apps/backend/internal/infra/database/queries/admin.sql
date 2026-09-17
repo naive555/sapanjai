@@ -256,14 +256,48 @@ SELECT * FROM plans WHERE id = $1;
 -- neither the source app nor this one adds a dedicated
 -- PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
 -- typo caught on the next attempt.
-INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING *;
+--
+-- stripe_product_id/is_public/sort_order (migration 00013) are written
+-- here rather than left to their column defaults so that a plan can be
+-- created already hidden — a staff member wiring up a new tier creates the
+-- Stripe Product, creates the plan with is_public = false, adds its
+-- plan_prices row, and only then publishes it. Creating every plan
+-- published-by-default would put a priceless tier in the tenant catalogue
+-- for the length of that workflow.
+INSERT INTO plans (name, limits, stripe_product_id, is_public, sort_order)
+VALUES (
+  @name,
+  @limits,
+  sqlc.narg('stripe_product_id')::text,
+  @is_public::boolean,
+  @sort_order::integer
+)
+RETURNING *;
 
 -- name: AdminUpdatePlan :one
--- A full replace (name + limits together), not a partial PATCH — mirrors
--- the shape of POST /admin/plans, and a plan's whole point is that its
--- limits are reviewed together, not merged field-by-field. 0 rows ->
--- pgx.ErrNoRows -> admin.Service maps that to 404.
-UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING *;
+-- A full replace (name + limits + the migration-00013 catalogue columns
+-- together), not a partial PATCH — mirrors the shape of POST /admin/plans,
+-- and a plan's whole point is that its limits are reviewed together, not
+-- merged field-by-field. 0 rows -> pgx.ErrNoRows -> admin.Service maps
+-- that to 404.
+--
+-- Full replace extends to is_public/sort_order/stripe_product_id
+-- deliberately, and admin.PlanUpdateRequest's doc comment carries the
+-- consequence: a PUT that omits isPublic re-publishes a hidden plan,
+-- exactly as a PUT that omits a limit key today drops that limit. The
+-- console renders the current values into the form and sends them all
+-- back; anything else would be a PATCH, which this is explicitly not.
+--
+-- Deliberately does NOT touch plan_prices. A price is never edited in
+-- place (see AdminCreatePlanPrice), so there is nothing here to cascade.
+UPDATE plans SET
+  name = @name,
+  limits = @limits,
+  stripe_product_id = sqlc.narg('stripe_product_id')::text,
+  is_public = @is_public::boolean,
+  sort_order = @sort_order::integer
+WHERE id = @id
+RETURNING *;
 
 -- name: AdminDeletePlan :exec
 -- The caller has already loaded the plan (AdminGetPlanByID, for the 404
@@ -278,3 +312,85 @@ DELETE FROM plans WHERE id = $1;
 -- API can return a real 409 instead of surfacing that constraint
 -- violation as a 500.
 SELECT count(*) FROM org_subscriptions WHERE plan_id = $1;
+
+-- name: AdminListPlans :many
+-- The staff-console twin of ListPublicPlans (queries/plans.sql), and
+-- deliberately NOT filtered on is_public: the console is where is_public is
+-- set, so it must still see (and be able to un-hide) what it hid. Ordered
+-- by the same sort_order, created_at the tenant catalogue uses, so the
+-- console previews the order a customer will actually see.
+SELECT * FROM plans ORDER BY sort_order ASC, created_at ASC;
+
+-- ---- plan_prices (migration 00013) ----
+--
+-- There is deliberately no query here that edits a price's unit_amount,
+-- currency, or interval, and none that deletes a row. A Stripe Price is
+-- immutable once created (you deactivate and supersede rather than edit),
+-- and plan_prices mirrors Stripe rather than diverging from it:
+--
+--   * An UPDATE of unit_amount would leave the local row disagreeing with
+--     the Stripe Price it names, and Stripe is what actually charges the
+--     card. The console would then display a price nobody is paying.
+--   * A DELETE would break GetPlanByStripePriceID (queries/plans.sql),
+--     which resolves an EXISTING subscriber's entitlement plan from the
+--     Price id on their subscription — including subscribers on a price
+--     that was long since deactivated. That query's own doc comment is
+--     explicit that `active` governs what may be SOLD, not what an
+--     existing subscription means; deleting the row destroys the second
+--     meaning along with the first, permanently, for a paying customer.
+--
+-- Re-pricing is therefore: create the new Stripe Price, insert its row
+-- here, then deactivate the old one. That ordering is what
+-- GetActivePlanPrice's "newest-first, no window in which neither is
+-- selectable" comment describes, and AdminCountActivePlanPricesFor below
+-- is what enforces it.
+
+-- name: AdminListPlanPrices :many
+-- Every price for a plan, active and inactive alike. Inactive rows are the
+-- point as much as active ones: they are the plan's price history, and a
+-- staff member asking "what is this customer paying" is reading a price
+-- that may well no longer be sellable.
+SELECT * FROM plan_prices WHERE plan_id = $1 ORDER BY created_at DESC;
+
+-- name: AdminCreatePlanPrice :one
+-- plan_prices.stripe_price_id carries a UNIQUE constraint; a colliding id
+-- surfaces as a raw constraint-violation error (500), the same tolerance
+-- AdminCreatePlan documents for a colliding plan name — the same 2-5
+-- person staff console, and the same typo caught on the next attempt.
+INSERT INTO plan_prices (plan_id, stripe_price_id, unit_amount, currency, "interval", active)
+VALUES (
+  @plan_id,
+  @stripe_price_id::text,
+  @unit_amount::bigint,
+  @currency::text,
+  @billing_interval::text,
+  @active::boolean
+)
+RETURNING *;
+
+-- name: AdminGetPlanPrice :one
+-- Scoped by plan_id as well as id: a price id that belongs to a different
+-- plan than the one in the route resolves to no row, and therefore to the
+-- same 404 an unknown id would — the route's path must agree with the row
+-- it acts on, not merely contain a valid uuid somewhere.
+SELECT * FROM plan_prices WHERE id = @id AND plan_id = @plan_id;
+
+-- name: AdminSetPlanPriceActive :one
+-- The ONLY mutation of an existing plan_prices row (see the block comment
+-- above). Same plan_id scoping as AdminGetPlanPrice.
+UPDATE plan_prices SET active = @active::boolean
+WHERE id = @id AND plan_id = @plan_id
+RETURNING *;
+
+-- name: AdminCountActivePlanPricesFor :one
+-- Counts the active prices a checkout could actually resolve for one
+-- (plan, currency, interval) triple — the exact selector GetActivePlanPrice
+-- (queries/plans.sql) uses. Backs the PLAN_PRICE_LAST_ACTIVE guard: a
+-- public plan whose last active price for a triple is deactivated becomes
+-- visible-but-unbuyable, which is the same incoherence is_public exists to
+-- prevent, arrived at from the other side.
+SELECT count(*) FROM plan_prices
+WHERE plan_id = @plan_id
+  AND currency = @currency::text
+  AND "interval" = @billing_interval::text
+  AND active = true;

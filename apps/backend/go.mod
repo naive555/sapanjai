@@ -14,6 +14,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/resend/resend-go/v2 v2.28.0
+	github.com/stripe/stripe-go/v86 v86.4.0
 	github.com/swaggo/echo-swagger v1.5.2
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.54.0

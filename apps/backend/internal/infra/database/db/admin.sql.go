@@ -26,6 +26,33 @@ func (q *Queries) AdminCountActiveMCPKeys(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const adminCountActivePlanPricesFor = `-- name: AdminCountActivePlanPricesFor :one
+SELECT count(*) FROM plan_prices
+WHERE plan_id = $1
+  AND currency = $2::text
+  AND "interval" = $3::text
+  AND active = true
+`
+
+type AdminCountActivePlanPricesForParams struct {
+	PlanID          uuid.UUID `json:"plan_id"`
+	Currency        string    `json:"currency"`
+	BillingInterval string    `json:"billing_interval"`
+}
+
+// Counts the active prices a checkout could actually resolve for one
+// (plan, currency, interval) triple — the exact selector GetActivePlanPrice
+// (queries/plans.sql) uses. Backs the PLAN_PRICE_LAST_ACTIVE guard: a
+// public plan whose last active price for a triple is deactivated becomes
+// visible-but-unbuyable, which is the same incoherence is_public exists to
+// prevent, arrived at from the other side.
+func (q *Queries) AdminCountActivePlanPricesFor(ctx context.Context, arg AdminCountActivePlanPricesForParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountActivePlanPricesFor, arg.PlanID, arg.Currency, arg.BillingInterval)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const adminCountActiveSessions = `-- name: AdminCountActiveSessions :one
 SELECT count(*) FROM sessions WHERE is_revoked = false AND expires_at > now()
 `
@@ -307,12 +334,23 @@ func (q *Queries) AdminCountUsersSince(ctx context.Context, since time.Time) (in
 }
 
 const adminCreatePlan = `-- name: AdminCreatePlan :one
-INSERT INTO plans (name, limits) VALUES ($1, $2) RETURNING id, name, limits, created_at
+INSERT INTO plans (name, limits, stripe_product_id, is_public, sort_order)
+VALUES (
+  $1,
+  $2,
+  $3::text,
+  $4::boolean,
+  $5::integer
+)
+RETURNING id, name, limits, created_at, stripe_product_id, is_public, sort_order
 `
 
 type AdminCreatePlanParams struct {
-	Name   string          `json:"name"`
-	Limits json.RawMessage `json:"limits"`
+	Name            string          `json:"name"`
+	Limits          json.RawMessage `json:"limits"`
+	StripeProductID *string         `json:"stripe_product_id"`
+	IsPublic        bool            `json:"is_public"`
+	SortOrder       int32           `json:"sort_order"`
 }
 
 // plans.name carries a UNIQUE constraint; a colliding name surfaces as a
@@ -321,13 +359,79 @@ type AdminCreatePlanParams struct {
 // neither the source app nor this one adds a dedicated
 // PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
 // typo caught on the next attempt.
+//
+// stripe_product_id/is_public/sort_order (migration 00013) are written
+// here rather than left to their column defaults so that a plan can be
+// created already hidden — a staff member wiring up a new tier creates the
+// Stripe Product, creates the plan with is_public = false, adds its
+// plan_prices row, and only then publishes it. Creating every plan
+// published-by-default would put a priceless tier in the tenant catalogue
+// for the length of that workflow.
 func (q *Queries) AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error) {
-	row := q.db.QueryRow(ctx, adminCreatePlan, arg.Name, arg.Limits)
+	row := q.db.QueryRow(ctx, adminCreatePlan,
+		arg.Name,
+		arg.Limits,
+		arg.StripeProductID,
+		arg.IsPublic,
+		arg.SortOrder,
+	)
 	var i Plan
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Limits,
+		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
+	)
+	return i, err
+}
+
+const adminCreatePlanPrice = `-- name: AdminCreatePlanPrice :one
+INSERT INTO plan_prices (plan_id, stripe_price_id, unit_amount, currency, "interval", active)
+VALUES (
+  $1,
+  $2::text,
+  $3::bigint,
+  $4::text,
+  $5::text,
+  $6::boolean
+)
+RETURNING id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at
+`
+
+type AdminCreatePlanPriceParams struct {
+	PlanID          uuid.UUID `json:"plan_id"`
+	StripePriceID   string    `json:"stripe_price_id"`
+	UnitAmount      int64     `json:"unit_amount"`
+	Currency        string    `json:"currency"`
+	BillingInterval string    `json:"billing_interval"`
+	Active          bool      `json:"active"`
+}
+
+// plan_prices.stripe_price_id carries a UNIQUE constraint; a colliding id
+// surfaces as a raw constraint-violation error (500), the same tolerance
+// AdminCreatePlan documents for a colliding plan name — the same 2-5
+// person staff console, and the same typo caught on the next attempt.
+func (q *Queries) AdminCreatePlanPrice(ctx context.Context, arg AdminCreatePlanPriceParams) (PlanPrice, error) {
+	row := q.db.QueryRow(ctx, adminCreatePlanPrice,
+		arg.PlanID,
+		arg.StripePriceID,
+		arg.UnitAmount,
+		arg.Currency,
+		arg.BillingInterval,
+		arg.Active,
+	)
+	var i PlanPrice
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripePriceID,
+		&i.UnitAmount,
+		&i.Currency,
+		&i.Interval,
+		&i.Active,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -389,7 +493,7 @@ func (q *Queries) AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (O
 }
 
 const adminGetPlanByID = `-- name: AdminGetPlanByID :one
-SELECT id, name, limits, created_at FROM plans WHERE id = $1
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE id = $1
 `
 
 func (q *Queries) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error) {
@@ -399,6 +503,38 @@ func (q *Queries) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, err
 		&i.ID,
 		&i.Name,
 		&i.Limits,
+		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
+	)
+	return i, err
+}
+
+const adminGetPlanPrice = `-- name: AdminGetPlanPrice :one
+SELECT id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at FROM plan_prices WHERE id = $1 AND plan_id = $2
+`
+
+type AdminGetPlanPriceParams struct {
+	ID     uuid.UUID `json:"id"`
+	PlanID uuid.UUID `json:"plan_id"`
+}
+
+// Scoped by plan_id as well as id: a price id that belongs to a different
+// plan than the one in the route resolves to no row, and therefore to the
+// same 404 an unknown id would — the route's path must agree with the row
+// it acts on, not merely contain a valid uuid somewhere.
+func (q *Queries) AdminGetPlanPrice(ctx context.Context, arg AdminGetPlanPriceParams) (PlanPrice, error) {
+	row := q.db.QueryRow(ctx, adminGetPlanPrice, arg.ID, arg.PlanID)
+	var i PlanPrice
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripePriceID,
+		&i.UnitAmount,
+		&i.Currency,
+		&i.Interval,
+		&i.Active,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -615,6 +751,104 @@ func (q *Queries) AdminListOrganizations(ctx context.Context, arg AdminListOrgan
 			&i.ConnectorCount,
 			&i.McpKeyCount,
 			&i.PlanName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListPlanPrices = `-- name: AdminListPlanPrices :many
+
+SELECT id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at FROM plan_prices WHERE plan_id = $1 ORDER BY created_at DESC
+`
+
+// ---- plan_prices (migration 00013) ----
+//
+// There is deliberately no query here that edits a price's unit_amount,
+// currency, or interval, and none that deletes a row. A Stripe Price is
+// immutable once created (you deactivate and supersede rather than edit),
+// and plan_prices mirrors Stripe rather than diverging from it:
+//
+//   - An UPDATE of unit_amount would leave the local row disagreeing with
+//     the Stripe Price it names, and Stripe is what actually charges the
+//     card. The console would then display a price nobody is paying.
+//   - A DELETE would break GetPlanByStripePriceID (queries/plans.sql),
+//     which resolves an EXISTING subscriber's entitlement plan from the
+//     Price id on their subscription — including subscribers on a price
+//     that was long since deactivated. That query's own doc comment is
+//     explicit that `active` governs what may be SOLD, not what an
+//     existing subscription means; deleting the row destroys the second
+//     meaning along with the first, permanently, for a paying customer.
+//
+// Re-pricing is therefore: create the new Stripe Price, insert its row
+// here, then deactivate the old one. That ordering is what
+// GetActivePlanPrice's "newest-first, no window in which neither is
+// selectable" comment describes, and AdminCountActivePlanPricesFor below
+// is what enforces it.
+// Every price for a plan, active and inactive alike. Inactive rows are the
+// point as much as active ones: they are the plan's price history, and a
+// staff member asking "what is this customer paying" is reading a price
+// that may well no longer be sellable.
+func (q *Queries) AdminListPlanPrices(ctx context.Context, planID uuid.UUID) ([]PlanPrice, error) {
+	rows, err := q.db.Query(ctx, adminListPlanPrices, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlanPrice
+	for rows.Next() {
+		var i PlanPrice
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlanID,
+			&i.StripePriceID,
+			&i.UnitAmount,
+			&i.Currency,
+			&i.Interval,
+			&i.Active,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListPlans = `-- name: AdminListPlans :many
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans ORDER BY sort_order ASC, created_at ASC
+`
+
+// The staff-console twin of ListPublicPlans (queries/plans.sql), and
+// deliberately NOT filtered on is_public: the console is where is_public is
+// set, so it must still see (and be able to un-hide) what it hid. Ordered
+// by the same sort_order, created_at the tenant catalogue uses, so the
+// console previews the order a customer will actually see.
+func (q *Queries) AdminListPlans(ctx context.Context) ([]Plan, error) {
+	rows, err := q.db.Query(ctx, adminListPlans)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Plan
+	for rows.Next() {
+		var i Plan
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Limits,
+			&i.CreatedAt,
+			&i.StripeProductID,
+			&i.IsPublic,
+			&i.SortOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -856,28 +1090,89 @@ func (q *Queries) AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCu
 	return result.RowsAffected(), nil
 }
 
+const adminSetPlanPriceActive = `-- name: AdminSetPlanPriceActive :one
+UPDATE plan_prices SET active = $1::boolean
+WHERE id = $2 AND plan_id = $3
+RETURNING id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at
+`
+
+type AdminSetPlanPriceActiveParams struct {
+	Active bool      `json:"active"`
+	ID     uuid.UUID `json:"id"`
+	PlanID uuid.UUID `json:"plan_id"`
+}
+
+// The ONLY mutation of an existing plan_prices row (see the block comment
+// above). Same plan_id scoping as AdminGetPlanPrice.
+func (q *Queries) AdminSetPlanPriceActive(ctx context.Context, arg AdminSetPlanPriceActiveParams) (PlanPrice, error) {
+	row := q.db.QueryRow(ctx, adminSetPlanPriceActive, arg.Active, arg.ID, arg.PlanID)
+	var i PlanPrice
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripePriceID,
+		&i.UnitAmount,
+		&i.Currency,
+		&i.Interval,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const adminUpdatePlan = `-- name: AdminUpdatePlan :one
-UPDATE plans SET name = $2, limits = $3 WHERE id = $1 RETURNING id, name, limits, created_at
+UPDATE plans SET
+  name = $1,
+  limits = $2,
+  stripe_product_id = $3::text,
+  is_public = $4::boolean,
+  sort_order = $5::integer
+WHERE id = $6
+RETURNING id, name, limits, created_at, stripe_product_id, is_public, sort_order
 `
 
 type AdminUpdatePlanParams struct {
-	ID     uuid.UUID       `json:"id"`
-	Name   string          `json:"name"`
-	Limits json.RawMessage `json:"limits"`
+	Name            string          `json:"name"`
+	Limits          json.RawMessage `json:"limits"`
+	StripeProductID *string         `json:"stripe_product_id"`
+	IsPublic        bool            `json:"is_public"`
+	SortOrder       int32           `json:"sort_order"`
+	ID              uuid.UUID       `json:"id"`
 }
 
-// A full replace (name + limits together), not a partial PATCH — mirrors
-// the shape of POST /admin/plans, and a plan's whole point is that its
-// limits are reviewed together, not merged field-by-field. 0 rows ->
-// pgx.ErrNoRows -> admin.Service maps that to 404.
+// A full replace (name + limits + the migration-00013 catalogue columns
+// together), not a partial PATCH — mirrors the shape of POST /admin/plans,
+// and a plan's whole point is that its limits are reviewed together, not
+// merged field-by-field. 0 rows -> pgx.ErrNoRows -> admin.Service maps
+// that to 404.
+//
+// Full replace extends to is_public/sort_order/stripe_product_id
+// deliberately, and admin.PlanUpdateRequest's doc comment carries the
+// consequence: a PUT that omits isPublic re-publishes a hidden plan,
+// exactly as a PUT that omits a limit key today drops that limit. The
+// console renders the current values into the form and sends them all
+// back; anything else would be a PATCH, which this is explicitly not.
+//
+// Deliberately does NOT touch plan_prices. A price is never edited in
+// place (see AdminCreatePlanPrice), so there is nothing here to cascade.
 func (q *Queries) AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error) {
-	row := q.db.QueryRow(ctx, adminUpdatePlan, arg.ID, arg.Name, arg.Limits)
+	row := q.db.QueryRow(ctx, adminUpdatePlan,
+		arg.Name,
+		arg.Limits,
+		arg.StripeProductID,
+		arg.IsPublic,
+		arg.SortOrder,
+		arg.ID,
+	)
 	var i Plan
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }

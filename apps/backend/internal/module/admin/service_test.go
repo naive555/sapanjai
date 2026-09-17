@@ -45,6 +45,10 @@ type mockAdminStore struct {
 	adminDeletePlanCalls          int
 	adminCountSubscriptionsByPlan func(ctx context.Context, planID uuid.UUID) (int64, error)
 
+	adminGetPlanPrice             func(ctx context.Context, arg db.AdminGetPlanPriceParams) (db.PlanPrice, error)
+	adminSetPlanPriceActive       func(ctx context.Context, arg db.AdminSetPlanPriceActiveParams) (db.PlanPrice, error)
+	adminCountActivePlanPricesFor func(ctx context.Context, arg db.AdminCountActivePlanPricesForParams) (int64, error)
+
 	upsertUserTOTPSecret        func(ctx context.Context, arg db.UpsertUserTOTPSecretParams) error
 	getUserTOTP                 func(ctx context.Context, userID uuid.UUID) (db.UserTotp, error)
 	confirmUserTOTP             func(ctx context.Context, arg db.ConfirmUserTOTPParams) error
@@ -81,6 +85,18 @@ func (m *mockAdminStore) WithTx(ctx context.Context, fn func(q db.Querier) error
 
 func (m *mockAdminStore) AdminGetPlanByID(ctx context.Context, id uuid.UUID) (db.Plan, error) {
 	return m.adminGetPlanByID(ctx, id)
+}
+
+func (m *mockAdminStore) AdminGetPlanPrice(ctx context.Context, arg db.AdminGetPlanPriceParams) (db.PlanPrice, error) {
+	return m.adminGetPlanPrice(ctx, arg)
+}
+
+func (m *mockAdminStore) AdminSetPlanPriceActive(ctx context.Context, arg db.AdminSetPlanPriceActiveParams) (db.PlanPrice, error) {
+	return m.adminSetPlanPriceActive(ctx, arg)
+}
+
+func (m *mockAdminStore) AdminCountActivePlanPricesFor(ctx context.Context, arg db.AdminCountActivePlanPricesForParams) (int64, error) {
+	return m.adminCountActivePlanPricesFor(ctx, arg)
 }
 
 func (m *mockAdminStore) AdminCreatePlan(ctx context.Context, arg db.AdminCreatePlanParams) (db.Plan, error) {
@@ -526,13 +542,21 @@ func TestValidatePlanLimits(t *testing.T) {
 		limits  map[string]any
 		wantErr bool
 	}{
-		{name: "valid", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0}, wantErr: false},
-		{name: "valid unlimited (-1)", limits: map[string]any{"max_members": -1.0, "max_roles": -1.0, "max_connectors": -1.0}, wantErr: false},
-		{name: "extra integer key is fine", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "extra": 7.0}, wantErr: false},
+		{name: "valid", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.0}, wantErr: false},
+		{name: "valid unlimited (-1)", limits: map[string]any{"max_members": -1.0, "max_roles": -1.0, "max_connectors": -1.0, "max_tool_calls_per_month": -1.0}, wantErr: false},
+		{name: "extra integer key is fine", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.0, "extra": 7.0}, wantErr: false},
 		{name: "missing a required key", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0}, wantErr: true},
-		{name: "non-integer required value", limits: map[string]any{"max_members": 5.5, "max_roles": 3.0, "max_connectors": 2.0}, wantErr: true},
-		{name: "non-integer extra key", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "extra": 1.5}, wantErr: true},
-		{name: "non-numeric value", limits: map[string]any{"max_members": "five", "max_roles": 3.0, "max_connectors": 2.0}, wantErr: true},
+		// The case billing plan step 8 added the key for: without it in
+		// requiredPlanLimitKeys this blob was accepted and the resulting
+		// plan had a SILENTLY UNLIMITED tool-call quota, because
+		// subscription.Service.EnforceLimit treats a missing key as
+		// unlimited. It is the one limit that maps to an upstream API
+		// bill, so failing open is the expensive direction.
+		{name: "missing max_tool_calls_per_month", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0}, wantErr: true},
+		{name: "non-integer required value", limits: map[string]any{"max_members": 5.5, "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.0}, wantErr: true},
+		{name: "non-integer max_tool_calls_per_month", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.5}, wantErr: true},
+		{name: "non-integer extra key", limits: map[string]any{"max_members": 5.0, "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.0, "extra": 1.5}, wantErr: true},
+		{name: "non-numeric value", limits: map[string]any{"max_members": "five", "max_roles": 3.0, "max_connectors": 2.0, "max_tool_calls_per_month": 1000.0}, wantErr: true},
 		{name: "empty limits", limits: map[string]any{}, wantErr: true},
 	}
 	for _, tt := range tests {
@@ -1061,5 +1085,179 @@ func TestImpersonate_StaffCheckedBeforeBan(t *testing.T) {
 		AdminContext{AdminID: uuid.New()}, uuid.New(), "a sufficiently long reason")
 	if appErrorCode(t, err) != apperror.CannotImpersonateStaff {
 		t.Fatalf("error = %v, want CANNOT_IMPERSONATE_STAFF for a banned staff account", err)
+	}
+}
+
+// ---- plan_prices (billing plan step 8) ----
+
+// planPriceStore builds a mockAdminStore wired for the SetPlanPriceActive
+// guard tests: one plan, one price, and a configurable count of active
+// prices for that (plan, currency, interval) triple.
+type planPriceStoreOpts struct {
+	planPublic   bool
+	priceActive  bool
+	activeForKey int64
+}
+
+func planPriceStore(t *testing.T, planID, priceID uuid.UUID, o planPriceStoreOpts, setCalls *int) *mockAdminStore {
+	t.Helper()
+	return &mockAdminStore{
+		adminGetPlanByID: func(ctx context.Context, id uuid.UUID) (db.Plan, error) {
+			if id != planID {
+				return db.Plan{}, pgx.ErrNoRows
+			}
+			return db.Plan{ID: planID, Name: "pro", IsPublic: o.planPublic}, nil
+		},
+		adminGetPlanPrice: func(ctx context.Context, arg db.AdminGetPlanPriceParams) (db.PlanPrice, error) {
+			if arg.ID != priceID || arg.PlanID != planID {
+				return db.PlanPrice{}, pgx.ErrNoRows
+			}
+			return db.PlanPrice{
+				ID: priceID, PlanID: planID, StripePriceID: "price_fixture",
+				UnitAmount: 29900, Currency: "thb", Interval: "month", Active: o.priceActive,
+			}, nil
+		},
+		adminCountActivePlanPricesFor: func(ctx context.Context, arg db.AdminCountActivePlanPricesForParams) (int64, error) {
+			return o.activeForKey, nil
+		},
+		adminSetPlanPriceActive: func(ctx context.Context, arg db.AdminSetPlanPriceActiveParams) (db.PlanPrice, error) {
+			*setCalls++
+			return db.PlanPrice{
+				ID: arg.ID, PlanID: arg.PlanID, StripePriceID: "price_fixture",
+				UnitAmount: 29900, Currency: "thb", Interval: "month", Active: arg.Active,
+			}, nil
+		},
+	}
+}
+
+// TestSetPlanPriceActive_LastActiveOnPublicPlanRefused is the coherence
+// half of the is_public work: a public plan whose only sellable price is
+// switched off stays in the tenant catalogue (GET /plans) while
+// POST /billing/checkout answers PLAN_NOT_PURCHASABLE to everyone who
+// clicks it. The guard turns re-pricing into an ordering constraint —
+// insert the new row first, then deactivate the old one.
+func TestSetPlanPriceActive_LastActiveOnPublicPlanRefused(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: true, priceActive: true, activeForKey: 1,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	_, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, priceID, false)
+	if got := appErrorCode(t, err); got != apperror.PlanPriceLastActive {
+		t.Fatalf("error code = %q, want %q", got, apperror.PlanPriceLastActive)
+	}
+	if setCalls != 0 {
+		t.Errorf("AdminSetPlanPriceActive called %d times, want 0 — the guard must run before the write", setCalls)
+	}
+}
+
+// The successor row exists, so deactivating the old one leaves the plan
+// buyable. This is the supported re-pricing path and must not be blocked.
+func TestSetPlanPriceActive_DeactivateAllowedWhenASuccessorExists(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: true, priceActive: true, activeForKey: 2,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	item, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, priceID, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if item.Active {
+		t.Errorf("Active = true, want false")
+	}
+	if setCalls != 1 {
+		t.Errorf("AdminSetPlanPriceActive called %d times, want 1", setCalls)
+	}
+}
+
+// A hidden plan is not being sold, so there is no catalogue claim to
+// falsify — which is what makes "hide the tier, then deactivate its
+// prices" a workable retirement path rather than a dead end.
+func TestSetPlanPriceActive_LastActiveOnHiddenPlanAllowed(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: false, priceActive: true, activeForKey: 1,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	if _, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, priceID, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if setCalls != 1 {
+		t.Errorf("AdminSetPlanPriceActive called %d times, want 1", setCalls)
+	}
+}
+
+// Re-deactivating an already-inactive price must stay a no-op rather than
+// a 409: a retried request has to succeed where the first one did.
+func TestSetPlanPriceActive_AlreadyInactiveIsNotRefused(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: true, priceActive: false, activeForKey: 0,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	if _, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, priceID, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if setCalls != 1 {
+		t.Errorf("AdminSetPlanPriceActive called %d times, want 1", setCalls)
+	}
+}
+
+// Activating is never guarded — it can only ever make a plan MORE buyable.
+func TestSetPlanPriceActive_ActivateNeverRefused(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: true, priceActive: false, activeForKey: 0,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	item, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, priceID, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !item.Active {
+		t.Errorf("Active = false, want true")
+	}
+}
+
+// A price id belonging to a different plan than the one in the route is a
+// 404, not a cross-plan mutation: AdminGetPlanPrice is scoped by plan_id.
+func TestSetPlanPriceActive_PriceFromAnotherPlanIs404(t *testing.T) {
+	planID, priceID := uuid.New(), uuid.New()
+	var setCalls int
+	store := planPriceStore(t, planID, priceID, planPriceStoreOpts{
+		planPublic: true, priceActive: true, activeForKey: 5,
+	}, &setCalls)
+	svc := NewService(store, &mockCountCache{}, newTestAudit(&spyQuerier{}), nil, nil, nil, nil, nil)
+
+	_, err := svc.SetPlanPriceActive(context.Background(), AdminContext{AdminID: uuid.New()}, planID, uuid.New(), false)
+	if got := appErrorCode(t, err); got != apperror.NotFound {
+		t.Fatalf("error code = %q, want %q", got, apperror.NotFound)
+	}
+}
+
+// An unknown plan is a 404 rather than an empty list: "this plan has no
+// prices" and "this plan does not exist" are different answers to a staff
+// member debugging a checkout.
+func TestListPlanPrices_UnknownPlanIs404(t *testing.T) {
+	svc := NewService(&mockAdminStore{
+		adminGetPlanByID: func(ctx context.Context, id uuid.UUID) (db.Plan, error) {
+			return db.Plan{}, pgx.ErrNoRows
+		},
+	}, &mockCountCache{}, nil, nil, nil, nil, nil, nil)
+
+	_, err := svc.ListPlanPrices(context.Background(), uuid.New())
+	if got := appErrorCode(t, err); got != apperror.NotFound {
+		t.Fatalf("error code = %q, want %q", got, apperror.NotFound)
 	}
 }

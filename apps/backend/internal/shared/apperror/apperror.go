@@ -96,6 +96,21 @@ const (
 	// PlanInUse guards against deleting a plan with active subscriptions.
 	PlanInUse = "PLAN_IN_USE"
 
+	// PlanPriceLastActive is PATCH /admin/plans/:planId/prices/:priceId's
+	// answer to deactivating the only active price a public plan has for
+	// that currency/interval. Deactivating it would leave the plan listed
+	// in the tenant catalogue (plans.is_public = true) but unbuyable —
+	// POST /billing/checkout would resolve the plan and then fail with
+	// PLAN_NOT_PURCHASABLE for every customer who clicked it.
+	//
+	// The guard is not a prohibition on re-pricing, it is an ordering
+	// constraint on it: insert the new plan_prices row FIRST, then
+	// deactivate the old one, which is exactly the order
+	// GetActivePlanPrice's "no window in which neither is selectable" doc
+	// comment describes. To retire a tier outright, hide it first
+	// (is_public = false) and then deactivate its prices.
+	PlanPriceLastActive = "PLAN_PRICE_LAST_ACTIVE"
+
 	// ImpersonationReadOnly is returned when an impersonated session (see
 	// docs/11-admin-panel.md §5) attempts a non-GET/HEAD/OPTIONS request.
 	ImpersonationReadOnly = "IMPERSONATION_READ_ONLY"
@@ -130,6 +145,48 @@ const (
 	// modes — same reasoning as InvalidCredentials: which one is wrong
 	// must not be observable.
 	InvalidTOTPCode = "INVALID_TOTP_CODE"
+
+	// BillingNotConfigured is every /billing route's answer when
+	// STRIPE_SECRET_KEY is unset (config.Config.BillingEnabled). 501, not
+	// 500: the request was well-formed and the caller was authorized, the
+	// server simply has no payment provider wired up — which is the normal
+	// state of a local dev box and of any self-hosted deployment that never
+	// sells anything. The routes stay mounted and stay permission-guarded so
+	// the route surface, and therefore a guard test, means the same thing
+	// with and without Stripe credentials.
+	BillingNotConfigured = "BILLING_NOT_CONFIGURED"
+
+	// PlanNotPurchasable is POST /billing/checkout's answer for a plan that
+	// exists but has no active plan_prices row for the requested
+	// currency/interval — a catalogue gap (nobody has created the Stripe
+	// Price yet, or every price for it was deactivated), not a bad request.
+	// Deliberately distinct from NotFound: a staff member debugging "why
+	// can't anyone buy Pro" needs to know the plan resolved and the price
+	// didn't. A plan the caller may not buy at all (is_public = false)
+	// resolves to NotFound instead, so a private plan cannot be probed for
+	// existence.
+	PlanNotPurchasable = "PLAN_NOT_PURCHASABLE"
+
+	// BillingProviderError wraps any failure from Stripe itself — network,
+	// 5xx, or a rejected request. 502, because the failure is upstream and
+	// the caller's own request was fine; retrying is the right response, and
+	// a 500 would invite a hunt through this service's logs instead. The
+	// underlying Stripe error is logged (never returned), and it never
+	// carries the API key: see billing.Service's stripeErr helper.
+	BillingProviderError = "BILLING_PROVIDER_ERROR"
+
+	// WebhookSignatureInvalid is POST /billing/webhook's answer to a body
+	// whose Stripe-Signature header does not verify against
+	// STRIPE_WEBHOOK_SECRET, is absent, is malformed, or is outside the
+	// SDK's 5-minute timestamp tolerance. 400, and nothing is written:
+	// verification runs before the first database call.
+	//
+	// One code for all four failure modes, on purpose and for the same
+	// reason InvalidCredentials is one code: this route is reachable by
+	// anyone on the internet, and telling them whether their forged
+	// signature was merely stale is free help. The concrete reason is
+	// logged, never returned.
+	WebhookSignatureInvalid = "WEBHOOK_SIGNATURE_INVALID"
 )
 
 // Map is the full code → (status, message) table from docs/02-api-contract.md.
@@ -173,6 +230,7 @@ var Map = map[string]mapping{
 	TargetIsPlatformStaff:  {409, "Demote this account before banning or deleting it"},
 	SuperadminLimit:        {409, "Too many superadmin accounts"},
 	PlanInUse:              {409, "Plan has active subscriptions"},
+	PlanPriceLastActive:    {409, "Cannot deactivate a public plan's only active price"},
 	ImpersonationReadOnly:  {403, "Impersonated sessions are read-only"},
 	CannotImpersonateStaff: {403, "Cannot impersonate a platform staff account"},
 	OrgConfirmMismatch:     {400, "Confirmation does not match the organization's slug"},
@@ -180,6 +238,12 @@ var Map = map[string]mapping{
 	TwoFactorRequired: {403, "Two-factor authentication required"},
 	TOTPNotEnrolled:   {400, "Two-factor authentication not enrolled"},
 	InvalidTOTPCode:   {401, "Invalid two-factor code"},
+
+	BillingNotConfigured: {501, "Billing is not configured"},
+	PlanNotPurchasable:   {409, "Plan is not available for purchase"},
+	BillingProviderError: {502, "Billing provider is unavailable, try again shortly"},
+
+	WebhookSignatureInvalid: {400, "Invalid webhook signature"},
 }
 
 // Resolve returns the HTTP status and message for a known code, or

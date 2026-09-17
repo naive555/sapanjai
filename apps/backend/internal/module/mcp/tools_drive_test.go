@@ -32,7 +32,7 @@ func validGoogleSheetsConfigWithFolder() map[string]any {
 // ---- connector-type + permission gating (BuildServer) ----
 
 func TestBuildServer_DriveToolsHiddenForNonGoogleSheetsConnector(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testConnector() // Type: "generic"
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
@@ -53,7 +53,7 @@ func TestBuildServer_DriveToolsHiddenForNonGoogleSheetsConnector(t *testing.T) {
 }
 
 func TestBuildServer_DriveToolsVisibleForGoogleSheetsConnectorWithDriveRead(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionDriveRead}}, conn, mcp.RequestInfo{}))
@@ -74,7 +74,7 @@ func TestBuildServer_DriveToolsVisibleForGoogleSheetsConnectorWithDriveRead(t *t
 // principal here has sheets:read (and so sees the 4 sheets tools) but not
 // drive:read, and must see neither drive_list_folder nor drive_get_file.
 func TestBuildServer_SheetsReadDoesNotGrantDriveTools(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionSheetsRead}}, conn, mcp.RequestInfo{}))
@@ -97,7 +97,7 @@ func TestBuildServer_SheetsReadDoesNotGrantDriveTools(t *testing.T) {
 // TestBuildServer_DriveReadDoesNotGrantSheetsTools is the mirror image: a
 // principal with only drive:read must not see any sheets_* tool.
 func TestBuildServer_DriveReadDoesNotGrantSheetsTools(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Actions: []string{mcp.PermissionDriveRead}}, conn, mcp.RequestInfo{}))
@@ -118,7 +118,7 @@ func TestBuildServer_DriveReadDoesNotGrantSheetsTools(t *testing.T) {
 // call — this suite's refresh token is fake and would fail loudly if the
 // code path ever reached the network.
 func TestDriveListFolder_RejectsNonAllowlistedFolderID(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
@@ -145,7 +145,7 @@ func TestDriveListFolder_RejectsNonAllowlistedFolderID(t *testing.T) {
 // TestDriveListFolder_MissingFolderID proves folder_id is required and
 // checked before any config decryption or network call.
 func TestDriveListFolder_MissingFolderID(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 
@@ -166,7 +166,7 @@ func TestDriveListFolder_MissingFolderID(t *testing.T) {
 // comment), so this is the only thing standing between a malformed call and
 // a network attempt this suite must never make.
 func TestDriveGetFile_MissingFileID(t *testing.T) {
-	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil)
+	svc := mcp.NewService(&fakeConfigGetter{cfg: validGoogleSheetsConfigWithFolder()}, nil, nil, nil, nil, nil, nil)
 	conn := testGoogleSheetsConnector()
 	cs := connect(t, svc.BuildServer(&rbac.Principal{Role: "owner"}, conn, mcp.RequestInfo{}))
 

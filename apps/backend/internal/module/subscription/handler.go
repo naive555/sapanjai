@@ -3,7 +3,10 @@ package subscription
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
 
 	"github.com/sapanjai/backend/internal/infra/database/db"
@@ -80,8 +83,18 @@ func (h *Handler) get(c echo.Context) error {
 	return c.JSON(http.StatusOK, toSubscriptionResponse(*sub))
 }
 
-// listPlans returns every available subscription plan.
-// @Summary  List subscription plans
+// listPlans returns the public subscription plan catalogue. Plans with
+// is_public = false (migration 00013, settable from the superadmin
+// console) are omitted: POST /billing/checkout refuses them, so listing
+// one here would render a plan card whose button cannot work.
+//
+// Two queries, not one: ListPublicPlans and ListPublicPlanPrices are
+// separate round trips (billing plan step 9) because they were already
+// separate before prices existed, and joining them in SQL would mean
+// either a LEFT JOIN duplicating each plan row once per price or a
+// second, plan-shaped query anyway to get the ones with zero prices. Prices
+// are grouped onto their plan here in Go, by plan id.
+// @Summary  List public subscription plans
 // @Tags     subscription
 // @Security BearerAuth
 // @Produce  json
@@ -89,14 +102,37 @@ func (h *Handler) get(c echo.Context) error {
 // @Failure  401  {object}  httpx.ErrorResponse  "Unauthorized"
 // @Router   /plans [get]
 func (h *Handler) listPlans(c echo.Context) error {
-	plans, err := h.service.ListPlans(c.Request().Context())
+	ctx := c.Request().Context()
+
+	plans, err := h.service.ListPublicPlans(ctx)
 	if err != nil {
 		return err
 	}
 
+	prices, err := h.service.ListPublicPlanPrices(ctx)
+	if err != nil {
+		return err
+	}
+	pricesByPlan := make(map[uuid.UUID][]PlanPriceResponse, len(plans))
+	for _, p := range prices {
+		pricesByPlan[p.PlanID] = append(pricesByPlan[p.PlanID], PlanPriceResponse{
+			UnitAmount: p.UnitAmount,
+			Currency:   p.Currency,
+			Interval:   p.Interval,
+		})
+	}
+
 	out := make([]PlanResponse, len(plans))
 	for i, p := range plans {
-		out[i] = PlanResponse{ID: p.ID, Name: p.Name, Limits: p.Limits, CreatedAt: p.CreatedAt}
+		// []PlanPriceResponse{} rather than a nil map lookup's zero value
+		// left as-is: both marshal to `[]` either way (a nil slice does
+		// too), so this is belt-and-suspenders for PlanResponse.Prices'
+		// "empty, never null" contract rather than a functional necessity.
+		planPrices := pricesByPlan[p.ID]
+		if planPrices == nil {
+			planPrices = []PlanPriceResponse{}
+		}
+		out[i] = PlanResponse{ID: p.ID, Name: p.Name, Limits: p.Limits, CreatedAt: p.CreatedAt, Prices: planPrices}
 	}
 
 	return c.JSON(http.StatusOK, out)
@@ -120,6 +156,36 @@ func toSubscriptionResponse(row db.GetOrgSubscriptionRow) SubscriptionResponse {
 			Name:      row.PlanName,
 			Limits:    row.PlanPlimits,
 			CreatedAt: row.PlanCreatedAt,
+			// Deliberately empty: see PlanResponse.Prices' doc comment —
+			// the embedded plan here answers "what plan is this org on",
+			// not "what could it buy instead", so paying for
+			// ListPublicPlanPrices' query on every GET /subscription for a
+			// field this response never renders would be wasted work.
+			Prices: []PlanPriceResponse{},
 		},
+		// Status/CurrentPeriodEnd/CancelAtPeriodEnd carry straight through
+		// — none of the three identifies a Stripe object, see
+		// SubscriptionResponse's doc comment. row.StripeSubscriptionID
+		// does NOT get its own field: it is read only to compute the
+		// boolean below, per decision 4's "stripe_subscription_id IS NULL
+		// means not paying" and the rule that this response never carries
+		// a raw Stripe id.
+		Status:                row.Status,
+		CurrentPeriodEnd:      fromPgTimestamp(row.CurrentPeriodEnd),
+		CancelAtPeriodEnd:     row.CancelAtPeriodEnd,
+		HasActiveSubscription: row.StripeSubscriptionID != nil && *row.StripeSubscriptionID != "",
 	}
+}
+
+// fromPgTimestamp converts a nullable pgx timestamp column to *time.Time —
+// nil when the column is SQL NULL, mirroring internal/module/admin's own
+// fromPgTimestamp (admin/service.go). Not shared between the two packages:
+// each is a two-line leaf helper over a type from the pgx driver, and
+// neither package otherwise depends on the other.
+func fromPgTimestamp(t pgtype.Timestamp) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	tm := t.Time
+	return &tm
 }

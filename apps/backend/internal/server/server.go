@@ -24,6 +24,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/admin"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/auth"
+	"github.com/sapanjai/backend/internal/module/billing"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/health"
 	"github.com/sapanjai/backend/internal/module/mcp"
@@ -48,7 +49,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	e.HidePort = true
 
 	// e.IPExtractor governs c.RealIP() everywhere it's read: the
-	// /admin ADMIN_IP_ALLOWLIST check (internal/middleware.AdminIPAllowlist)
+	// /admin ADMIN_IP_ALLOWLIST check (internal/middleware.IPAllowlist)
 	// and the ip field in every admin audit entry
 	// (internal/module/admin/handler.go's adminContext). Echo's default
 	// (no IPExtractor set) trusts X-Forwarded-For unconditionally, which is
@@ -186,8 +187,72 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 		return principal.Narrow(scopes), nil
 	}
 	mcpLimiter := appredis.NewRateLimiter(rdb, cfg.MCPRateLimitPerMin, cfg.RedisKeyPrefix)
-	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, log, cfg.ConnectorMasterKey)
+	// subSvc (constructed above for /subscription and connector's own
+	// max_connectors check) is reused as-is for the gateway's
+	// max_tool_calls_per_month quota check (step 5 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md) — the same
+	// EnforceLimit method, no new subscription plumbing.
+	mcpSvc := mcp.NewService(connectorSvc, mcpLimiter, auditSvc, store, subSvc, log, cfg.ConnectorMasterKey)
 	mcp.NewHandler(mcpSvc, log).Register(e.Group("/mcp"), appmw.RequireMCPKey(store, resolveMCPPrincipal, log))
+
+	// Billing (step 6 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md). Both routes
+	// sit on RequirePermission("billing:write"), never RequireOrg — see
+	// billing.PermissionWrite.
+	//
+	// newStripeClient returns nil when STRIPE_SECRET_KEY is unset, and the
+	// routes are mounted anyway: they stay permission-guarded and answer
+	// BILLING_NOT_CONFIGURED (501). Mounting unconditionally is what keeps a
+	// Stripe-less local dev box and a production deployment presenting the
+	// same route surface, so a guard regression cannot hide behind a route
+	// that simply isn't there. This is also the one secret the API holds
+	// that the RESEND_API_KEY precedent would have kept on the worker:
+	// checkout creation is request-driven, so a restricted key (rk_) bounds
+	// the blast radius instead — see config.Config.StripeSecretKey.
+	//
+	// cfg.AppPublicURL, not this API's address: every URL Stripe redirects a
+	// human to is a page in apps/frontend.
+	//
+	// subSvc is injected as billing's narrow planAssigner seam, following
+	// internal/module/admin's subscriptionResolver: the org_subscriptions
+	// upsert has exactly one implementation and billing does not grow a
+	// second (plan invariant 5). It is also injected a second time as the
+	// limitResolver seam GET /billing/usage reads through (billing plan
+	// step 9) — one *subscription.Service instance satisfying two narrow,
+	// single-method interfaces, rather than billing widening either one
+	// into something a reader has to trace back to figure out which half
+	// is actually used where.
+	billingSvc := billing.NewService(
+		store,
+		billing.NewStripeClient(cfg.StripeSecretKey),
+		billing.NewStripeWebhooks(cfg.StripeWebhookSecret),
+		subSvc,
+		subSvc,
+		auditSvc,
+		cfg.AppPublicURL,
+		log,
+	)
+	billingHandler := billing.NewHandler(billingSvc)
+	billingHandler.Register(e.Group("/billing"), guards)
+
+	// POST /billing/webhook (step 7) is mounted OUTSIDE that group and with
+	// no auth guard of any kind, because Stripe presents neither a JWT nor
+	// an x-organization-id — a webhook behind RequireAuth/RequireOrg/
+	// RequirePermission could never be reached by Stripe at all. Its
+	// authentication is the Stripe-Signature HMAC, verified against the raw
+	// request body inside the handler.
+	//
+	// That raw-body verification is the reason the global middleware stack
+	// above is exactly Recover + RequestID + requestLogger: none of them
+	// reads a request body. Anything added globally that does would consume
+	// the reader and make every signature check fail. Do not add one.
+	//
+	// IPAllowlist is the same middleware /admin uses, here narrowing the
+	// route to Stripe's published egress ranges — defence in depth behind
+	// the signature, never instead of it, and disabled by default because a
+	// stale CIDR list silently drops live billing events (see
+	// config.Config.StripeWebhookIPAllowlist).
+	billingHandler.RegisterWebhook(e, appmw.IPAllowlist(cfg.StripeWebhookIPAllowlist))
 
 	// The admin console (docs/11-admin-panel.md) sits outside the tenant
 	// boundary: RequirePlatformRole, not RequireOrg/RequirePermission.
@@ -204,13 +269,13 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	// every other module's existing test call sites don't need updating for
 	// one admin-only boolean; see Guards.adminRequire2FA's doc comment.
 	guards.SetAdminRequire2FA(cfg.AdminRequire2FA)
-	// AdminIPAllowlist (Phase 6 Task 6.2) is group middleware, so it runs
+	// IPAllowlist (Phase 6 Task 6.2) is group middleware, so it runs
 	// BEFORE guards.RequirePlatformRole/RequirePlatformRoleNo2FA on every
 	// route below — an off-network request never reaches RequireAuth, let
 	// alone the platform-role or 2FA checks. See its own doc comment for
 	// the 404-not-403 reasoning and e.IPExtractor above for what c.RealIP()
 	// actually guarantees in this deployment.
-	admin.NewHandler(adminSvc).Register(e.Group("/admin", appmw.AdminIPAllowlist(cfg.AdminIPAllowlist)), guards)
+	admin.NewHandler(adminSvc).Register(e.Group("/admin", appmw.IPAllowlist(cfg.AdminIPAllowlist)), guards)
 
 	return e, nil
 }

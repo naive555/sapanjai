@@ -986,6 +986,206 @@
                 }
             }
         },
+        "/admin/plans/{planId}/prices": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List a plan's Stripe prices",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPricesListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Record a Stripe Price for a plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Price payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/plans/{planId}/prices/{priceId}": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Activate or deactivate a plan price",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plan ID",
+                        "name": "planId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Price ID",
+                        "name": "priceId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "active flag",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceActiveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Insufficient permissions",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Resource not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "PLAN_PRICE_LAST_ACTIVE",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/system/stats": {
             "get": {
                 "security": [
@@ -1841,6 +2041,244 @@
                 }
             }
         },
+        "/billing/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Start a subscription checkout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Checkout payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.CheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.RedirectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header / Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:write",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND (unknown or non-public plan)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "PLAN_NOT_PURCHASABLE",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "BILLING_PROVIDER_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/billing/portal": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Open the billing portal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.RedirectResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:write",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "BILLING_PROVIDER_ERROR",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/billing/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Get the organization's current tool-call usage",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Active organization ID",
+                        "name": "x-organization-id",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.UsageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing x-organization-id header",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission: billing:read",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/billing/webhook": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Stripe webhook receiver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Stripe webhook signature",
+                        "name": "Stripe-Signature",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_module_billing.WebhookResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "WEBHOOK_SIGNATURE_INVALID / Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Route not found (caller outside STRIPE_WEBHOOK_IP_ALLOWLIST)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "BILLING_NOT_CONFIGURED",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/connectors": {
             "get": {
                 "security": [
@@ -2670,7 +3108,7 @@
                 "tags": [
                     "subscription"
                 ],
-                "summary": "List subscription plans",
+                "summary": "List public subscription plans",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -3417,6 +3855,9 @@
                 "name"
             ],
             "properties": {
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "object",
                     "additionalProperties": {}
@@ -3425,6 +3866,15 @@
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "sortOrder": {
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": -32768
+                },
+                "stripeProductId": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },
@@ -3437,6 +3887,9 @@
                 "id": {
                     "type": "string"
                 },
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "array",
                     "items": {
@@ -3445,6 +3898,94 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "sortOrder": {
+                    "type": "integer"
+                },
+                "stripeProductId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceActiveRequest": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceCreateRequest": {
+            "type": "object",
+            "required": [
+                "currency",
+                "interval",
+                "stripePriceId"
+            ],
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string",
+                    "enum": [
+                        "month",
+                        "year"
+                    ]
+                },
+                "stripePriceId": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "unitAmount": {
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "internal_module_admin.PlanPriceItem": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "planId": {
+                    "type": "string"
+                },
+                "stripePriceId": {
+                    "type": "string"
+                },
+                "unitAmount": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_module_admin.PlanPricesListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_admin.PlanPriceItem"
+                    }
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },
@@ -3455,6 +3996,9 @@
                 "name"
             ],
             "properties": {
+                "isPublic": {
+                    "type": "boolean"
+                },
                 "limits": {
                     "type": "object",
                     "additionalProperties": {}
@@ -3463,6 +4007,15 @@
                     "type": "string",
                     "maxLength": 100,
                     "minLength": 1
+                },
+                "sortOrder": {
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": -32768
+                },
+                "stripeProductId": {
+                    "type": "string",
+                    "maxLength": 255
                 }
             }
         },
@@ -3861,6 +4414,78 @@
                 }
             }
         },
+        "internal_module_billing.CheckoutRequest": {
+            "type": "object",
+            "required": [
+                "planId"
+            ],
+            "properties": {
+                "interval": {
+                    "type": "string",
+                    "enum": [
+                        "month",
+                        "year"
+                    ]
+                },
+                "planId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.RedirectResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.ToolUsageResponse": {
+            "type": "object",
+            "properties": {
+                "callCount": {
+                    "type": "integer"
+                },
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.UsageResponse": {
+            "type": "object",
+            "properties": {
+                "byTool": {
+                    "description": "ByTool is a per-tool breakdown for the current period, read from\nusage_rollups (ListUsageRollupsForOrgPeriod) rather than\nusage_events — see that query's comment for why this field is\nallowed to lag CallCount by up to USAGE_ROLLUP_INTERVAL: it is a\nbreakdown a customer finds informative, not the number enforcement\ndepends on. Empty, never null, before the rollup job has folded the\ncurrent period's events even once (e.g. an org's first day on a new\nmonth).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_billing.ToolUsageResponse"
+                    }
+                },
+                "callCount": {
+                    "description": "CallCount is the LIVE usage_events count for the current period —\nthe exact query and window internal/module/mcp/service.go's quota\ncheck runs before every tools/call dispatch. Deliberately not a\nusage_rollups sum: that rollup for the still-open current month can\nbe up to USAGE_ROLLUP_INTERVAL stale, and a meter that reads under\nthe cap it is metering is a support ticket — a customer staring at\n\"47 / 50\" while their 48th call is refused a moment later.",
+                    "type": "integer"
+                },
+                "limit": {
+                    "description": "Limit is max_tool_calls_per_month, resolved through\nsubscription.Service.GetLimit — plan limits overlaid by\ncustom_limits, the same precedence EnforceLimit checks against.\n\nnil (JSON null) means unlimited, and deliberately collapses BOTH of\nEnforceLimit's existing \"no limit\" cases into the one encoding\nrather than inventing a third state on the wire: a plan whose limits\nomit the key, and an org with no subscription row at all. The\nexisting -1 sentinel (used elsewhere as \"enterprise/unlimited\") is\ntranslated to nil here rather than round-tripped as -1, because a\nfrontend rendering \"-1 calls remaining\" is worse than one null\ncheck — see the subscription page's formatLimit \"∞\" convention,\nwhich this mirrors.",
+                    "type": "integer"
+                },
+                "periodEnd": {
+                    "type": "string"
+                },
+                "periodStart": {
+                    "description": "PeriodStart/PeriodEnd bound the current UTC calendar month as\n[PeriodStart, PeriodEnd) — the exact boundary\ndate_trunc('month', occurred_at) buckets on, and the same window\nCountUsageEventsForOrgSince and internal/job/usagerollup both use.\nExposed so the frontend never has to derive \"this month\" itself in\nthe viewer's local timezone and risk disagreeing with what the\nbackend actually enforces.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_module_billing.WebhookResponse": {
+            "type": "object",
+            "properties": {
+                "received": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_module_connector.ConnectorResponse": {
             "type": "object",
             "properties": {
@@ -4255,6 +4880,20 @@
                 }
             }
         },
+        "internal_module_subscription.PlanPriceResponse": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string"
+                },
+                "interval": {
+                    "type": "string"
+                },
+                "unitAmount": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_module_subscription.PlanResponse": {
             "type": "object",
             "properties": {
@@ -4272,13 +4911,26 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "prices": {
+                    "description": "Prices is this plan's active, purchasable prices (billing plan step\n9) — empty, never null, for a plan with none configured yet (e.g. a\nfreshly published plan whose admin hasn't added a price, or the\n\"free\" plan, which is never meant to be bought through Checkout at\nall). Only populated on GET /plans' listing (Handler.listPlans);\nSubscriptionResponse.Plan leaves it empty rather than paying for a\nsecond query GET /subscription has no use for.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_module_subscription.PlanPriceResponse"
+                    }
                 }
             }
         },
         "internal_module_subscription.SubscriptionResponse": {
             "type": "object",
             "properties": {
+                "cancelAtPeriodEnd": {
+                    "type": "boolean"
+                },
                 "createdAt": {
+                    "type": "string"
+                },
+                "currentPeriodEnd": {
                     "type": "string"
                 },
                 "customLimits": {
@@ -4286,6 +4938,10 @@
                     "items": {
                         "type": "integer"
                     }
+                },
+                "hasActiveSubscription": {
+                    "description": "HasActiveSubscription restates decision 4's canonical \"is this org\npaying\" signal (\"stripe_subscription_id IS NULL\" means not paying)\nas a boolean instead of exposing the id it's derived from. The\nfrontend uses it to decide whether \"Manage billing\" has anything to\nopen the Portal onto — an org that has never subscribed has no\ninvoices, no payment method, and nothing to manage.",
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"
@@ -4297,6 +4953,10 @@
                     "$ref": "#/definitions/internal_module_subscription.PlanResponse"
                 },
                 "planId": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "---- Stripe state (billing plan step 9) ----\n\nStatus mirrors Stripe's own subscription status string verbatim\n(active/past_due/canceled/...) when a Subscription exists, else nil.\nA lifecycle label, not an identifier — unlike stripe_subscription_id\nand stripe_customer_id, which this response never carries at all\n(GetOrgSubscription's comment explains why: they're Stripe linkage\nwith no business leaving the backend, the same reasoning\nPlanPriceResponse's doc comment gives for omitting stripe_price_id).",
                     "type": "string"
                 },
                 "updatedAt": {

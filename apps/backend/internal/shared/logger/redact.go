@@ -35,6 +35,21 @@ var sensitiveKeys = map[string]struct{}{
 	"encryptedconfig": {},
 	"masterkey":       {},
 	"datakey":         {},
+	// Stripe credentials (internal/module/billing). "apikey" and "secret"
+	// above already catch the common spellings, but not "stripe_secret_key"
+	// or "stripe_key" — normalizeKey strips separators, it does not match
+	// substrings, so each full key name has to be listed.
+	"stripesecretkey": {},
+	"stripeapikey":    {},
+	"stripekey":       {},
+	"webhooksecret":   {},
+	// The Stripe-Signature header on POST /billing/webhook. Not a
+	// credential — it is an HMAC of the request body — but it is one half
+	// of a replayable pair with that body, and logging it is explicitly
+	// forbidden by the webhook's own rules. No call site logs it today;
+	// this is the belt to that braces, in the one place CLAUDE.md says new
+	// sensitive keys belong.
+	"stripesignature": {},
 }
 
 // IsSensitive reports whether a log attribute or query parameter with this key

@@ -276,12 +276,21 @@ definitions:
     type: object
   internal_module_admin.PlanCreateRequest:
     properties:
+      isPublic:
+        type: boolean
       limits:
         additionalProperties: {}
         type: object
       name:
         maxLength: 100
         minLength: 1
+        type: string
+      sortOrder:
+        maximum: 32767
+        minimum: -32768
+        type: integer
+      stripeProductId:
+        maxLength: 255
         type: string
     required:
     - limits
@@ -293,21 +302,91 @@ definitions:
         type: string
       id:
         type: string
+      isPublic:
+        type: boolean
       limits:
         items:
           type: integer
         type: array
       name:
         type: string
+      sortOrder:
+        type: integer
+      stripeProductId:
+        type: string
+    type: object
+  internal_module_admin.PlanPriceActiveRequest:
+    properties:
+      active:
+        type: boolean
+    type: object
+  internal_module_admin.PlanPriceCreateRequest:
+    properties:
+      active:
+        type: boolean
+      currency:
+        type: string
+      interval:
+        enum:
+        - month
+        - year
+        type: string
+      stripePriceId:
+        maxLength: 255
+        type: string
+      unitAmount:
+        minimum: 0
+        type: integer
+    required:
+    - currency
+    - interval
+    - stripePriceId
+    type: object
+  internal_module_admin.PlanPriceItem:
+    properties:
+      active:
+        type: boolean
+      createdAt:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      interval:
+        type: string
+      planId:
+        type: string
+      stripePriceId:
+        type: string
+      unitAmount:
+        type: integer
+    type: object
+  internal_module_admin.PlanPricesListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        type: array
+      total:
+        type: integer
     type: object
   internal_module_admin.PlanUpdateRequest:
     properties:
+      isPublic:
+        type: boolean
       limits:
         additionalProperties: {}
         type: object
       name:
         maxLength: 100
         minLength: 1
+        type: string
+      sortOrder:
+        maximum: 32767
+        minimum: -32768
+        type: integer
+      stripeProductId:
+        maxLength: 255
         type: string
     required:
     - limits
@@ -570,6 +649,89 @@ definitions:
         type: string
     required:
     - token
+    type: object
+  internal_module_billing.CheckoutRequest:
+    properties:
+      interval:
+        enum:
+        - month
+        - year
+        type: string
+      planId:
+        type: string
+    required:
+    - planId
+    type: object
+  internal_module_billing.RedirectResponse:
+    properties:
+      url:
+        type: string
+    type: object
+  internal_module_billing.ToolUsageResponse:
+    properties:
+      callCount:
+        type: integer
+      tool:
+        type: string
+    type: object
+  internal_module_billing.UsageResponse:
+    properties:
+      byTool:
+        description: |-
+          ByTool is a per-tool breakdown for the current period, read from
+          usage_rollups (ListUsageRollupsForOrgPeriod) rather than
+          usage_events — see that query's comment for why this field is
+          allowed to lag CallCount by up to USAGE_ROLLUP_INTERVAL: it is a
+          breakdown a customer finds informative, not the number enforcement
+          depends on. Empty, never null, before the rollup job has folded the
+          current period's events even once (e.g. an org's first day on a new
+          month).
+        items:
+          $ref: '#/definitions/internal_module_billing.ToolUsageResponse'
+        type: array
+      callCount:
+        description: |-
+          CallCount is the LIVE usage_events count for the current period —
+          the exact query and window internal/module/mcp/service.go's quota
+          check runs before every tools/call dispatch. Deliberately not a
+          usage_rollups sum: that rollup for the still-open current month can
+          be up to USAGE_ROLLUP_INTERVAL stale, and a meter that reads under
+          the cap it is metering is a support ticket — a customer staring at
+          "47 / 50" while their 48th call is refused a moment later.
+        type: integer
+      limit:
+        description: |-
+          Limit is max_tool_calls_per_month, resolved through
+          subscription.Service.GetLimit — plan limits overlaid by
+          custom_limits, the same precedence EnforceLimit checks against.
+
+          nil (JSON null) means unlimited, and deliberately collapses BOTH of
+          EnforceLimit's existing "no limit" cases into the one encoding
+          rather than inventing a third state on the wire: a plan whose limits
+          omit the key, and an org with no subscription row at all. The
+          existing -1 sentinel (used elsewhere as "enterprise/unlimited") is
+          translated to nil here rather than round-tripped as -1, because a
+          frontend rendering "-1 calls remaining" is worse than one null
+          check — see the subscription page's formatLimit "∞" convention,
+          which this mirrors.
+        type: integer
+      periodEnd:
+        type: string
+      periodStart:
+        description: |-
+          PeriodStart/PeriodEnd bound the current UTC calendar month as
+          [PeriodStart, PeriodEnd) — the exact boundary
+          date_trunc('month', occurred_at) buckets on, and the same window
+          CountUsageEventsForOrgSince and internal/job/usagerollup both use.
+          Exposed so the frontend never has to derive "this month" itself in
+          the viewer's local timezone and risk disagreeing with what the
+          backend actually enforces.
+        type: string
+    type: object
+  internal_module_billing.WebhookResponse:
+    properties:
+      received:
+        type: boolean
     type: object
   internal_module_connector.ConnectorResponse:
     properties:
@@ -834,6 +996,15 @@ definitions:
           type: string
         type: array
     type: object
+  internal_module_subscription.PlanPriceResponse:
+    properties:
+      currency:
+        type: string
+      interval:
+        type: string
+      unitAmount:
+        type: integer
+    type: object
   internal_module_subscription.PlanResponse:
     properties:
       createdAt:
@@ -846,15 +1017,40 @@ definitions:
         type: array
       name:
         type: string
+      prices:
+        description: |-
+          Prices is this plan's active, purchasable prices (billing plan step
+          9) — empty, never null, for a plan with none configured yet (e.g. a
+          freshly published plan whose admin hasn't added a price, or the
+          "free" plan, which is never meant to be bought through Checkout at
+          all). Only populated on GET /plans' listing (Handler.listPlans);
+          SubscriptionResponse.Plan leaves it empty rather than paying for a
+          second query GET /subscription has no use for.
+        items:
+          $ref: '#/definitions/internal_module_subscription.PlanPriceResponse'
+        type: array
     type: object
   internal_module_subscription.SubscriptionResponse:
     properties:
+      cancelAtPeriodEnd:
+        type: boolean
       createdAt:
+        type: string
+      currentPeriodEnd:
         type: string
       customLimits:
         items:
           type: integer
         type: array
+      hasActiveSubscription:
+        description: |-
+          HasActiveSubscription restates decision 4's canonical "is this org
+          paying" signal ("stripe_subscription_id IS NULL" means not paying)
+          as a boolean instead of exposing the id it's derived from. The
+          frontend uses it to decide whether "Manage billing" has anything to
+          open the Portal onto — an org that has never subscribed has no
+          invoices, no payment method, and nothing to manage.
+        type: boolean
       id:
         type: string
       organizationId:
@@ -862,6 +1058,18 @@ definitions:
       plan:
         $ref: '#/definitions/internal_module_subscription.PlanResponse'
       planId:
+        type: string
+      status:
+        description: |-
+          ---- Stripe state (billing plan step 9) ----
+
+          Status mirrors Stripe's own subscription status string verbatim
+          (active/past_due/canceled/...) when a Subscription exists, else nil.
+          A lifecycle label, not an identifier — unlike stripe_subscription_id
+          and stripe_customer_id, which this response never carries at all
+          (GetOrgSubscription's comment explains why: they're Stripe linkage
+          with no business leaving the backend, the same reasoning
+          PlanPriceResponse's doc comment gives for omitting stripe_price_id).
         type: string
       updatedAt:
         type: string
@@ -1492,6 +1700,134 @@ paths:
       summary: Update a subscription plan
       tags:
       - admin
+  /admin/plans/{planId}/prices:
+    get:
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPricesListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List a plan's Stripe prices
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      - description: Price payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanPriceCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Record a Stripe Price for a plan
+      tags:
+      - admin
+  /admin/plans/{planId}/prices/{priceId}:
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Plan ID
+        in: path
+        name: planId
+        required: true
+        type: string
+      - description: Price ID
+        in: path
+        name: priceId
+        required: true
+        type: string
+      - description: active flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_admin.PlanPriceActiveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_admin.PlanPriceItem'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Resource not found
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: PLAN_PRICE_LAST_ACTIVE
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Activate or deactivate a plan price
+      tags:
+      - admin
   /admin/system/stats:
     get:
       produces:
@@ -2039,6 +2375,158 @@ paths:
       summary: Verify an email address
       tags:
       - auth
+  /billing/checkout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      - description: Checkout payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_module_billing.CheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.RedirectResponse'
+        "400":
+          description: Missing x-organization-id header / Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: 'Missing permission: billing:write'
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: NOT_FOUND (unknown or non-public plan)
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "409":
+          description: PLAN_NOT_PURCHASABLE
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "502":
+          description: BILLING_PROVIDER_ERROR
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start a subscription checkout
+      tags:
+      - billing
+  /billing/portal:
+    post:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.RedirectResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: 'Missing permission: billing:write'
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "502":
+          description: BILLING_PROVIDER_ERROR
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Open the billing portal
+      tags:
+      - billing
+  /billing/usage:
+    get:
+      parameters:
+      - description: Active organization ID
+        in: header
+        name: x-organization-id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.UsageResponse'
+        "400":
+          description: Missing x-organization-id header
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "403":
+          description: 'Missing permission: billing:read'
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the organization's current tool-call usage
+      tags:
+      - billing
+  /billing/webhook:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Stripe webhook signature
+        in: header
+        name: Stripe-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_module_billing.WebhookResponse'
+        "400":
+          description: WEBHOOK_SIGNATURE_INVALID / Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "404":
+          description: Route not found (caller outside STRIPE_WEBHOOK_IP_ALLOWLIST)
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+        "501":
+          description: BILLING_NOT_CONFIGURED
+          schema:
+            $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
+      summary: Stripe webhook receiver
+      tags:
+      - billing
   /connectors:
     get:
       parameters:
@@ -2575,7 +3063,7 @@ paths:
             $ref: '#/definitions/github_com_sapanjai_backend_internal_shared_httpx.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: List subscription plans
+      summary: List public subscription plans
       tags:
       - subscription
   /rbac/assign:

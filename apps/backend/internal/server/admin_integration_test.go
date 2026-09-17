@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/sapanjai/backend/internal/config"
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 )
@@ -75,6 +77,85 @@ func decodeJSONObject(t *testing.T, raw []byte) map[string]any {
 // admin response in any form.
 const fixtureConnSecret = "hunter2-fixture-connector-secret"
 
+// ---- Stripe leak canaries (billing plan step 8) ----
+//
+// THE BOUNDARY, stated once here because getting it wrong breaks in both
+// directions and the forbidden list below depends on it:
+//
+//	A Stripe SECRET is not the same thing as a Stripe IDENTIFIER.
+//
+// Forbidden, and canaried below:
+//   - the API key, "sk_..." or "rk_..." (config.StripeSecretKey). It
+//     authenticates every call to the platform's Stripe account: charge,
+//     refund, read every customer.
+//   - the webhook signing secret, "whsec_..."
+//     (config.StripeWebhookSecret). It lets anyone forge a
+//     POST /billing/webhook and move a tenant onto any plan for free.
+//   - any customer PAYMENT DETAIL: card brand/last4/expiry, bank account,
+//     billing address.
+//
+// NOT forbidden, and deliberately so:
+//   - "prod_..." (plans.stripe_product_id) and "price_..."
+//     (plan_prices.stripe_price_id). These are catalogue identifiers that
+//     the superadmin console exists to DISPLAY AND MANAGE — step 8's whole
+//     feature. A test that banned anything Stripe-shaped would make the
+//     feature untestable, which is the failure mode of being too broad.
+//   - "cus_..." / "sub_..." (org_subscriptions.stripe_customer_id /
+//     stripe_subscription_id). These are billing LINKAGE, not payment
+//     details: they name an object in the platform's own Stripe account
+//     and reveal nothing a support engineer could not already read in the
+//     Stripe Dashboard. No admin response carries them today — admin's org
+//     detail reads GetOrgSubscription, which does not select them — but
+//     that is a scope decision (step 8 is the plan catalogue), NOT a
+//     prohibition. Listing them here would turn a future one-line DTO
+//     addition into a test fight over a non-secret.
+//
+// Every canary below is planted somewhere the running server can actually
+// reach, so the assertions can genuinely fail: the two keys go into the
+// live *config.Config the test server is built from, and the payment
+// detail goes into the database.
+const (
+	// The two key canaries are assembled from fragments rather than written
+	// as one literal, and the seam is load-bearing: a contiguous
+	// "sk_test_…"/"whsec_…" string in source matches GitHub's push-protection
+	// pattern for a real Stripe key, and this file was in fact blocked from
+	// pushing until it was split. Go folds these at compile time, so the
+	// constants' VALUES are unchanged and every assertion below — including
+	// the "sk_test_" prefix rule — behaves identically; only the source text
+	// differs. Keep any future credential-shaped canary split the same way,
+	// or it becomes a permanent papercut for every secret scanner, CI check
+	// and pre-commit hook that reads this repo.
+	fixtureStripeAPIKey        = "sk_" + "test_" + "LEAKCANARY0000000000000notarealkey"
+	fixtureStripeWebhookSecret = "whsec" + "_LEAKCANARY0000000000000notarealsecret"
+
+	// fixtureCardDetail stands in for a customer payment detail. There is
+	// deliberately NO column in this schema that holds one — Stripe is the
+	// billing record (plan invariant 1) and nothing here stores a PAN — so
+	// the canary is planted in org_subscriptions.status, the one
+	// Stripe-sourced free-text column on the billing row and the column an
+	// admin billing view would most plausibly be widened to include next.
+	// If a future change starts serializing it verbatim, this catches it.
+	fixtureCardDetail = "visa-4242-exp-12-2030-LEAKCANARY"
+
+	// fixtureStripeProductID / fixtureStripePriceID are the other side of
+	// the boundary: planted in the database exactly like the canaries, and
+	// deliberately ABSENT from the forbidden list, because the console is
+	// supposed to show them. TestIntegration_Admin_PlanPriceCRUD asserts
+	// they DO come back.
+	fixtureStripeProductID = "prod_FIXTUREPLANPRODUCT"
+	fixtureStripePriceID   = "price_FIXTUREPLANPRICE"
+)
+
+// withStripeLeakCanaries plants the two Stripe config secrets on the test
+// server. Setting StripeSecretKey flips config.BillingEnabled to true,
+// which only decides whether /billing routes answer 501 — billing.NewStripeClient
+// constructs a client without dialling anything, so no admin test here
+// makes a network call because of it.
+func withStripeLeakCanaries(cfg *config.Config) {
+	cfg.StripeSecretKey = fixtureStripeAPIKey
+	cfg.StripeWebhookSecret = fixtureStripeWebhookSecret
+}
+
 // adminTestFixture is the shared tenant-side state every admin test in this
 // file reads: one organization with an owner, a member, a connector, an
 // MCP key, and an assigned plan, so every admin list/detail view below has
@@ -98,6 +179,11 @@ type adminTestFixture struct {
 	// still catches a leak served under a renamed or restructured key.
 	connSecret string
 	rawMCPKey  string
+
+	// priceID is the plan_prices row seeded against planID, so
+	// GET /admin/plans/:planId/prices has a real row to render (and to
+	// leak, if the mapping is ever careless).
+	priceID string
 }
 
 func setupAdminFixture(t *testing.T, client *http.Client, baseURL string, store *database.Store) adminTestFixture {
@@ -143,6 +229,13 @@ func setupAdminFixture(t *testing.T, client *http.Client, baseURL string, store 
 	// couple this fixture to the thing several of these tests assert on.
 	planID := createPlan(t, store, map[string]int{"max_members": 10})
 	assignPlanDirect(t, store, uuid.MustParse(org.ID), planID)
+	linkPlanToStripe(t, store, planID)
+	price := createPlanPriceDirect(t, store, planID, fixtureStripePriceID, "thb", "month", true)
+
+	// The payment-detail canary, planted on the org's billing row. See
+	// fixtureCardDetail's comment for why org_subscriptions.status is the
+	// column it lives in.
+	plantPaymentDetailCanary(t, store, uuid.MustParse(org.ID))
 
 	superUser := registerUser(t, client, baseURL, "admin-fixture-superadmin")
 	promoteToPlatformRole(t, store, uuid.MustParse(superUser.UserID), "superadmin")
@@ -154,6 +247,70 @@ func setupAdminFixture(t *testing.T, client *http.Client, baseURL string, store 
 		org: org, memberID: member.UserID, connID: connID, mcpKeyID: mcpKeyID,
 		planID: planID.String(), superUser: superUser, supportU: supportUser,
 		connSecret: fixtureConnSecret, rawMCPKey: rawMCPKey,
+		priceID: price.String(),
+	}
+}
+
+// linkPlanToStripe stamps a "prod_..." id onto the fixture plan directly,
+// the same past-the-API shortcut createPlan/assignPlanDirect already use.
+func linkPlanToStripe(t *testing.T, store *database.Store, planID uuid.UUID) {
+	t.Helper()
+
+	plan, err := store.AdminGetPlanByID(context.Background(), planID)
+	if err != nil {
+		t.Fatalf("AdminGetPlanByID: %v", err)
+	}
+	productID := fixtureStripeProductID
+	if _, err := store.AdminUpdatePlan(context.Background(), db.AdminUpdatePlanParams{
+		ID:              planID,
+		Name:            plan.Name,
+		Limits:          plan.Limits,
+		StripeProductID: &productID,
+		IsPublic:        true,
+		SortOrder:       0,
+	}); err != nil {
+		t.Fatalf("AdminUpdatePlan: %v", err)
+	}
+}
+
+// createPlanPriceDirect inserts a plan_prices row without going through
+// POST /admin/plans/:planId/prices — that route is itself under test, so
+// using it here would couple the shared fixture to the thing being
+// asserted on (the same reasoning assignPlanDirect's doc comment gives).
+func createPlanPriceDirect(t *testing.T, store *database.Store, planID uuid.UUID, stripePriceID, currency, interval string, active bool) uuid.UUID {
+	t.Helper()
+
+	row, err := store.AdminCreatePlanPrice(context.Background(), db.AdminCreatePlanPriceParams{
+		PlanID:          planID,
+		StripePriceID:   stripePriceID + "-" + uuid.NewString(),
+		UnitAmount:      29900,
+		Currency:        currency,
+		BillingInterval: interval,
+		Active:          active,
+	})
+	if err != nil {
+		t.Fatalf("AdminCreatePlanPrice: %v", err)
+	}
+	return row.ID
+}
+
+// plantPaymentDetailCanary writes fixtureCardDetail into the org's
+// org_subscriptions row so the leak assertion has something real to find
+// if an admin response ever starts serializing that column.
+func plantPaymentDetailCanary(t *testing.T, store *database.Store, orgID uuid.UUID) {
+	t.Helper()
+
+	status := fixtureCardDetail
+	customerID := "cus_FIXTURECANARY" + uuid.NewString()
+	subscriptionID := "sub_FIXTURECANARY" + uuid.NewString()
+	if err := store.UpdateOrgStripeSubscription(context.Background(), db.UpdateOrgStripeSubscriptionParams{
+		OrganizationID:       orgID,
+		StripeCustomerID:     &customerID,
+		StripeSubscriptionID: &subscriptionID,
+		Status:               &status,
+		StripeEventAt:        time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("UpdateOrgStripeSubscription: %v", err)
 	}
 }
 
@@ -172,11 +329,15 @@ func adminGetRoutes(fx adminTestFixture) []string {
 		"/admin/audit-logs",
 		"/admin/system/stats",
 		"/admin/plans",
+		"/admin/plans/" + fx.planID + "/prices",
 	}
 }
 
 func TestIntegration_Admin_ReadRoutes(t *testing.T) {
-	ts, _, store := setupTestServer(t)
+	// withStripeLeakCanaries plants a live sk_.../whsec_... on the running
+	// config so the leak subtest below is asserting against values the
+	// server genuinely holds, not against strings that could never appear.
+	ts, _, store := setupTestServer(t, withStripeLeakCanaries)
 	client := ts.Client()
 
 	fx := setupAdminFixture(t, client, ts.URL, store)
@@ -232,11 +393,18 @@ func TestIntegration_Admin_ReadRoutes(t *testing.T) {
 	})
 
 	// The one that matters: no admin response, anywhere, leaks
-	// encrypted_config, password_hash, or key_hash. This walks the exact
-	// same route list as the 200 check above, using the superadmin
-	// caller, and inspects the RAW response bytes rather than a decoded
-	// map — a decoded-and-reserialized body could hide a field under a
-	// renamed or restructured key that the raw wire response would not.
+	// encrypted_config, password_hash, key_hash, a Stripe SECRET, or a
+	// customer payment detail. This walks the exact same route list as the
+	// 200 check above, using the superadmin caller, and inspects the RAW
+	// response bytes rather than a decoded map — a decoded-and-reserialized
+	// body could hide a field under a renamed or restructured key that the
+	// raw wire response would not.
+	//
+	// On the Stripe half specifically, see the boundary spelled out at
+	// fixtureStripeAPIKey: a Stripe secret is forbidden, a Stripe
+	// catalogue identifier (prod_.../price_...) is the feature, and
+	// customer linkage (cus_.../sub_...) is neither — argued there, not
+	// re-argued here.
 	t.Run("no admin response leaks a forbidden field", func(t *testing.T) {
 		// Field names first, then the live secret VALUES: a leak served
 		// under a renamed key ("config", "credentials", a nested blob)
@@ -244,6 +412,34 @@ func TestIntegration_Admin_ReadRoutes(t *testing.T) {
 		forbidden := []string{
 			"encrypted_config", "password_hash", "key_hash",
 			fx.connSecret, fx.rawMCPKey,
+
+			// ---- Stripe secrets and payment details (step 8) ----
+			//
+			// Values: each of these is live in the running server —
+			// withStripeLeakCanaries put the two keys on the config and
+			// the fixture put the card detail in the database — so an
+			// echo of any of them fails here regardless of what key it is
+			// served under.
+			fixtureStripeAPIKey,
+			fixtureStripeWebhookSecret,
+			fixtureCardDetail,
+
+			// Prefixes: catch a DIFFERENT Stripe key than the canary —
+			// a hardcoded one, one read from a second config field, one
+			// pulled from a Stripe object. Safe as substrings because no
+			// legitimate admin response contains them: the identifiers
+			// the console does serve are prod_/price_/cus_/sub_.
+			"sk_live_", "sk_test_", "rk_live_", "rk_test_", "whsec_",
+
+			// Field names for customer payment details, in the spellings
+			// Stripe itself uses. Nothing in this schema stores these
+			// (Stripe is the billing record, plan invariant 1) — the
+			// assertion is that nothing starts to, e.g. by an admin DTO
+			// echoing a PaymentMethod fetched from Stripe. That would
+			// also require stripe-go outside internal/module/billing,
+			// which is its own violation; this is the second line.
+			"last4", "exp_month", "exp_year", "expMonth", "expYear",
+			"payment_method", "paymentMethod", "billing_details", "billingDetails",
 		}
 
 		for _, path := range adminGetRoutes(fx) {

@@ -24,7 +24,8 @@ type subStore interface {
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error)
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionRow, error)
 	UpsertOrgSubscription(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
-	ListPlans(ctx context.Context) ([]db.Plan, error)
+	ListPublicPlans(ctx context.Context) ([]db.Plan, error)
+	ListActivePlanPricesForPublicPlans(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error)
 }
 
 // Service resolves and enforces subscription plan limits.
@@ -98,26 +99,75 @@ func (s *Service) GetSubscription(ctx context.Context, organizationID uuid.UUID)
 	return &row, nil
 }
 
+// PlanWriter is the one write AssignPlan performs, named as an interface so
+// a caller that is already inside a transaction can hand its own tx-bound
+// db.Querier in (AssignPlanTx) instead of having this service reach for its
+// own pool connection.
+//
+// It exists for internal/module/billing's Stripe webhook (step 7 of
+// .claude/plans/2026-09-13-billing-and-usage-metering.md), which must claim
+// the event id in stripe_events and move the org's plan in ONE transaction:
+// claiming in a separate transaction and then failing would leave the event
+// permanently marked handled, turning Stripe's retry into a silent no-op.
+// Handing the seam a Querier is the alternative to the thing plan invariant
+// 5 forbids -- billing growing an org_subscriptions upsert of its own.
+//
+// *database.Store, *db.Queries, and the tx-bound Querier from Store.WithTx
+// all satisfy it.
+type PlanWriter interface {
+	UpsertOrgSubscription(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
+}
+
 // AssignPlan upserts organizationID's subscription to planID, creating the
 // row if none exists or switching the plan if one does. Mirrors
 // SubscriptionService.assignPlan. A well-formed but nonexistent planID
 // surfaces as a foreign-key violation (500), matching the source, which has
 // no PLAN_NOT_FOUND check either.
 func (s *Service) AssignPlan(ctx context.Context, organizationID, planID uuid.UUID) error {
-	return s.store.UpsertOrgSubscription(ctx, db.UpsertOrgSubscriptionParams{
+	return s.AssignPlanTx(ctx, s.store, organizationID, planID)
+}
+
+// AssignPlanTx is AssignPlan against a caller-supplied writer, so the upsert
+// can join a transaction the caller already owns. AssignPlan is exactly this
+// method bound to this service's own store, so there is one implementation
+// of the upsert and one place its semantics live -- in particular the fact
+// that UpsertOrgSubscription's ON CONFLICT sets plan_id and updated_at and
+// deliberately does NOT touch custom_limits, which is how an admin override
+// survives a plan change (plan invariant 2).
+func (s *Service) AssignPlanTx(ctx context.Context, w PlanWriter, organizationID, planID uuid.UUID) error {
+	return w.UpsertOrgSubscription(ctx, db.UpsertOrgSubscriptionParams{
 		OrganizationID: organizationID,
 		PlanID:         planID,
 	})
 }
 
-// ListPlans returns every available subscription plan, oldest first (seed
-// insertion order). Not present in the source app — added in Phase 6 for the
-// frontend's plan picker, which is gone now that a tenant cannot change its
-// own plan (see Handler.Register). It stays as the read-only catalogue the
-// subscription page renders; see docs/03 "Deviations resolved during Phase
-// 6".
-func (s *Service) ListPlans(ctx context.Context) ([]db.Plan, error) {
-	return s.store.ListPlans(ctx)
+// ListPublicPlans returns the tenant-facing plan catalogue: is_public
+// plans only, ordered by sort_order then created_at. Not present in the
+// source app — added in Phase 6 for the frontend's plan picker, which is
+// gone now that a tenant cannot change its own plan (see Handler.Register).
+// It stays as the read-only catalogue the subscription page renders; see
+// docs/03 "Deviations resolved during Phase 6".
+//
+// Renamed from ListPlans and narrowed in billing plan step 8, because the
+// superadmin console can now SET plans.is_public (migration 00013) and the
+// two ends had drifted apart: POST /billing/checkout already refuses a
+// non-public plan with NOT_FOUND, so an unfiltered catalogue advertised
+// tiers nobody could buy. The console's own unfiltered view is
+// admin.Service.ListPlans, which reads AdminListPlans instead — the name
+// change is what makes a caller notice which of the two it wants.
+func (s *Service) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
+	return s.store.ListPublicPlans(ctx)
+}
+
+// ListPublicPlanPrices returns the active price rows for every public
+// plan, for Handler.listPlans to group by plan id into each PlanResponse's
+// Prices field (billing plan step 9). A separate method rather than
+// widening ListPublicPlans' own return shape: GET /subscription embeds a
+// PlanResponse too (toSubscriptionResponse) and has no use for its prices,
+// so paying for this query only where it is actually rendered — the plan
+// listing — keeps GET /subscription at the one query it already ran.
+func (s *Service) ListPublicPlanPrices(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+	return s.store.ListActivePlanPricesForPublicPlans(ctx)
 }
 
 // EnforceLimit returns apperror.LimitExceeded when currentCount has reached

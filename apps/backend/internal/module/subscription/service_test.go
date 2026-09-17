@@ -18,6 +18,7 @@ type mockSubStore struct {
 	getOrgSubscription         func(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionRow, error)
 	upsertOrgSubscription      func(ctx context.Context, arg db.UpsertOrgSubscriptionParams) error
 	listPlans                  func(ctx context.Context) ([]db.Plan, error)
+	listPlanPrices             func(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error)
 }
 
 func (m *mockSubStore) GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (db.GetOrgSubscriptionWithPlanRow, error) {
@@ -32,8 +33,12 @@ func (m *mockSubStore) UpsertOrgSubscription(ctx context.Context, arg db.UpsertO
 	return m.upsertOrgSubscription(ctx, arg)
 }
 
-func (m *mockSubStore) ListPlans(ctx context.Context) ([]db.Plan, error) {
+func (m *mockSubStore) ListPublicPlans(ctx context.Context) ([]db.Plan, error) {
 	return m.listPlans(ctx)
+}
+
+func (m *mockSubStore) ListActivePlanPricesForPublicPlans(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+	return m.listPlanPrices(ctx)
 }
 
 func mustMarshal(t *testing.T, v any) json.RawMessage {
@@ -237,7 +242,7 @@ func TestAssignPlan_ForwardsToUpsert(t *testing.T) {
 	}
 }
 
-func TestListPlans_ReturnsRows(t *testing.T) {
+func TestListPublicPlans_ReturnsRows(t *testing.T) {
 	want := []db.Plan{{Name: "free"}, {Name: "pro"}, {Name: "enterprise"}}
 	svc := NewService(&mockSubStore{
 		listPlans: func(ctx context.Context) ([]db.Plan, error) {
@@ -245,16 +250,16 @@ func TestListPlans_ReturnsRows(t *testing.T) {
 		},
 	})
 
-	got, err := svc.ListPlans(context.Background())
+	got, err := svc.ListPublicPlans(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
 	if len(got) != len(want) {
-		t.Fatalf("ListPlans() returned %d rows, want %d", len(got), len(want))
+		t.Fatalf("ListPublicPlans() returned %d rows, want %d", len(got), len(want))
 	}
 }
 
-func TestListPlans_DatabaseErrorPropagates(t *testing.T) {
+func TestListPublicPlans_DatabaseErrorPropagates(t *testing.T) {
 	dbErr := errors.New("connection reset")
 	svc := NewService(&mockSubStore{
 		listPlans: func(ctx context.Context) ([]db.Plan, error) {
@@ -262,7 +267,48 @@ func TestListPlans_DatabaseErrorPropagates(t *testing.T) {
 		},
 	})
 
-	_, err := svc.ListPlans(context.Background())
+	_, err := svc.ListPublicPlans(context.Background())
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("expected the raw db error to propagate, got %v", err)
+	}
+}
+
+// ListPublicPlanPrices (billing plan step 9) is a thin forward onto the
+// store, same shape as ListPublicPlans above — these two tests exist only
+// to pin that it stays that thin (a raw store error propagates unwrapped)
+// rather than to re-test ListActivePlanPricesForPublicPlans' own SQL,
+// which is covered against real Postgres in
+// internal/server/billing_integration_test.go.
+
+func TestListPublicPlanPrices_ReturnsRows(t *testing.T) {
+	planID := uuid.New()
+	want := []db.ListActivePlanPricesForPublicPlansRow{
+		{PlanID: planID, UnitAmount: 99000, Currency: "thb", Interval: "month"},
+	}
+	svc := NewService(&mockSubStore{
+		listPlanPrices: func(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+			return want, nil
+		},
+	})
+
+	got, err := svc.ListPublicPlanPrices(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if len(got) != 1 || got[0].PlanID != planID {
+		t.Fatalf("ListPublicPlanPrices() = %v, want %v", got, want)
+	}
+}
+
+func TestListPublicPlanPrices_DatabaseErrorPropagates(t *testing.T) {
+	dbErr := errors.New("connection reset")
+	svc := NewService(&mockSubStore{
+		listPlanPrices: func(ctx context.Context) ([]db.ListActivePlanPricesForPublicPlansRow, error) {
+			return nil, dbErr
+		},
+	})
+
+	_, err := svc.ListPublicPlanPrices(context.Background())
 	if !errors.Is(err, dbErr) {
 		t.Fatalf("expected the raw db error to propagate, got %v", err)
 	}

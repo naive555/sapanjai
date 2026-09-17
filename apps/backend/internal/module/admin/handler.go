@@ -47,6 +47,7 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.GET("/audit-logs", h.queryAuditLogs, read)
 	g.GET("/system/stats", h.systemStats, read)
 	g.GET("/plans", h.listPlans, read)
+	g.GET("/plans/:planId/prices", h.listPlanPrices, read)
 
 	g.POST("/organizations/:orgId/plan", h.assignPlan, write)
 	g.PUT("/organizations/:orgId/limits", h.setOrgLimits, write)
@@ -56,6 +57,14 @@ func (h *Handler) Register(g *echo.Group, guards *appmw.Guards) {
 	g.POST("/plans", h.createPlan, write)
 	g.PUT("/plans/:planId", h.updatePlan, write)
 	g.DELETE("/plans/:planId", h.deletePlan, write)
+	// plan_prices (billing plan step 8): create and an active-flag PATCH,
+	// and deliberately no PUT-the-amount and no DELETE — a Stripe Price is
+	// immutable and a deleted row breaks an existing subscriber's
+	// entitlement resolution. admin.Service's plan_prices block comment
+	// and queries/admin.sql's have the full reasoning. Both on `write`:
+	// pricing is a superadmin decision, support reads it.
+	g.POST("/plans/:planId/prices", h.createPlanPrice, write)
+	g.PATCH("/plans/:planId/prices/:priceId", h.setPlanPriceActive, write)
 
 	// Impersonation is on the READ guard, not write: it grants only what
 	// support already has (docs/11-admin-panel.md §4's matrix lists it for
@@ -567,7 +576,13 @@ func (h *Handler) createPlan(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "Validation failed")
 	}
 
-	item, err := h.service.CreatePlan(c.Request().Context(), adminContext(c), req.Name, req.Limits)
+	item, err := h.service.CreatePlan(c.Request().Context(), adminContext(c), PlanInput{
+		Name:            req.Name,
+		Limits:          req.Limits,
+		StripeProductID: req.StripeProductID,
+		IsPublic:        boolOr(req.IsPublic, true),
+		SortOrder:       int32Or(req.SortOrder, 0),
+	})
 	if err != nil {
 		return err
 	}
@@ -601,7 +616,16 @@ func (h *Handler) updatePlan(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, "Validation failed")
 	}
 
-	item, err := h.service.UpdatePlan(c.Request().Context(), adminContext(c), planID, req.Name, req.Limits)
+	item, err := h.service.UpdatePlan(c.Request().Context(), adminContext(c), planID, PlanInput{
+		Name:            req.Name,
+		Limits:          req.Limits,
+		StripeProductID: req.StripeProductID,
+		// Absent means the create-time default, because this is a full
+		// replace — see PlanUpdateRequest's doc comment, which spells out
+		// that a PUT omitting isPublic re-publishes a hidden plan.
+		IsPublic:  boolOr(req.IsPublic, true),
+		SortOrder: int32Or(req.SortOrder, 0),
+	})
 	if err != nil {
 		return err
 	}
@@ -633,6 +657,132 @@ func (h *Handler) deletePlan(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse{Success: true})
 }
 
+// ---- plan_prices (billing plan step 8) ----
+
+// listPlanPrices returns every price recorded for a plan.
+// @Summary  List a plan's Stripe prices
+// @Tags     admin
+// @Security BearerAuth
+// @Produce  json
+// @Param    planId  path      string  true  "Plan ID"
+// @Success  200     {object}  PlanPricesListResponse
+// @Failure  401     {object}  httpx.ErrorResponse  "Unauthorized"
+// @Failure  403     {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Failure  404     {object}  httpx.ErrorResponse  "Resource not found"
+// @Router   /admin/plans/{planId}/prices [get]
+func (h *Handler) listPlanPrices(c echo.Context) error {
+	planID, err := planIDParam(c)
+	if err != nil {
+		return err
+	}
+
+	resp, err := h.service.ListPlanPrices(c.Request().Context(), planID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// createPlanPrice records an already-created Stripe Price against a plan.
+// @Summary  Record a Stripe Price for a plan
+// @Tags     admin
+// @Security BearerAuth
+// @Accept   json
+// @Produce  json
+// @Param    planId  path      string                  true  "Plan ID"
+// @Param    body    body      PlanPriceCreateRequest  true  "Price payload"
+// @Success  200     {object}  PlanPriceItem
+// @Failure  401     {object}  httpx.ErrorResponse  "Unauthorized"
+// @Failure  403     {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Failure  404     {object}  httpx.ErrorResponse  "Resource not found"
+// @Failure  422     {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /admin/plans/{planId}/prices [post]
+func (h *Handler) createPlanPrice(c echo.Context) error {
+	planID, err := planIDParam(c)
+	if err != nil {
+		return err
+	}
+	var req PlanPriceCreateRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+
+	item, err := h.service.CreatePlanPrice(c.Request().Context(), adminContext(c), planID, PlanPriceInput{
+		StripePriceID: req.StripePriceID,
+		UnitAmount:    req.UnitAmount,
+		Currency:      req.Currency,
+		Interval:      req.Interval,
+		Active:        boolOr(req.Active, true),
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// setPlanPriceActive activates or deactivates one recorded price. This is
+// the only mutation a price row accepts — re-pricing is insert-then-
+// deactivate, never an edit (admin.Service's plan_prices block comment).
+// @Summary  Activate or deactivate a plan price
+// @Tags     admin
+// @Security BearerAuth
+// @Accept   json
+// @Produce  json
+// @Param    planId   path      string                  true  "Plan ID"
+// @Param    priceId  path      string                  true  "Price ID"
+// @Param    body     body      PlanPriceActiveRequest  true  "active flag"
+// @Success  200      {object}  PlanPriceItem
+// @Failure  401      {object}  httpx.ErrorResponse  "Unauthorized"
+// @Failure  403      {object}  httpx.ErrorResponse  "Insufficient permissions"
+// @Failure  404      {object}  httpx.ErrorResponse  "Resource not found"
+// @Failure  409      {object}  httpx.ErrorResponse  "PLAN_PRICE_LAST_ACTIVE"
+// @Failure  422      {object}  httpx.ErrorResponse  "Validation failed"
+// @Router   /admin/plans/{planId}/prices/{priceId} [patch]
+func (h *Handler) setPlanPriceActive(c echo.Context) error {
+	planID, err := planIDParam(c)
+	if err != nil {
+		return err
+	}
+	priceID, err := priceIDParam(c)
+	if err != nil {
+		return err
+	}
+	var req PlanPriceActiveRequest
+	if err := httpx.BindAndValidate(c, &req); err != nil {
+		return err
+	}
+	// Checked here rather than with `validate:"required"`: the validator
+	// dereferences a pointer before applying required, so {"active":false}
+	// — half the reason this route exists — would be rejected as missing.
+	if req.Active == nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "Validation failed")
+	}
+
+	item, err := h.service.SetPlanPriceActive(c.Request().Context(), adminContext(c), planID, priceID, *req.Active)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// boolOr/int32Or resolve an optional request field to the documented
+// default for an absent value. They exist so "absent means published" is
+// written once per field at the handler boundary rather than re-derived
+// inside the service, which receives only decided values (PlanInput).
+func boolOr(v *bool, def bool) bool {
+	if v == nil {
+		return def
+	}
+	return *v
+}
+
+func int32Or(v *int32, def int32) int32 {
+	if v == nil {
+		return def
+	}
+	return *v
+}
+
 // orgIDParam parses the :orgId path param. A malformed id can never match
 // an organization row, so it resolves to the same 404 a valid-but-unknown
 // id would.
@@ -656,6 +806,18 @@ func userIDParam(c echo.Context) (uuid.UUID, error) {
 // planIDParam parses the :planId path param, same reasoning as orgIDParam.
 func planIDParam(c echo.Context) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Param("planId"))
+	if err != nil {
+		return uuid.Nil, apperror.New(apperror.NotFound)
+	}
+	return id, nil
+}
+
+// priceIDParam parses the :priceId path param, same reasoning as
+// orgIDParam. Note the row lookup is additionally scoped by plan_id
+// (queries/admin.sql's AdminGetPlanPrice), so a well-formed price id
+// belonging to a different plan also resolves to 404.
+func priceIDParam(c echo.Context) (uuid.UUID, error) {
+	id, err := uuid.Parse(c.Param("priceId"))
 	if err != nil {
 		return uuid.Nil, apperror.New(apperror.NotFound)
 	}

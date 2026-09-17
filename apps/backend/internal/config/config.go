@@ -41,6 +41,16 @@ const (
 // reason maxCleanupBatchSize exists.
 const maxConnectorHealthBatchSize = 1000
 
+// maxUsageRollupBatchSize bounds USAGE_ROLLUP_BATCH_SIZE. usage_events is
+// the largest table in the schema (one row per billable tool call, per
+// migration 00014's comment), and its prune query is shaped exactly like
+// DeleteExpiredSessions' (id IN (SELECT ... LIMIT n)), so it gets the same
+// generous ceiling as maxCleanupBatchSize rather than
+// maxConnectorHealthBatchSize's tighter one (that job's batch is bounded by
+// how many upstream health probes a single sweep should attempt, an
+// unrelated concern).
+const maxUsageRollupBatchSize = 10_000
+
 type Config struct {
 	AppName  string
 	AppEnv   string
@@ -140,6 +150,35 @@ type Config struct {
 	// oldest-checked-first (nulls -- never checked -- first).
 	ConnectorHealthBatchSize int
 
+	// UsageRollupInterval is how often internal/job/usagerollup folds
+	// usage_events into usage_rollups, cross-checks the count against
+	// audit_logs, and prunes usage_events past retention. The rollup query
+	// is a single bounded aggregate (rollupLookbackMonths trailing calendar
+	// months, not the whole table) and is idempotent, so running it often
+	// is cheap and safe -- and running it often matters, because a stale
+	// rollup is a stale view for whatever later enforces
+	// max_tool_calls_per_month: a customer could blow well past a cap
+	// before anyone (human or code) notices. 15m keeps that lag small
+	// without re-aggregating on every gateway request the way a per-call
+	// count would.
+	UsageRollupInterval time.Duration
+
+	// UsageEventsRetention is how long usage_events rows are kept before
+	// internal/job/usagerollup prunes them, once folded into a durable
+	// usage_rollups row. This number (2160h/90 days) and its reasoning were
+	// decided in migration 00014's comment on usage_events, not here: it
+	// covers roughly three monthly billing cycles of investigation
+	// headroom -- disputes, the audit_logs drift cross-check's forensic
+	// window -- well past any plausible rollup-job outage, without keeping
+	// a per-call ledger forever.
+	UsageEventsRetention time.Duration
+
+	// UsageRollupBatchSize is how many usage_events rows one prune
+	// statement deletes at a time (internal/job/usagerollup), following
+	// SESSION_CLEANUP_BATCH_SIZE's shape -- the rollup step itself is a
+	// single unbatched aggregate query, so this only bounds the prune.
+	UsageRollupBatchSize int
+
 	// AdminIPAllowlist gates the /admin route group (execution plan Task
 	// 6.2, docs/11-admin-panel.md) before RequireAuth runs at all — an
 	// off-network request never reaches the login/2FA surface. Parsed at
@@ -164,6 +203,68 @@ type Config struct {
 	// for every throwaway seeded account is friction with no security
 	// benefit.
 	AdminRequire2FA bool
+
+	// StripeSecretKey authenticates every Stripe API call the billing module
+	// (internal/module/billing) makes: Checkout Session creation, Customer
+	// Portal session creation, and the lazy Customer create behind both.
+	//
+	// This SHOULD be a restricted key ("rk_...") scoped to Checkout, Billing,
+	// and Customer write — not an account-wide secret key. Note the
+	// divergence from the RESEND_API_KEY precedent, where the secret is read
+	// only by cmd/worker so it never sits on the internet-facing service:
+	// starting a checkout is request-driven, so the API must hold this one.
+	// The restriction on the key is what bounds the blast radius instead.
+	//
+	// Optional, and empty by default — the same "degrade, don't fail"
+	// posture RESEND_API_KEY takes. Unset, the /billing routes stay mounted
+	// and stay guarded but answer BILLING_NOT_CONFIGURED, so a developer
+	// with no Stripe account can still boot the API and run the whole test
+	// suite. Set but malformed is a different matter and fails at boot: a
+	// key that cannot possibly work is a typo an operator should hear about
+	// immediately, not at the first customer's upgrade attempt.
+	//
+	// Never log this value. logger.redact.go already censors any attr key
+	// spelled like a Stripe key; there is still no call site that should be
+	// logging it.
+	StripeSecretKey string
+
+	// StripeWebhookSecret ("whsec_...") is the HMAC key POST /billing/webhook
+	// verifies the Stripe-Signature header against. It is the ONLY
+	// authentication that route has — it cannot sit on RequireAuth, because
+	// Stripe presents no JWT — so an empty value does not mean "accept
+	// everything", it means the route answers BILLING_NOT_CONFIGURED and
+	// reconciles nothing.
+	//
+	// A DIFFERENT secret from StripeSecretKey, and not derivable from it:
+	// Stripe issues one per webhook endpoint, and rotating either leaves the
+	// other alone. Optional and empty by default, the same degrade-don't-fail
+	// posture RESEND_API_KEY and STRIPE_SECRET_KEY take, so a developer with
+	// no Stripe account can boot the API and run the whole test suite.
+	//
+	// Set but malformed fails at boot, for the same reason a malformed
+	// STRIPE_SECRET_KEY does: a secret that cannot possibly verify is a typo
+	// an operator should hear about immediately, not discover as a pile of
+	// 400s in the Stripe dashboard's webhook log days later — by which point
+	// Stripe has disabled the endpoint and the renewals it was silently
+	// dropping are unrecoverable without a manual replay.
+	//
+	// Never log this value; logger.redact.go already censors "webhooksecret".
+	StripeWebhookSecret string
+
+	// StripeWebhookIPAllowlist narrows POST /billing/webhook to Stripe's
+	// published egress CIDRs (billing plan step 7's "also allowlist Stripe's
+	// published IPs on the webhook route — ADMIN_IP_ALLOWLIST is the existing
+	// pattern to copy"). Same parsing, same middleware
+	// (internal/middleware.IPAllowlist), same 404-not-403 rejection.
+	//
+	// Defence in depth only, never the primary control: the signature check
+	// is what actually authenticates a delivery, and this list would be
+	// worthless on its own. Which is also why it defaults to unset/disabled —
+	// Stripe's IP ranges change, a stale list silently drops live billing
+	// events, and c.RealIP() is only as trustworthy as the proxy chain in
+	// front of this API (see server.go's e.IPExtractor comment). An operator
+	// who sets it must have a plan for keeping it current.
+	StripeWebhookIPAllowlist []*net.IPNet
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -242,6 +343,8 @@ func Load() (*Config, error) {
 		{"EMAIL_DISPATCH_INTERVAL", "15s", &cfg.EmailDispatchInterval},
 		{"EMAIL_OUTBOX_RETENTION", "168h", &cfg.EmailOutboxRetention},
 		{"CONNECTOR_HEALTH_INTERVAL", "6h", &cfg.ConnectorHealthInterval},
+		{"USAGE_ROLLUP_INTERVAL", "15m", &cfg.UsageRollupInterval},
+		{"USAGE_EVENTS_RETENTION", "2160h", &cfg.UsageEventsRetention},
 	} {
 		parsed, err := time.ParseDuration(getEnv(d.key, d.fallback))
 		switch {
@@ -311,11 +414,38 @@ func Load() (*Config, error) {
 		cfg.ConnectorHealthBatchSize = connectorHealthBatchSize
 	}
 
+	usageRollupBatchSize, err := strconv.Atoi(getEnv("USAGE_ROLLUP_BATCH_SIZE", "1000"))
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("USAGE_ROLLUP_BATCH_SIZE is not a valid integer: %v", err))
+	case usageRollupBatchSize < 1 || usageRollupBatchSize > maxUsageRollupBatchSize:
+		problems = append(problems, fmt.Sprintf("USAGE_ROLLUP_BATCH_SIZE must be between 1 and %d", maxUsageRollupBatchSize))
+	default:
+		cfg.UsageRollupBatchSize = usageRollupBatchSize
+	}
+
 	allowlist, err := parseCIDRList(os.Getenv("ADMIN_IP_ALLOWLIST"))
 	if err != nil {
 		problems = append(problems, fmt.Sprintf("ADMIN_IP_ALLOWLIST is invalid: %v", err))
 	} else {
 		cfg.AdminIPAllowlist = allowlist
+	}
+
+	cfg.StripeSecretKey = strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY"))
+	if err := validateStripeKey(cfg.StripeSecretKey); err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_SECRET_KEY is invalid: %v", err))
+	}
+
+	cfg.StripeWebhookSecret = strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET"))
+	if err := validateStripeWebhookSecret(cfg.StripeWebhookSecret); err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_WEBHOOK_SECRET is invalid: %v", err))
+	}
+
+	webhookAllowlist, err := parseCIDRList(os.Getenv("STRIPE_WEBHOOK_IP_ALLOWLIST"))
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("STRIPE_WEBHOOK_IP_ALLOWLIST is invalid: %v", err))
+	} else {
+		cfg.StripeWebhookIPAllowlist = webhookAllowlist
 	}
 
 	require2FA, err := strconv.ParseBool(getEnv("ADMIN_REQUIRE_2FA", "true"))
@@ -371,6 +501,80 @@ func parseCIDRList(raw string) ([]*net.IPNet, error) {
 // the worker wires up email.LogSender instead of email.ResendSender.
 func (c *Config) EmailEnabled() bool {
 	return c.ResendAPIKey != ""
+}
+
+// BillingEnabled reports whether a Stripe key is configured. When false the
+// /billing routes are still registered and still permission-guarded, but
+// every one of them answers apperror.BillingNotConfigured rather than
+// dialling Stripe — mirroring EmailEnabled's degrade-don't-fail posture, and
+// keeping the route surface identical between a Stripe-less local dev box
+// and production so a guard test means the same thing in both.
+func (c *Config) BillingEnabled() bool {
+	return c.StripeSecretKey != ""
+}
+
+// validateStripeKey rejects a STRIPE_SECRET_KEY that cannot possibly
+// authenticate, so the mistake surfaces at boot rather than at the first
+// customer's checkout. "" is valid and means billing is disabled
+// (BillingEnabled).
+//
+// The prefixes Stripe issues for server-side use are "rk_" (restricted, what
+// this deployment should use) and "sk_" (account-wide secret). "pk_" is
+// called out separately because pasting the publishable key into the secret
+// slot is the specific, common mix-up worth naming in the error — it would
+// otherwise fail every Stripe call at runtime with an opaque 401.
+//
+// Note what this does NOT do: it never echoes the key. An invalid-value
+// error that quoted the offending string would put a live credential into
+// the boot log of every crash-looping replica.
+func validateStripeKey(key string) error {
+	switch {
+	case key == "":
+		return nil
+	case strings.HasPrefix(key, "rk_"), strings.HasPrefix(key, "sk_"):
+		return nil
+	case strings.HasPrefix(key, "pk_"):
+		return fmt.Errorf("looks like a publishable key (pk_...); this must be a restricted key (rk_...) or a secret key (sk_...)")
+	default:
+		return fmt.Errorf("must be a Stripe restricted key (rk_...) or secret key (sk_...)")
+	}
+}
+
+// WebhookEnabled reports whether a Stripe webhook signing secret is
+// configured. When false, POST /billing/webhook is still mounted and still
+// IP-gated, but answers apperror.BillingNotConfigured rather than pretending
+// to verify anything — the same posture BillingEnabled takes, and tracked
+// separately because the two secrets are issued, rotated, and can be
+// forgotten independently.
+func (c *Config) WebhookEnabled() bool {
+	return c.StripeWebhookSecret != ""
+}
+
+// validateStripeWebhookSecret rejects a STRIPE_WEBHOOK_SECRET that cannot
+// possibly verify a signature, so the mistake surfaces at boot rather than
+// as a silent pile of 400s in Stripe's webhook log. "" is valid and means
+// the webhook is disabled (WebhookEnabled).
+//
+// Stripe issues endpoint signing secrets as "whsec_...". The common mix-up
+// worth naming is pasting an API key ("sk_"/"rk_"/"pk_") into this slot —
+// the two live next to each other on the same dashboard page, and every
+// delivery would then fail signature verification with nothing to explain
+// why.
+//
+// Like validateStripeKey, this never echoes the value: an invalid-value
+// error quoting the offending string would put a live signing secret into
+// the boot log of every crash-looping replica.
+func validateStripeWebhookSecret(secret string) error {
+	switch {
+	case secret == "":
+		return nil
+	case strings.HasPrefix(secret, "whsec_"):
+		return nil
+	case strings.HasPrefix(secret, "sk_"), strings.HasPrefix(secret, "rk_"), strings.HasPrefix(secret, "pk_"):
+		return fmt.Errorf("looks like a Stripe API key; this must be the endpoint signing secret (whsec_...)")
+	default:
+		return fmt.Errorf("must be a Stripe webhook signing secret (whsec_...)")
+	}
 }
 
 // redisKeyPrefix resolves REDIS_KEY_PREFIX, normalising a non-empty value to

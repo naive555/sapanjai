@@ -1,0 +1,42 @@
+-- +goose Up
+-- Step 7 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+-- out-of-order watermark for POST /billing/webhook.
+--
+-- Stripe retries and can deliver out of order, and stripe_events (migration
+-- 00013) does not help: an event id only stops an EXACT replay. A stale
+-- customer.subscription.updated arriving after a newer one is a different
+-- event id and would otherwise be applied, silently regressing the org's
+-- plan or status.
+--
+-- Why a new column rather than reusing one that already exists -- checked
+-- one by one, because step 7 was not planned to need a migration:
+--
+--   * updated_at is written by this database's clock on every write to the
+--     row, including ClaimOrgStripeCustomer and a superadmin's
+--     POST /admin/organizations/:orgId/plan. Comparing a Stripe-clock
+--     event timestamp against it is a cross-clock comparison, and an
+--     unrelated admin write would push it past every in-flight event and
+--     start rejecting legitimate webhooks.
+--   * current_period_end only advances at renewal. A plan switch or a
+--     cancel_at_period_end toggle mid-period leaves it untouched, so two
+--     updates inside one billing period are indistinguishable by it.
+--   * status is an unordered enum ('active', 'past_due', 'canceled', ...).
+--   * stripe_events.received_at is per-event local arrival time and that
+--     table carries no organization column, so "the newest event already
+--     applied to THIS org" cannot be derived from it. Adding that column
+--     would be this same migration, one table over, with a join.
+--
+-- So: the Stripe `created` timestamp of the newest subscription-state event
+-- applied to this row. Nullable, and NULL means "no event applied yet" --
+-- every existing row (free orgs, admin-assigned plans) keeps working and
+-- accepts the first webhook it sees. Deliberately NOT backfilled from
+-- updated_at, which would be the exact cross-clock mistake described above.
+--
+-- Granularity caveat, stated rather than hidden: Stripe's event `created` is
+-- whole seconds, so two events for one subscription in the same second are
+-- tied. The webhook applies a tie (>= wins) -- last writer wins within one
+-- second -- and only rejects an event STRICTLY older than what is stored.
+ALTER TABLE "org_subscriptions" ADD COLUMN "stripe_event_at" timestamp;
+
+-- +goose Down
+ALTER TABLE "org_subscriptions" DROP COLUMN "stripe_event_at";

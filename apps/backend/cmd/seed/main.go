@@ -20,9 +20,20 @@ var defaultPlans = []struct {
 	name   string
 	limits map[string]int
 }{
-	{"free", map[string]int{"max_members": 5, "max_roles": 3, "max_connectors": 2}},
-	{"pro", map[string]int{"max_members": 50, "max_roles": 20, "max_connectors": 10}},
-	{"enterprise", map[string]int{"max_members": -1, "max_roles": -1, "max_connectors": -1}}, // -1 = unlimited
+	// max_tool_calls_per_month (step 5 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md) is enforced by
+	// subscription.Service.EnforceLimit from the MCP gateway before a
+	// tools/call dispatches. These three numbers are provisional pricing
+	// input, not an engineering decision: per the plan's decision 1, there
+	// are zero customers yet and therefore no observed usage distribution to
+	// calibrate a cap against. NOTE: because UpsertPlan is
+	// `ON CONFLICT (name) DO NOTHING` (queries/plans.sql), changing a value
+	// here has no effect on a database where the plan row already exists --
+	// see migration 00015, which is what applies this key (and any future
+	// change to it) to already-seeded plans, and keep the two in sync.
+	{"free", map[string]int{"max_members": 5, "max_roles": 3, "max_connectors": 2, "max_tool_calls_per_month": 1000}},
+	{"pro", map[string]int{"max_members": 50, "max_roles": 20, "max_connectors": 10, "max_tool_calls_per_month": 20000}},
+	{"enterprise", map[string]int{"max_members": -1, "max_roles": -1, "max_connectors": -1, "max_tool_calls_per_month": -1}}, // -1 = unlimited
 }
 
 func main() {

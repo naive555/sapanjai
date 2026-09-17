@@ -22,6 +22,7 @@ import (
 	"github.com/sapanjai/backend/internal/job/connectorhealth"
 	"github.com/sapanjai/backend/internal/job/emaildispatch"
 	"github.com/sapanjai/backend/internal/job/sessioncleanup"
+	"github.com/sapanjai/backend/internal/job/usagerollup"
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/connector"
 	"github.com/sapanjai/backend/internal/module/subscription"
@@ -126,6 +127,12 @@ func main() {
 		cfg.ConnectorHealthInterval,
 		cfg.ConnectorHealthBatchSize,
 		cfg.AppPublicURL,
+	))
+	w.Register(usagerollup.New(
+		store, log,
+		cfg.UsageRollupInterval,
+		cfg.UsageEventsRetention,
+		cfg.UsageRollupBatchSize,
 	))
 
 	health := &http.Server{

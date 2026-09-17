@@ -13,6 +13,13 @@ import (
 
 type Querier interface {
 	AdminCountActiveMCPKeys(ctx context.Context) (int64, error)
+	// Counts the active prices a checkout could actually resolve for one
+	// (plan, currency, interval) triple — the exact selector GetActivePlanPrice
+	// (queries/plans.sql) uses. Backs the PLAN_PRICE_LAST_ACTIVE guard: a
+	// public plan whose last active price for a triple is deactivated becomes
+	// visible-but-unbuyable, which is the same incoherence is_public exists to
+	// prevent, arrived at from the other side.
+	AdminCountActivePlanPricesFor(ctx context.Context, arg AdminCountActivePlanPricesForParams) (int64, error)
 	AdminCountActiveSessions(ctx context.Context) (int64, error)
 	AdminCountActiveSessionsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
 	AdminCountAllAuditLogs(ctx context.Context) (int64, error)
@@ -54,7 +61,20 @@ type Querier interface {
 	// neither the source app nor this one adds a dedicated
 	// PLAN_NAME_TAKEN code for what is, in a 2-5 person staff console, a
 	// typo caught on the next attempt.
+	//
+	// stripe_product_id/is_public/sort_order (migration 00013) are written
+	// here rather than left to their column defaults so that a plan can be
+	// created already hidden — a staff member wiring up a new tier creates the
+	// Stripe Product, creates the plan with is_public = false, adds its
+	// plan_prices row, and only then publishes it. Creating every plan
+	// published-by-default would put a priceless tier in the tenant catalogue
+	// for the length of that workflow.
 	AdminCreatePlan(ctx context.Context, arg AdminCreatePlanParams) (Plan, error)
+	// plan_prices.stripe_price_id carries a UNIQUE constraint; a colliding id
+	// surfaces as a raw constraint-violation error (500), the same tolerance
+	// AdminCreatePlan documents for a colliding plan name — the same 2-5
+	// person staff console, and the same typo caught on the next attempt.
+	AdminCreatePlanPrice(ctx context.Context, arg AdminCreatePlanPriceParams) (PlanPrice, error)
 	// memberships/connectors/mcp_api_keys/org_subscriptions all cascade
 	// (migrations 00002/00005/00007/00008); audit_logs.organization_id carries
 	// no FK (00004), so audit rows deliberately survive the org — see
@@ -78,6 +98,11 @@ type Querier interface {
 	// specifically to keep it that way as the schema evolves.
 	AdminGetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
 	AdminGetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
+	// Scoped by plan_id as well as id: a price id that belongs to a different
+	// plan than the one in the route resolves to no row, and therefore to the
+	// same 404 an unknown id would — the route's path must agree with the row
+	// it acts on, not merely contain a valid uuid somewhere.
+	AdminGetPlanPrice(ctx context.Context, arg AdminGetPlanPriceParams) (PlanPrice, error)
 	// Cross-org connector metadata only — no encrypted_config column in this
 	// SELECT, ever (docs/11-admin-panel.md §7). Also used, filtered by
 	// organization_id alone, to populate the connector list nested in
@@ -94,6 +119,40 @@ type Querier interface {
 	// member*connector*key combination. plan_name is NULL for an org with no
 	// subscription row.
 	AdminListOrganizations(ctx context.Context, arg AdminListOrganizationsParams) ([]AdminListOrganizationsRow, error)
+	// ---- plan_prices (migration 00013) ----
+	//
+	// There is deliberately no query here that edits a price's unit_amount,
+	// currency, or interval, and none that deletes a row. A Stripe Price is
+	// immutable once created (you deactivate and supersede rather than edit),
+	// and plan_prices mirrors Stripe rather than diverging from it:
+	//
+	//   * An UPDATE of unit_amount would leave the local row disagreeing with
+	//     the Stripe Price it names, and Stripe is what actually charges the
+	//     card. The console would then display a price nobody is paying.
+	//   * A DELETE would break GetPlanByStripePriceID (queries/plans.sql),
+	//     which resolves an EXISTING subscriber's entitlement plan from the
+	//     Price id on their subscription — including subscribers on a price
+	//     that was long since deactivated. That query's own doc comment is
+	//     explicit that `active` governs what may be SOLD, not what an
+	//     existing subscription means; deleting the row destroys the second
+	//     meaning along with the first, permanently, for a paying customer.
+	//
+	// Re-pricing is therefore: create the new Stripe Price, insert its row
+	// here, then deactivate the old one. That ordering is what
+	// GetActivePlanPrice's "newest-first, no window in which neither is
+	// selectable" comment describes, and AdminCountActivePlanPricesFor below
+	// is what enforces it.
+	// Every price for a plan, active and inactive alike. Inactive rows are the
+	// point as much as active ones: they are the plan's price history, and a
+	// staff member asking "what is this customer paying" is reading a price
+	// that may well no longer be sellable.
+	AdminListPlanPrices(ctx context.Context, planID uuid.UUID) ([]PlanPrice, error)
+	// The staff-console twin of ListPublicPlans (queries/plans.sql), and
+	// deliberately NOT filtered on is_public: the console is where is_public is
+	// set, so it must still see (and be able to un-hide) what it hid. Ordered
+	// by the same sort_order, created_at the tenant catalogue uses, so the
+	// console previews the order a customer will actually see.
+	AdminListPlans(ctx context.Context) ([]Plan, error)
 	// search matches email or display_name. role is nullable text taking
 	// 'superadmin', 'support', 'none' (meaning platform_role IS NULL), or NULL
 	// (no filter) — a single text param rather than a separate bool so the
@@ -131,12 +190,39 @@ type Querier interface {
 	// that into a 404 rather than a silent no-op, since org_subscriptions.plan_id
 	// is NOT NULL and there is nothing here to attach custom_limits to.
 	AdminSetOrgCustomLimits(ctx context.Context, arg AdminSetOrgCustomLimitsParams) (int64, error)
-	// A full replace (name + limits together), not a partial PATCH — mirrors
-	// the shape of POST /admin/plans, and a plan's whole point is that its
-	// limits are reviewed together, not merged field-by-field. 0 rows ->
-	// pgx.ErrNoRows -> admin.Service maps that to 404.
+	// The ONLY mutation of an existing plan_prices row (see the block comment
+	// above). Same plan_id scoping as AdminGetPlanPrice.
+	AdminSetPlanPriceActive(ctx context.Context, arg AdminSetPlanPriceActiveParams) (PlanPrice, error)
+	// A full replace (name + limits + the migration-00013 catalogue columns
+	// together), not a partial PATCH — mirrors the shape of POST /admin/plans,
+	// and a plan's whole point is that its limits are reviewed together, not
+	// merged field-by-field. 0 rows -> pgx.ErrNoRows -> admin.Service maps
+	// that to 404.
+	//
+	// Full replace extends to is_public/sort_order/stripe_product_id
+	// deliberately, and admin.PlanUpdateRequest's doc comment carries the
+	// consequence: a PUT that omits isPublic re-publishes a hidden plan,
+	// exactly as a PUT that omits a limit key today drops that limit. The
+	// console renders the current values into the form and sends them all
+	// back; anything else would be a PATCH, which this is explicitly not.
+	//
+	// Deliberately does NOT touch plan_prices. A price is never edited in
+	// place (see AdminCreatePlanPrice), so there is nothing here to cascade.
 	AdminUpdatePlan(ctx context.Context, arg AdminUpdatePlanParams) (Plan, error)
 	AssignMemberRole(ctx context.Context, arg AssignMemberRoleParams) error
+	// Records the org's lazily-created Stripe Customer (plan decision 4), and
+	// is the Postgres half of billing's no-duplicate-Customer guarantee: the
+	// "stripe_customer_id IS NULL" predicate makes the claim conditional, so
+	// of two concurrent checkout attempts exactly one UPDATE matches a row and
+	// the other returns zero rows (pgx.ErrNoRows) and re-reads the winner's id.
+	//
+	// Deliberately an UPDATE, never an upsert. Creating an org_subscriptions
+	// row is subscription.Service.AssignPlan's job and nobody else's (plan
+	// invariant 5); an org with no row yet resolves to "unlimited" through
+	// EffectiveLimits, so inserting one here would silently change that org's
+	// entitlements as a side effect of a billing click. Rows are created by
+	// the webhook (step 7) when a subscription actually starts.
+	ClaimOrgStripeCustomer(ctx context.Context, arg ClaimOrgStripeCustomerParams) (*string, error)
 	// Claims a batch by taking out a lease: attempts is incremented and
 	// next_attempt_at is pushed forward in the same statement, so a run that dies
 	// mid-send leaves rows that become claimable again on their own when the
@@ -153,13 +239,65 @@ type Querier interface {
 	// containing FOR UPDATE has side effects and is always materialised, so the
 	// lock-and-limit happens exactly once.
 	ClaimPendingEmails(ctx context.Context, arg ClaimPendingEmailsParams) ([]EmailOutbox, error)
+	// Webhook idempotency (step 7 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md). Stripe retries,
+	// so the same event id can arrive many times; the id is the primary key of
+	// stripe_events (migration 00013), so the second delivery conflicts.
+	//
+	// ON CONFLICT DO NOTHING ... RETURNING makes "already processed" a
+	// pgx.ErrNoRows rather than a driver-level unique-violation the caller
+	// would have to sniff a SQLSTATE for -- and, crucially, it does NOT abort
+	// the surrounding transaction the way a raised 23505 would.
+	//
+	// The claim is issued INSIDE the same transaction as the state change it
+	// guards (billing.Service.reconcile). That ordering is the whole point: a
+	// failure after the claim rolls the claim back too, so Stripe's retry
+	// reprocesses the event instead of finding it marked handled and silently
+	// doing nothing. Claim-then-process in separate transactions loses the
+	// state change forever with no error anywhere.
+	ClaimStripeEvent(ctx context.Context, arg ClaimStripeEventParams) (string, error)
 	// Backs POST /admin/2fa/confirm: stamps confirmed_at and stores the ten
 	// recovery-code hashes generated at confirm time (never at enroll time,
 	// since enroll may be called repeatedly before a confirm ever lands).
 	ConfirmUserTOTP(ctx context.Context, arg ConfirmUserTOTPParams) error
+	// The audit_logs side of the same cross-check. "Two independent counters
+	// disagreeing is the detection mechanism" (plan's "the metering problem,
+	// stated plainly") for the undercounting invariant 3 makes structural: a
+	// dropped usage_events write (logged at error, internal/module/mcp's
+	// recordUsage) or a dropped audit_logs write (best-effort,
+	// auditlog.Service.Record) shows up here as nonzero drift rather than
+	// silently. created_at has no time zone -- `since` must already be UTC wall
+	// clock, matching every other naive-timestamp comparison in this codebase
+	// (see auditlog.sql's QueryAuditLogs comment). Served by
+	// idx_audit_logs_created_at (00011), which leads on created_at alone --
+	// the same shape idx_audit_logs_organization_id_created_at (00009) cannot
+	// serve since this query has no organization_id predicate.
+	CountAuditLogsToolCalledSince(ctx context.Context, since time.Time) (int64, error)
 	CountConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountMembershipsByOrg(ctx context.Context, organizationID uuid.UUID) (int64, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
+	// Step 5 of docs/12-billing-and-metering.md (not yet written; see
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md): the current
+	// tool-call count subscription.Service.EnforceLimit checks against
+	// max_tool_calls_per_month before a tools/call dispatches
+	// (internal/module/mcp/service.go). Counts usage_events directly rather
+	// than reading usage_rollups, because the rollup for the current, still-open
+	// month can be up to USAGE_ROLLUP_INTERVAL stale -- counting raw events
+	// matches the cap's window exactly instead of undercounting by up to one
+	// interval. Callers pass the start of the current UTC calendar month as
+	// `since`, the same boundary internal/job/usagerollup buckets on
+	// (date_trunc('month', occurred_at)), so the cap and the rollup agree on
+	// what "this month" means. Served by
+	// idx_usage_events_organization_id_occurred_at (00014), which leads on
+	// organization_id -- unlike CountUsageEventsSince below, which has no
+	// organization_id predicate and is served by the occurred_at-only index
+	// instead.
+	CountUsageEventsForOrgSince(ctx context.Context, arg CountUsageEventsForOrgSinceParams) (int64, error)
+	// The usage_events side of the rollup job's audit_logs cross-check. Bounded
+	// by the same `since` the rollup itself uses, and served by
+	// idx_usage_events_occurred_at (00014) -- the same index the prune query
+	// uses, both leading on occurred_at with no organization_id predicate.
+	CountUsageEventsSince(ctx context.Context, since time.Time) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
 	CreateConnector(ctx context.Context, arg CreateConnectorParams) (Connector, error)
 	// scopes ($6) is nullable: a nil slice binds NULL (no independent
@@ -173,12 +311,38 @@ type Querier interface {
 	CreatePermission(ctx context.Context, arg CreatePermissionParams) error
 	CreateRole(ctx context.Context, arg CreateRoleParams) (Role, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	// One row per billable MCP tool call, written from the gateway's hot path
+	// (internal/module/mcp/service.go) immediately alongside the mcp.tool.called
+	// audit row -- see migration 00014's comment on usage_events. connector_id
+	// and mcp_key_id are nullable FKs (ON DELETE SET NULL) so a later connector
+	// or key deletion never erases the count it represents. quantity is not
+	// taken as a parameter: it defaults to 1, matching "one row = one billable
+	// tool call" -- this is never the rate limiter's N-upstream-request charge.
+	CreateUsageEvent(ctx context.Context, arg CreateUsageEventParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteConnector(ctx context.Context, arg DeleteConnectorParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context, arg DeleteExpiredSessionsParams) (int64, error)
 	DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error
 	DeletePermissionsByRole(ctx context.Context, roleID uuid.UUID) error
 	EnqueueEmail(ctx context.Context, arg EnqueueEmailParams) (EmailOutbox, error)
+	// Maps a Stripe Customer back to its tenant. Backed by the partial unique
+	// index idx_org_subscriptions_stripe_customer_id (migration 00013), so a
+	// given customer id identifies exactly one organization -- which is what
+	// makes it impossible for an event carrying org A's identifiers to land on
+	// org B's row.
+	FindOrgByStripeCustomerID(ctx context.Context, stripeCustomerID string) (uuid.UUID, error)
+	// The subscription-id twin of FindOrgByStripeCustomerID, backed by
+	// idx_org_subscriptions_stripe_subscription_id. Preferred over the customer
+	// lookup when both are available: a Customer can in principle outlive and
+	// outnumber its Subscriptions, while a Subscription belongs to exactly one.
+	FindOrgByStripeSubscriptionID(ctx context.Context, stripeSubscriptionID string) (uuid.UUID, error)
+	// Resolves the one Stripe Price a checkout should charge. Per plan decision
+	// 3 there is exactly one active THB monthly Price per plan today; currency
+	// and interval are parameters rather than constants so a second currency is
+	// a plan_prices row plus a Stripe Price, not a migration and not a query
+	// change. Newest-first so re-pricing a plan is "insert the new row, then
+	// deactivate the old one", with no window in which neither is selectable.
+	GetActivePlanPrice(ctx context.Context, arg GetActivePlanPriceParams) (PlanPrice, error)
 	GetConnector(ctx context.Context, arg GetConnectorParams) (Connector, error)
 	GetConnectorByName(ctx context.Context, arg GetConnectorByNameParams) (Connector, error)
 	GetEmailByID(ctx context.Context, id uuid.UUID) (EmailOutbox, error)
@@ -193,8 +357,61 @@ type Querier interface {
 	GetMCPKeyByHash(ctx context.Context, keyHash string) (GetMCPKeyByHashRow, error)
 	GetMCPKeyByName(ctx context.Context, arg GetMCPKeyByNameParams) (McpApiKey, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Membership, error)
+	// The billing module's (internal/module/billing) narrow read of an org's
+	// Stripe linkage. Deliberately separate from GetOrgSubscription, which
+	// exists to serve GET /subscription and whose row shape the frontend and
+	// internal/module/admin both depend on -- widening it with Stripe columns
+	// would push billing state into every caller of the entitlement read path.
+	// Note what is NOT selected: custom_limits and plans.limits. Entitlement
+	// resolution stays subscription.Service.EffectiveLimits' job alone
+	// (plan invariant 1), and nothing here is allowed to become a second
+	// answer to "what may this org do".
+	GetOrgBillingRef(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingRefRow, error)
+	// The webhook's (internal/module/billing, step 7) read of everything it
+	// needs to decide whether an incoming Stripe event is newer than what is
+	// already stored, taken FOR UPDATE.
+	//
+	// FOR UPDATE, not a plain SELECT: two deliveries for the same organization
+	// can be in flight at once (Stripe retries while the first attempt is still
+	// running, or a subscription.updated and an invoice.paid arrive together).
+	// Without the row lock both transactions would read the same watermark,
+	// both would decide they are newer, and the older one could commit last.
+	// The lock serializes them, so the "is this event stale" check and the
+	// write that advances the watermark are one atomic step.
+	//
+	// Deliberately does not select custom_limits or plans.limits: entitlement
+	// resolution is subscription.Service.EffectiveLimits' job alone (plan
+	// invariant 1), and this must not become a second answer to "what may this
+	// org do".
+	GetOrgBillingSyncForUpdate(ctx context.Context, organizationID uuid.UUID) (GetOrgBillingSyncForUpdateRow, error)
+	// Backs GET /subscription. Widened in billing plan step 9 to carry Stripe
+	// STATE (status, current_period_end, cancel_at_period_end,
+	// stripe_subscription_id) alongside the entitlement columns it already
+	// selected -- the handler's toSubscriptionResponse maps status/
+	// current_period_end/cancel_at_period_end straight through (none of them
+	// identify a Stripe object, they describe a lifecycle) but only ever turns
+	// stripe_subscription_id into a boolean (HasActiveSubscription), never
+	// serializes it: "stripe_subscription_id IS NULL" is decision 4's
+	// canonical "not paying" signal, and the raw id itself is Stripe linkage
+	// with no business leaving the backend, the same reasoning
+	// GetOrgBillingRef's comment gives for the billing module's narrower read.
+	//
+	// Still not custom_limits/plan.limits' second answer to "what may this org
+	// do" -- those two columns were already here before this change, serving
+	// SubscriptionResponse.Plan/.CustomLimits as before; nothing about
+	// entitlement resolution moves. subscription.Service.EffectiveLimits stays
+	// the only place that merge happens (plan invariant 1).
 	GetOrgSubscription(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionRow, error)
 	GetOrgSubscriptionWithPlan(ctx context.Context, organizationID uuid.UUID) (GetOrgSubscriptionWithPlanRow, error)
+	// The tenant-facing twin of AdminGetOrganizationByID (queries/admin.sql),
+	// which is reachable only from the superadmin console. Added for
+	// internal/module/billing, which names an org's lazily-created Stripe
+	// Customer after the organization rather than after whichever member
+	// happened to click "upgrade" first — a Stripe dashboard full of
+	// personal names for company subscriptions is a support problem later.
+	// Callers are already org-scoped by RequireOrg/RequirePermission before
+	// this runs; it performs no authorization of its own.
+	GetOrganizationByID(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
 	// Resolves who to notify about an org-wide event (connector-health alerts
 	// today). Membership.role is either set once at org creation ("owner",
@@ -202,12 +419,52 @@ type Querier interface {
 	// (organization.InviteRequest) -- an org always has exactly one owner row,
 	// never zero or more than one.
 	GetOrganizationOwner(ctx context.Context, organizationID uuid.UUID) (GetOrganizationOwnerRow, error)
+	// The tenant-facing twin of AdminGetPlanByID (queries/admin.sql), which is
+	// reachable only from the superadmin console. internal/module/billing needs
+	// to resolve the plan a checkout is for -- and to check is_public before
+	// selling it -- without reaching into an Admin*-prefixed query it is not
+	// entitled to use.
+	GetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error)
 	GetPlanByName(ctx context.Context, name string) (Plan, error)
+	// Resolves the entitlement plan a Stripe Subscription is actually paying
+	// for, from the Price id on its line item. This is the webhook's PRIMARY
+	// plan resolution and metadata.plan_id is only the fallback, deliberately:
+	// the Customer Portal lets a customer switch plans without this application
+	// being involved, which changes the Price on the subscription but leaves
+	// the plan_id this code stamped into metadata at checkout time frozen at
+	// whatever they bought originally. Trusting metadata there would keep
+	// billing them for the new plan while entitling them to the old one.
+	//
+	// Not filtered on plan_prices.active: a plan re-priced after a customer
+	// subscribed leaves that customer on the old, now-inactive Price, and their
+	// renewal events must still resolve to the plan. `active` governs what may
+	// be SOLD (GetActivePlanPrice), not what an existing subscription means.
+	GetPlanByStripePriceID(ctx context.Context, stripePriceID string) (Plan, error)
 	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserTOTP(ctx context.Context, userID uuid.UUID) (UserTotp, error)
+	// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+	// price rows behind GET /plans' `prices` array (internal/module/subscription).
+	// One query for every public plan's active prices, not N+1 per plan --
+	// joins against plans.is_public rather than taking a list of plan ids, so
+	// GET /plans stays a single round trip regardless of the catalogue's size.
+	// Ordered by plan_id (so the handler can group rows by a single pass over
+	// a sorted slice, mirroring ListPublicPlans' own ordering contract) then
+	// interval/currency for a stable, deterministic rendering order within a
+	// plan. Filtered on active = true for the same reason GetActivePlanPrice
+	// is: a deactivated price cannot be charged (POST /billing/checkout would
+	// refuse it with PLAN_NOT_PURCHASABLE), so it has no business appearing on
+	// a catalogue a customer reads before clicking "Subscribe".
+	//
+	// Deliberately does NOT select stripe_price_id. That id is Stripe linkage
+	// with no business on a tenant-facing catalogue -- the same reasoning that
+	// keeps stripe_customer_id/stripe_subscription_id off GET /subscription
+	// (GetOrgBillingRef's comment) -- and unlike those two, this one would be
+	// directly usable against Stripe's own API by anyone who read it off this
+	// response.
+	ListActivePlanPricesForPublicPlans(ctx context.Context) ([]ListActivePlanPricesForPublicPlansRow, error)
 	ListConnectorsByOrg(ctx context.Context, organizationID uuid.UUID) ([]Connector, error)
 	// Cross-org sweep for the connector-health background job
 	// (internal/job/connectorhealth) -- deliberately not organization-scoped,
@@ -222,8 +479,37 @@ type Querier interface {
 	ListOrganizationMembers(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationMembersRow, error)
 	ListPermissionActionsByUserOrg(ctx context.Context, arg ListPermissionActionsByUserOrgParams) ([]string, error)
 	ListPermissionsByRoleIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]Permission, error)
-	ListPlans(ctx context.Context) ([]Plan, error)
+	// The tenant-facing catalogue behind GET /plans. Filtered on is_public
+	// (migration 00013) and ordered by sort_order, because those two columns
+	// became settable by the superadmin console in step 8 and an unfiltered
+	// catalogue makes them lie: POST /billing/checkout already refuses a
+	// non-public plan with NOT_FOUND (billing.Service, plan step 6), so a plan
+	// listed here but hidden from checkout renders a "Choose plan" button that
+	// cannot work. One predicate keeps the two surfaces telling the same story.
+	//
+	// Note this is a WEAKER statement than a permission check: is_public is a
+	// catalogue/merchandising flag (a draft tier, a legacy tier nobody new may
+	// buy), not a security boundary. Nothing secret lives in a plan row — the
+	// console-only view is AdminListPlans (queries/admin.sql), which is
+	// deliberately unfiltered.
+	ListPublicPlans(ctx context.Context) ([]Plan, error)
 	ListRolesByOrg(ctx context.Context, organizationID uuid.UUID) ([]Role, error)
+	// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+	// per-tool breakdown behind GET /billing/usage's `byTool` field
+	// (internal/module/billing). Reads usage_rollups, NOT usage_events, unlike
+	// CountUsageEventsForOrgSince above -- deliberately, and asymmetrically.
+	// CountUsageEventsForOrgSince has to be exact because it is the number the
+	// gateway's own quota check (internal/module/mcp/service.go:305) enforces
+	// against; this is a per-tool breakdown a customer finds informative, not
+	// the enforced number, so it is allowed to lag by up to
+	// USAGE_ROLLUP_INTERVAL for the still-open current month
+	// (internal/job/usagerollup) rather than paying the cost of grouping the
+	// full month's usage_events on every page load of the usage meter. Callers
+	// pass the same UTC-calendar-month `period_start` the rollup job buckets
+	// on, matching CountUsageEventsForOrgSince's `since`. Served by the unique
+	// index the natural key (organization_id, period_start, tool) already
+	// creates (migration 00014) -- no new index needed.
+	ListUsageRollupsForOrgPeriod(ctx context.Context, arg ListUsageRollupsForOrgPeriodParams) ([]ListUsageRollupsForOrgPeriodRow, error)
 	// Terminal: the attempt budget is spent. Bodies are dropped for the same
 	// reason as MarkEmailSent -- an undelivered token is no less live.
 	MarkEmailFailed(ctx context.Context, arg MarkEmailFailedParams) error
@@ -233,6 +519,13 @@ type Querier interface {
 	MarkEmailSent(ctx context.Context, id uuid.UUID) error
 	MarkUserVerified(ctx context.Context, id uuid.UUID) error
 	PruneEmailOutbox(ctx context.Context, arg PruneEmailOutboxParams) (int64, error)
+	// Deletes usage_events rows older than retention, batch-at-a-time like
+	// PruneEmailOutbox (email_outbox.sql) and DeleteExpiredSessions
+	// (sessions.sql). Deliberately has no organization_id predicate -- this is
+	// the query idx_usage_events_occurred_at (00014) exists for; adding one
+	// would defeat that index on this table, which is the largest in the
+	// schema (one row per tool call).
+	PruneUsageEvents(ctx context.Context, arg PruneUsageEventsParams) (int64, error)
 	// actions is a nullable text[]: NULL (no ?action= given at all) matches
 	// every row, same as before repeatable action filtering was added. An
 	// empty (non-NULL) array must never reach this query — `action = ANY('{}')`
@@ -253,6 +546,21 @@ type Querier interface {
 	RevokeMCPKey(ctx context.Context, arg RevokeMCPKeyParams) (int64, error)
 	RevokeSessionByID(ctx context.Context, id uuid.UUID) error
 	RevokeSessionFamily(ctx context.Context, family uuid.UUID) error
+	// Folds usage_events into usage_rollups for every period whose bucket start
+	// (UTC calendar month, date_trunc('month', occurred_at)) falls on or after
+	// `since`. internal/job/usagerollup is the only caller, and it is the one
+	// that must keep `since` inside the still-fully-present window -- see that
+	// package's rollupLookbackMonths comment for why a re-aggregation must never
+	// reach a period that a prior prune has partially emptied.
+	//
+	// The ON CONFLICT target is usage_rollups' natural key from migration 00014
+	// (organization_id, period_start, tool) -- deliberately excluding
+	// period_end, per that migration's comment -- so re-running this over the
+	// same window is idempotent: it recomputes each period's true count from
+	// usage_events and overwrites the existing rollup rather than adding to it.
+	// reported_at is never set here (decision 1: a cap, not a charge -- nothing
+	// is ever reported to Stripe from this table).
+	RollupUsageEvents(ctx context.Context, since time.Time) (int64, error)
 	// Both $2 and $3 are nullable; an unban passes NULL/NULL. users.banned_at
 	// is the durable source of truth behind the Redis banned:<userId> cache
 	// (see internal/infra/redis/auth.go and internal/middleware.Guards.verify).
@@ -267,6 +575,31 @@ type Querier interface {
 	StampMCPKeyLastUsed(ctx context.Context, id uuid.UUID) error
 	UpdateConnector(ctx context.Context, arg UpdateConnectorParams) (Connector, error)
 	UpdateConnectorHealth(ctx context.Context, arg UpdateConnectorHealthParams) (Connector, error)
+	// Writes the Stripe linkage columns of an org_subscriptions row that
+	// already exists, plus the out-of-order watermark (stripe_event_at,
+	// migration 00016).
+	//
+	// An UPDATE, never an upsert, and it touches neither plan_id nor
+	// custom_limits. Creating the row and moving plan_id is
+	// subscription.Service.AssignPlan's job and nobody else's (plan invariant
+	// 5); custom_limits is the admin override that must survive a billing event
+	// (invariant 2). What is left -- customer id, subscription id, status,
+	// period end, cancellation flag -- is billing's own bookkeeping, the same
+	// ownership ClaimOrgStripeCustomer already has over stripe_customer_id.
+	//
+	// Every value column is nullable-optional and COALESCEs to its current
+	// value, because the handled events carry different subsets: a
+	// checkout.session.completed knows the customer and subscription ids but
+	// not the authoritative status (customer.subscription.created, arriving
+	// alongside it, does), and an invoice.payment_failed knows the status but
+	// not the period end. "Absent" must mean "leave alone", never "set to
+	// NULL" -- otherwise each event would erase what the last one learned.
+	//
+	// clear_subscription is the one exception, and it is plan decision 4:
+	// "stripe_subscription_id IS NULL" is the canonical "not paying" signal, so
+	// a cancellation CLEARS the column rather than leaving it pointing at a
+	// dead Stripe object.
+	UpdateOrgStripeSubscription(ctx context.Context, arg UpdateOrgStripeSubscriptionParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	// Backs POST /admin/2fa/verify's recovery-code path: persists the
 	// caller-supplied remaining set after one hash is removed, so a recovery

@@ -34,7 +34,9 @@ func setBaselineEnv(t *testing.T) {
 		"EMAIL_DISPATCH_INTERVAL", "EMAIL_DISPATCH_BATCH_SIZE",
 		"EMAIL_MAX_ATTEMPTS", "EMAIL_OUTBOX_RETENTION",
 		"CONNECTOR_HEALTH_INTERVAL", "CONNECTOR_HEALTH_BATCH_SIZE",
+		"USAGE_ROLLUP_INTERVAL", "USAGE_EVENTS_RETENTION", "USAGE_ROLLUP_BATCH_SIZE",
 		"ADMIN_IP_ALLOWLIST", "ADMIN_REQUIRE_2FA",
+		"STRIPE_SECRET_KEY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -193,6 +195,103 @@ func TestLoad_AcceptsConnectorHealthBatchSizeBounds(t *testing.T) {
 	t.Setenv("CONNECTOR_HEALTH_BATCH_SIZE", "1000")
 	if cfg := mustLoad(t); cfg.ConnectorHealthBatchSize != 1000 {
 		t.Errorf("upper bound rejected: batch=%d", cfg.ConnectorHealthBatchSize)
+	}
+}
+
+// A deployment that never sets a usage-rollup variable must still boot,
+// with the defaults migration 00014's comment and internal/job/usagerollup's
+// package doc both describe.
+func TestLoad_UsageRollupDefaults(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+
+	if cfg.UsageRollupInterval != 15*time.Minute {
+		t.Errorf("UsageRollupInterval = %v, want 15m", cfg.UsageRollupInterval)
+	}
+	if cfg.UsageEventsRetention != 2160*time.Hour {
+		t.Errorf("UsageEventsRetention = %v, want 2160h (90d)", cfg.UsageEventsRetention)
+	}
+	if cfg.UsageRollupBatchSize != 1000 {
+		t.Errorf("UsageRollupBatchSize = %d, want 1000", cfg.UsageRollupBatchSize)
+	}
+}
+
+func TestLoad_UsageRollupOverrides(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("USAGE_ROLLUP_INTERVAL", "5m")
+	t.Setenv("USAGE_EVENTS_RETENTION", "720h")
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "250")
+
+	cfg := mustLoad(t)
+
+	if cfg.UsageRollupInterval != 5*time.Minute {
+		t.Errorf("UsageRollupInterval = %v, want 5m", cfg.UsageRollupInterval)
+	}
+	if cfg.UsageEventsRetention != 720*time.Hour {
+		t.Errorf("UsageEventsRetention = %v, want 720h", cfg.UsageEventsRetention)
+	}
+	if cfg.UsageRollupBatchSize != 250 {
+		t.Errorf("UsageRollupBatchSize = %d, want 250", cfg.UsageRollupBatchSize)
+	}
+}
+
+func TestLoad_RejectsInvalidUsageRollupDuration(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"USAGE_ROLLUP_INTERVAL", "banana"},
+		{"USAGE_ROLLUP_INTERVAL", "0h"},
+		{"USAGE_ROLLUP_INTERVAL", "-1h"},
+		{"USAGE_EVENTS_RETENTION", "banana"},
+		{"USAGE_EVENTS_RETENTION", "0h"},
+		{"USAGE_EVENTS_RETENTION", "-1h"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_RejectsOutOfRangeUsageRollupBatchSize(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"USAGE_ROLLUP_BATCH_SIZE", "not-a-number"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "0"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "-1"},
+		{"USAGE_ROLLUP_BATCH_SIZE", "10001"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load accepted %s=%q", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("error does not name %s: %v", tc.key, err)
+			}
+		})
+	}
+}
+
+func TestLoad_AcceptsUsageRollupBatchSizeBounds(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "1")
+	if cfg := mustLoad(t); cfg.UsageRollupBatchSize != 1 {
+		t.Errorf("lower bound rejected: batch=%d", cfg.UsageRollupBatchSize)
+	}
+
+	t.Setenv("USAGE_ROLLUP_BATCH_SIZE", "10000")
+	if cfg := mustLoad(t); cfg.UsageRollupBatchSize != 10000 {
+		t.Errorf("upper bound rejected: batch=%d", cfg.UsageRollupBatchSize)
 	}
 }
 
@@ -463,5 +562,267 @@ func TestLoad_RedisKeyPrefixNormalisesAndOptsOut(t *testing.T) {
 				t.Errorf("RedisKeyPrefix = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// ---- STRIPE_SECRET_KEY (billing, step 6) ----
+
+// TestLoad_StripeKeyUnsetDisablesBillingWithoutFailing is the requirement
+// that a developer with no Stripe account — and CI, which has none either —
+// can still boot the API and run the whole test suite. The posture mirrors
+// RESEND_API_KEY's: unset degrades to a disabled feature, it does not fail
+// startup. The /billing routes stay mounted and permission-guarded and
+// answer BILLING_NOT_CONFIGURED.
+func TestLoad_StripeKeyUnsetDisablesBillingWithoutFailing(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+	if cfg.StripeSecretKey != "" {
+		t.Fatalf("StripeSecretKey = %q, want empty by default", cfg.StripeSecretKey)
+	}
+	if cfg.BillingEnabled() {
+		t.Fatal("BillingEnabled() = true with no STRIPE_SECRET_KEY set")
+	}
+}
+
+func TestLoad_StripeKeyAcceptsRestrictedAndSecretKeys(t *testing.T) {
+	for name, key := range map[string]string{
+		"restricted key (what this deployment should use)": "rk_test_51abcdefgh",
+		"account-wide secret key (accepted, not advised)":  "sk_live_51abcdefgh",
+	} {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_SECRET_KEY", key)
+
+			cfg := mustLoad(t)
+			if cfg.StripeSecretKey != key {
+				t.Fatalf("StripeSecretKey = %q, want %q", cfg.StripeSecretKey, key)
+			}
+			if !cfg.BillingEnabled() {
+				t.Fatal("BillingEnabled() = false with a key set")
+			}
+		})
+	}
+}
+
+func TestLoad_StripeKeyIsTrimmed(t *testing.T) {
+	setBaselineEnv(t)
+	// A key pasted from a dashboard routinely arrives with a trailing
+	// newline; that would otherwise be sent in an Authorization header.
+	t.Setenv("STRIPE_SECRET_KEY", "  rk_test_51abcdefgh\n")
+
+	if got := mustLoad(t).StripeSecretKey; got != "rk_test_51abcdefgh" {
+		t.Fatalf("StripeSecretKey = %q, want the trimmed key", got)
+	}
+}
+
+// TestLoad_StripeKeyRejectsInvalidValues: a key that is present but cannot
+// possibly authenticate is a typo, and it must surface at boot rather than
+// at the first customer's upgrade attempt. Unset is fine (see above); wrong
+// is not.
+func TestLoad_StripeKeyRejectsInvalidValues(t *testing.T) {
+	cases := map[string]struct {
+		key      string
+		wantHint string
+	}{
+		"publishable key pasted into the secret slot": {"pk_live_51abcdefgh", "publishable"},
+		"an unrelated string":                         {"not-a-stripe-key", "restricted key"},
+		"a webhook signing secret":                    {"whsec_abcdefgh", "restricted key"},
+		"only whitespace around nothing":              {"   x   ", "restricted key"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_SECRET_KEY", tc.key)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load succeeded with STRIPE_SECRET_KEY = %q", tc.key)
+			}
+			if !strings.Contains(err.Error(), "STRIPE_SECRET_KEY is invalid") {
+				t.Fatalf("error does not name the variable: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Fatalf("error %q does not contain the hint %q", err.Error(), tc.wantHint)
+			}
+			// The error must never echo the value: it is logged by every
+			// crash-looping replica, and a real key pasted with a typo'd
+			// prefix would end up in those logs.
+			if strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error echoes the configured key: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoad_StripeProblemIsAggregatedWithTheRest(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_SECRET_KEY", "pk_live_nope")
+	t.Setenv("MCP_RATE_LIMIT_PER_MIN", "0")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with two invalid values")
+	}
+	for _, want := range []string{"STRIPE_SECRET_KEY is invalid", "MCP_RATE_LIMIT_PER_MIN must be greater than zero"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is missing %q; Load must report every problem in one pass:\n%v", want, err)
+		}
+	}
+}
+
+// ---- STRIPE_WEBHOOK_SECRET / STRIPE_WEBHOOK_IP_ALLOWLIST (webhook, step 7) ----
+
+// TestLoad_StripeWebhookSecretUnsetDisablesTheWebhookWithoutFailing mirrors
+// STRIPE_SECRET_KEY's posture, and for the same reason: CI and a developer
+// laptop have no Stripe account, and the whole test suite has to run
+// without one. Unset means POST /billing/webhook answers
+// BILLING_NOT_CONFIGURED — never "accept everything", which is the one way
+// an empty signing secret could be catastrophic.
+func TestLoad_StripeWebhookSecretUnsetDisablesTheWebhookWithoutFailing(t *testing.T) {
+	setBaselineEnv(t)
+
+	cfg := mustLoad(t)
+	if cfg.StripeWebhookSecret != "" {
+		t.Fatalf("StripeWebhookSecret = %q, want empty by default", cfg.StripeWebhookSecret)
+	}
+	if cfg.WebhookEnabled() {
+		t.Fatal("WebhookEnabled() = true with no secret configured")
+	}
+}
+
+// The two Stripe secrets are issued and rotated independently, so a
+// deployment can legitimately hold either one alone.
+func TestLoad_StripeWebhookSecretIsIndependentOfTheAPIKey(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_abcdefghijklmnop")
+
+	cfg := mustLoad(t)
+	if !cfg.WebhookEnabled() {
+		t.Fatal("WebhookEnabled() = false with a secret configured")
+	}
+	if cfg.BillingEnabled() {
+		t.Fatal("BillingEnabled() = true with no STRIPE_SECRET_KEY; the two must not be coupled")
+	}
+}
+
+func TestLoad_StripeWebhookSecretIsTrimmed(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "  whsec_abcdefghijklmnop\n")
+
+	if got := mustLoad(t).StripeWebhookSecret; got != "whsec_abcdefghijklmnop" {
+		t.Fatalf("StripeWebhookSecret = %q, want the trimmed secret", got)
+	}
+}
+
+// A signing secret that cannot possibly verify is a typo, and it must
+// surface at boot. The alternative is discovering it as a pile of 400s in
+// Stripe's webhook log days later — by which point Stripe has disabled the
+// endpoint and the renewals it silently dropped need a manual replay.
+func TestLoad_StripeWebhookSecretRejectsInvalidValues(t *testing.T) {
+	cases := map[string]struct {
+		secret   string
+		wantHint string
+	}{
+		// The specific, likely mix-up: the API keys and the signing secret
+		// live on adjacent Stripe dashboard pages.
+		"restricted key pasted into the webhook slot": {"rk_live_51abcdefgh", "API key"},
+		"secret key pasted into the webhook slot":     {"sk_live_51abcdefgh", "API key"},
+		"publishable key":                {"pk_live_51abcdefgh", "API key"},
+		"an unrelated string":            {"not-a-secret", "whsec_"},
+		"only whitespace around nothing": {"   x   ", "whsec_"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv("STRIPE_WEBHOOK_SECRET", tc.secret)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load succeeded with STRIPE_WEBHOOK_SECRET = %q", tc.secret)
+			}
+			if !strings.Contains(err.Error(), "STRIPE_WEBHOOK_SECRET is invalid") {
+				t.Fatalf("error does not name the variable: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantHint) {
+				t.Fatalf("error %q does not contain the hint %q", err.Error(), tc.wantHint)
+			}
+			// Never echo the value: a live signing secret would otherwise
+			// land in the boot log of every crash-looping replica.
+			if strings.Contains(err.Error(), tc.secret) {
+				t.Fatalf("error echoes the configured secret: %v", err)
+			}
+		})
+	}
+}
+
+// Unset must disable the allowlist entirely. Stripe's published egress
+// ranges change, and a stale list silently drops live billing events — so
+// "off" is the only safe default for a control that is defence in depth
+// behind the signature, never instead of it.
+func TestLoad_StripeWebhookIPAllowlist_UnsetDisablesCheck(t *testing.T) {
+	setBaselineEnv(t)
+
+	if got := mustLoad(t).StripeWebhookIPAllowlist; got != nil {
+		t.Errorf("StripeWebhookIPAllowlist = %v, want nil (unset disables the check)", got)
+	}
+}
+
+func TestLoad_StripeWebhookIPAllowlist_ParsesValidList(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "3.18.12.63/32, 35.154.171.200/32,2600:1f00::/32")
+
+	cfg := mustLoad(t)
+	if len(cfg.StripeWebhookIPAllowlist) != 3 {
+		t.Fatalf("StripeWebhookIPAllowlist has %d entries, want 3: %v",
+			len(cfg.StripeWebhookIPAllowlist), cfg.StripeWebhookIPAllowlist)
+	}
+	want := []string{"3.18.12.63/32", "35.154.171.200/32", "2600:1f00::/32"}
+	for i, n := range cfg.StripeWebhookIPAllowlist {
+		if got := n.String(); got != want[i] {
+			t.Errorf("StripeWebhookIPAllowlist[%d] = %q, want %q", i, got, want[i])
+		}
+	}
+}
+
+// A single typo'd entry must fail the whole load rather than silently
+// narrowing the list — the same reasoning ADMIN_IP_ALLOWLIST follows, with
+// a sharper failure mode here: a silently narrowed webhook allowlist drops
+// paying customers' subscription events.
+func TestLoad_StripeWebhookIPAllowlist_MalformedEntryFailsLoad(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "3.18.12.63/32,not-a-cidr")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with a malformed STRIPE_WEBHOOK_IP_ALLOWLIST entry")
+	}
+	if !strings.Contains(err.Error(), "STRIPE_WEBHOOK_IP_ALLOWLIST is invalid") {
+		t.Fatalf("error does not name the variable: %v", err)
+	}
+}
+
+// Both webhook problems, and an unrelated one, must be reported in one
+// pass — Load's whole contract.
+func TestLoad_StripeWebhookProblemsAreAggregated(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("STRIPE_WEBHOOK_SECRET", "sk_live_wrong_slot")
+	t.Setenv("STRIPE_WEBHOOK_IP_ALLOWLIST", "nope")
+	t.Setenv("STRIPE_SECRET_KEY", "pk_live_nope")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded with three invalid values")
+	}
+	for _, want := range []string{
+		"STRIPE_SECRET_KEY is invalid",
+		"STRIPE_WEBHOOK_SECRET is invalid",
+		"STRIPE_WEBHOOK_IP_ALLOWLIST is invalid",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is missing %q; Load must report every problem in one pass:\n%v", want, err)
+		}
 	}
 }

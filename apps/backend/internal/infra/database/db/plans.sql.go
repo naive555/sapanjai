@@ -8,10 +8,74 @@ package db
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/google/uuid"
 )
 
+const getActivePlanPrice = `-- name: GetActivePlanPrice :one
+SELECT id, plan_id, stripe_price_id, unit_amount, currency, interval, active, created_at FROM plan_prices
+WHERE plan_id = $1
+  AND currency = $2
+  AND "interval" = $3
+  AND active = true
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetActivePlanPriceParams struct {
+	PlanID          uuid.UUID `json:"plan_id"`
+	Currency        string    `json:"currency"`
+	BillingInterval string    `json:"billing_interval"`
+}
+
+// Resolves the one Stripe Price a checkout should charge. Per plan decision
+// 3 there is exactly one active THB monthly Price per plan today; currency
+// and interval are parameters rather than constants so a second currency is
+// a plan_prices row plus a Stripe Price, not a migration and not a query
+// change. Newest-first so re-pricing a plan is "insert the new row, then
+// deactivate the old one", with no window in which neither is selectable.
+func (q *Queries) GetActivePlanPrice(ctx context.Context, arg GetActivePlanPriceParams) (PlanPrice, error) {
+	row := q.db.QueryRow(ctx, getActivePlanPrice, arg.PlanID, arg.Currency, arg.BillingInterval)
+	var i PlanPrice
+	err := row.Scan(
+		&i.ID,
+		&i.PlanID,
+		&i.StripePriceID,
+		&i.UnitAmount,
+		&i.Currency,
+		&i.Interval,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPlanByID = `-- name: GetPlanByID :one
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE id = $1
+`
+
+// The tenant-facing twin of AdminGetPlanByID (queries/admin.sql), which is
+// reachable only from the superadmin console. internal/module/billing needs
+// to resolve the plan a checkout is for -- and to check is_public before
+// selling it -- without reaching into an Admin*-prefixed query it is not
+// entitled to use.
+func (q *Queries) GetPlanByID(ctx context.Context, id uuid.UUID) (Plan, error) {
+	row := q.db.QueryRow(ctx, getPlanByID, id)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
+	)
+	return i, err
+}
+
 const getPlanByName = `-- name: GetPlanByName :one
-SELECT id, name, limits, created_at FROM plans WHERE name = $1
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE name = $1
 `
 
 func (q *Queries) GetPlanByName(ctx context.Context, name string) (Plan, error) {
@@ -22,16 +86,125 @@ func (q *Queries) GetPlanByName(ctx context.Context, name string) (Plan, error) 
 		&i.Name,
 		&i.Limits,
 		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
 	)
 	return i, err
 }
 
-const listPlans = `-- name: ListPlans :many
-SELECT id, name, limits, created_at FROM plans ORDER BY created_at ASC
+const getPlanByStripePriceID = `-- name: GetPlanByStripePriceID :one
+SELECT p.id, p.name, p.limits, p.created_at, p.stripe_product_id, p.is_public, p.sort_order FROM plans p
+JOIN plan_prices pp ON pp.plan_id = p.id
+WHERE pp.stripe_price_id = $1::text
 `
 
-func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
-	rows, err := q.db.Query(ctx, listPlans)
+// Resolves the entitlement plan a Stripe Subscription is actually paying
+// for, from the Price id on its line item. This is the webhook's PRIMARY
+// plan resolution and metadata.plan_id is only the fallback, deliberately:
+// the Customer Portal lets a customer switch plans without this application
+// being involved, which changes the Price on the subscription but leaves
+// the plan_id this code stamped into metadata at checkout time frozen at
+// whatever they bought originally. Trusting metadata there would keep
+// billing them for the new plan while entitling them to the old one.
+//
+// Not filtered on plan_prices.active: a plan re-priced after a customer
+// subscribed leaves that customer on the old, now-inactive Price, and their
+// renewal events must still resolve to the plan. `active` governs what may
+// be SOLD (GetActivePlanPrice), not what an existing subscription means.
+func (q *Queries) GetPlanByStripePriceID(ctx context.Context, stripePriceID string) (Plan, error) {
+	row := q.db.QueryRow(ctx, getPlanByStripePriceID, stripePriceID)
+	var i Plan
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Limits,
+		&i.CreatedAt,
+		&i.StripeProductID,
+		&i.IsPublic,
+		&i.SortOrder,
+	)
+	return i, err
+}
+
+const listActivePlanPricesForPublicPlans = `-- name: ListActivePlanPricesForPublicPlans :many
+SELECT pp.plan_id, pp.unit_amount, pp.currency, pp."interval"
+FROM plan_prices pp
+JOIN plans p ON p.id = pp.plan_id
+WHERE p.is_public = true AND pp.active = true
+ORDER BY pp.plan_id, pp."interval", pp.currency
+`
+
+type ListActivePlanPricesForPublicPlansRow struct {
+	PlanID     uuid.UUID `json:"plan_id"`
+	UnitAmount int64     `json:"unit_amount"`
+	Currency   string    `json:"currency"`
+	Interval   string    `json:"interval"`
+}
+
+// Step 9 of .claude/plans/2026-09-13-billing-and-usage-metering.md: the
+// price rows behind GET /plans' `prices` array (internal/module/subscription).
+// One query for every public plan's active prices, not N+1 per plan --
+// joins against plans.is_public rather than taking a list of plan ids, so
+// GET /plans stays a single round trip regardless of the catalogue's size.
+// Ordered by plan_id (so the handler can group rows by a single pass over
+// a sorted slice, mirroring ListPublicPlans' own ordering contract) then
+// interval/currency for a stable, deterministic rendering order within a
+// plan. Filtered on active = true for the same reason GetActivePlanPrice
+// is: a deactivated price cannot be charged (POST /billing/checkout would
+// refuse it with PLAN_NOT_PURCHASABLE), so it has no business appearing on
+// a catalogue a customer reads before clicking "Subscribe".
+//
+// Deliberately does NOT select stripe_price_id. That id is Stripe linkage
+// with no business on a tenant-facing catalogue -- the same reasoning that
+// keeps stripe_customer_id/stripe_subscription_id off GET /subscription
+// (GetOrgBillingRef's comment) -- and unlike those two, this one would be
+// directly usable against Stripe's own API by anyone who read it off this
+// response.
+func (q *Queries) ListActivePlanPricesForPublicPlans(ctx context.Context) ([]ListActivePlanPricesForPublicPlansRow, error) {
+	rows, err := q.db.Query(ctx, listActivePlanPricesForPublicPlans)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActivePlanPricesForPublicPlansRow
+	for rows.Next() {
+		var i ListActivePlanPricesForPublicPlansRow
+		if err := rows.Scan(
+			&i.PlanID,
+			&i.UnitAmount,
+			&i.Currency,
+			&i.Interval,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublicPlans = `-- name: ListPublicPlans :many
+SELECT id, name, limits, created_at, stripe_product_id, is_public, sort_order FROM plans WHERE is_public = true ORDER BY sort_order ASC, created_at ASC
+`
+
+// The tenant-facing catalogue behind GET /plans. Filtered on is_public
+// (migration 00013) and ordered by sort_order, because those two columns
+// became settable by the superadmin console in step 8 and an unfiltered
+// catalogue makes them lie: POST /billing/checkout already refuses a
+// non-public plan with NOT_FOUND (billing.Service, plan step 6), so a plan
+// listed here but hidden from checkout renders a "Choose plan" button that
+// cannot work. One predicate keeps the two surfaces telling the same story.
+//
+// Note this is a WEAKER statement than a permission check: is_public is a
+// catalogue/merchandising flag (a draft tier, a legacy tier nobody new may
+// buy), not a security boundary. Nothing secret lives in a plan row — the
+// console-only view is AdminListPlans (queries/admin.sql), which is
+// deliberately unfiltered.
+func (q *Queries) ListPublicPlans(ctx context.Context) ([]Plan, error) {
+	rows, err := q.db.Query(ctx, listPublicPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +217,9 @@ func (q *Queries) ListPlans(ctx context.Context) ([]Plan, error) {
 			&i.Name,
 			&i.Limits,
 			&i.CreatedAt,
+			&i.StripeProductID,
+			&i.IsPublic,
+			&i.SortOrder,
 		); err != nil {
 			return nil, err
 		}

@@ -55,6 +55,19 @@ const (
 	// failure, not an authorization one).
 	ActionMCPRateLimitHit = "mcp.ratelimit.hit"
 
+	// ActionMCPQuotaExceeded is written when a tools/call is refused because
+	// its organization has used its entire max_tool_calls_per_month quota
+	// for the current UTC calendar month — step 5 of
+	// .claude/plans/2026-09-13-billing-and-usage-metering.md. Kept distinct
+	// from ActionMCPRateLimitHit even though both are quota failures rather
+	// than authorization ones: a rate-limit hit is a transient upstream-API
+	// throttle a client should retry shortly, while a quota-exceeded refusal
+	// only clears on the next billing period or a plan upgrade, and an
+	// operator triaging refusals needs to tell the two apart at a glance.
+	// Metadata carries connector_id and tool, the same shape as
+	// ActionMCPRateLimitHit.
+	ActionMCPQuotaExceeded = "mcp.quota.exceeded"
+
 	// ActionMCPFileDownloaded is written by GET /mcp/files/:connectorId/
 	// :fileId (internal/module/mcp/handler.go's downloadFile) once a
 	// download has actually streamed — docs/07-sheets-adapter-decisions.md step
@@ -84,10 +97,48 @@ const (
 	ActionAdminPlanUpdated         = "admin.plan.updated"
 	ActionAdminPlanDeleted         = "admin.plan.deleted"
 
+	// plan_prices mutations (billing plan step 8). Activation and
+	// deactivation are separate actions rather than one
+	// "admin.plan_price.active_changed" carrying a boolean, mirroring the
+	// ActionAdminUserBanned/Unbanned pair above: a staff member filtering
+	// GET /admin/audit-logs for "who stopped selling Pro" should not have
+	// to read metadata to tell the two directions apart.
+	//
+	// Metadata carries the plan id, the price row's id, and its Stripe
+	// Price id (price_...) — a catalogue identifier, not a secret. It never
+	// carries the Stripe API key or webhook signing secret, which are
+	// config, not row data, and never reach this package at all.
+	ActionAdminPlanPriceCreated     = "admin.plan_price.created"
+	ActionAdminPlanPriceActivated   = "admin.plan_price.activated"
+	ActionAdminPlanPriceDeactivated = "admin.plan_price.deactivated"
+
 	// ActionAdminImpersonationStarted is declared now but not yet written —
 	// Phase 4 (impersonation) is the only caller, and is out of this
 	// phase's scope.
 	ActionAdminImpersonationStarted = "admin.impersonation.started"
+
+	// ---- Billing (internal/module/billing) ----
+	//
+	// Both are written after the Stripe call succeeds, so a row means a
+	// hosted session really was minted. Neither records an amount, a price,
+	// or anything else that could be mistaken for a payment record —
+	// Stripe is the billing record (plan invariant 1) and audit_logs must
+	// not become a second, drifting one. ActionBillingCheckoutStarted does
+	// NOT mean the org was charged or that its plan changed: nothing about
+	// entitlements moves until the webhook (step 7) calls AssignPlan.
+	ActionBillingCheckoutStarted = "billing.checkout.started"
+	ActionBillingPortalOpened    = "billing.portal.opened"
+
+	// ActionBillingSubscriptionSynced is written by POST /billing/webhook
+	// after a Stripe event has been reconciled into org_subscriptions. It
+	// carries no user id — Stripe is not a user — and no Stripe customer or
+	// subscription id: audit_logs must not become a second billing record
+	// (plan invariant 1). Its metadata is the event type, the plan the org
+	// ended up on, and the subscription status, which is what a support
+	// question ("why did this org's plan change on Tuesday?") actually
+	// needs. It is written AFTER the reconciling transaction commits, so a
+	// best-effort audit write can never roll one back.
+	ActionBillingSubscriptionSynced = "billing.subscription.synced"
 )
 
 // Service records audit log entries. Writes are best-effort: a failure is
