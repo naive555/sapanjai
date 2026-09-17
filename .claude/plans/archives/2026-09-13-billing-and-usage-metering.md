@@ -1,6 +1,9 @@
 # Billing + usage metering — Implementation Plan
 
-> **Status: 📋 ready to execute — planned 2026-09-13, not started. 0 / 10 steps.**
+> **Status: ✅ complete — planned 2026-09-13, shipped 2026-09-17. 10 / 10 steps.**
+> Archived; [`docs/12-billing-and-metering.md`](../../docs/12-billing-and-metering.md)
+> is the maintained state from here on — read that, not this, for how billing
+> and metering actually behave.
 > **All four decisions confirmed by the owner 2026-09-13**; none are blocking
 > (§Decisions). The one consequential resolution: a tool call is a **cap, not a
 > charge**, so no usage-based billing vendor enters the stack and Stripe stays a
@@ -157,7 +160,7 @@ invariant 3 — so the goal is not perfect counting, it is counting that is
 
 ## Steps
 
-- [ ] **1. Schema: pricing + Stripe linkage** — migration `00013`, additive.
+- [x] **1. Schema: pricing + Stripe linkage** — migration `00013`, additive.
       `plans` gains `stripe_product_id`, `is_public`, `sort_order`. New
       `plan_prices` (plan_id, `stripe_price_id`, `unit_amount`, `currency`,
       `interval`, `active`) rather than price columns on `plans`, because the
@@ -168,22 +171,22 @@ invariant 3 — so the goal is not perfect counting, it is counting that is
       `status`, `current_period_end`, `cancel_at_period_end`. New
       `stripe_events` (event id PK, `received_at`, `type`) for webhook
       idempotency. `make sqlc`. **Do not touch `limits` or `custom_limits`.**
-- [ ] **2. Schema: usage ledger** — migration `00014`. `usage_events`
+- [x] **2. Schema: usage ledger** — migration `00014`. `usage_events`
       (org, connector, mcp_key, tool, `occurred_at`, `quantity`) and
       `usage_rollups` (org, period start/end, tool, count, `reported_at`).
       Index `usage_events (organization_id, occurred_at)` — the rollup's only
       access pattern. Decide retention here, not later.
-- [ ] **3. Record usage on the hot path** — `internal/module/mcp/service.go`,
+- [x] **3. Record usage on the hot path** — `internal/module/mcp/service.go`,
       immediately alongside `auditToolCalled` (~line 285). Same principal, same
       connector, no tool arguments — the existing "column names are recorded;
       the values filtered on are not" rule applies unchanged. Failure logs at
       **error** and bumps a counter; the call still succeeds.
-- [ ] **4. `internal/job/usagerollup`** — a `worker.Job` registered in
+- [x] **4. `internal/job/usagerollup`** — a `worker.Job` registered in
       `cmd/worker/main.go` beside the existing three, folding `usage_events`
       into `usage_rollups`, pruning rolled-up events past retention, and
       emitting the `audit_logs` cross-check drift number. Reuses the Redis
       lock and per-run timeout for free.
-- [ ] **5. Enforce a call quota** *(decision 1: this is the billing model,
+- [x] **5. Enforce a call quota** *(decision 1: this is the billing model,
       not an option)* — add
       `max_tool_calls_per_month` to the seeded plan limits
       (`cmd/seed/main.go:23-25`) and call the existing
@@ -191,7 +194,7 @@ invariant 3 — so the goal is not perfect counting, it is counting that is
       next to the existing rate-limit check. Note `-1` already means unlimited
       and `EnforceLimit` already treats a missing subscription as unlimited —
       no new semantics.
-- [ ] **6. `internal/module/billing`** — handler → service → sqlc, the standard
+- [x] **6. `internal/module/billing`** — handler → service → sqlc, the standard
       shape. `POST /billing/checkout` (Checkout Session, `mode: "subscription"`)
       and `POST /billing/portal` (Customer Portal, which buys upgrade,
       downgrade, cancel, and payment-method management without building any of
@@ -200,7 +203,7 @@ invariant 3 — so the goal is not perfect counting, it is counting that is
       interaction** (decision 4) — not at org creation, and never a
       zero-price Subscription for `free`. One THB Price per plan; no
       `automatic_tax` (decision 3). See §Step detail for the traps.
-- [ ] **7. `POST /billing/webhook`** — outside `RequireAuth`/`RequireOrg`
+- [x] **7. `POST /billing/webhook`** — outside `RequireAuth`/`RequireOrg`
       (Stripe presents no JWT), signature-verified, idempotent via
       `stripe_events`, reconciling `customer.subscription.*`, `invoice.paid`,
       and `invoice.payment_failed` into `org_subscriptions` by calling
@@ -208,17 +211,17 @@ invariant 3 — so the goal is not perfect counting, it is counting that is
       is the canonical "not paying" signal (decision 4), so a downgrade to
       `free` clears it rather than pointing at a cancelled Stripe object.
       See §Step detail.
-- [ ] **8. Admin surface** — extend the existing superadmin-only plan CRUD in
+- [x] **8. Admin surface** — extend the existing superadmin-only plan CRUD in
       `internal/module/admin` to cover `plan_prices` and the new `plans`
       columns. The admin non-goal test
       (`internal/server/admin_integration_test.go`) must grow to assert no
       admin response carries a Stripe secret or a customer's payment details.
-- [ ] **9. Frontend** — `/subscription` gains a plan picker that POSTs to
+- [x] **9. Frontend** — `/subscription` gains a plan picker that POSTs to
       `/billing/checkout` and redirects, a "Manage billing" button hitting
       `/billing/portal`, and a usage meter reading the rollups. Hosted Checkout
       is a **redirect**, so Stripe.js is not loaded and no CSP work is needed —
       keep it that way.
-- [ ] **10. Docs** — new `docs/12-billing-and-metering.md` (this plan's
+- [x] **10. Docs** — new `docs/12-billing-and-metering.md` (this plan's
       decisions, minus the checklist), the new routes into
       [`docs/02-api-contract.md`](../../docs/02-api-contract.md) **in the same
       change that adds them**, plus CLAUDE.md, `.env.example`, and the README

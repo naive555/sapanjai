@@ -40,6 +40,7 @@ Each was a finding from the spike in [`spikes/mcp-gateway/`](spikes/mcp-gateway/
 | `google_sheets` connector — six read tools over allowlisted Sheets + Drive, OAuth refresh, health probe, signed short-lived file downloads | **shipped** |
 | Platform core — auth, email verification, password reset, organizations, RBAC, audit logs, plans, background worker | **shipped** |
 | Staff console (`/admin`) — cross-org reads, superadmin-only mutations, read-only impersonation, IP allowlist + TOTP step-up, dashboard UI | **shipped** ([`docs/11`](docs/11-admin-panel.md)) |
+| Billing + usage metering — Stripe Checkout/Portal, webhook reconciliation, a `usage_events` ledger the gateway writes on every tool call, `max_tool_calls_per_month` enforced before dispatch, a rollup job with an `audit_logs` drift cross-check | **shipped** ([`docs/12`](docs/12-billing-and-metering.md)) |
 | Write tools (append a row, upload a file) | not built — [`docs/07`](docs/07-sheets-adapter-decisions.md) §3 |
 | OAuth consent flow in the dashboard | not built — onboarding is a manual credential paste ([MCP client setup](#mcp-client-setup)) |
 | OAuth 2.1 / dynamic client registration for Claude Desktop's connector picker | not built |
@@ -220,7 +221,11 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `PUT /rbac/roles/:roleId/permissions` | org | Replace a role's permission set |
 | `POST /rbac/assign` | org | Assign a role to a member |
 | `GET /subscription` | org | Org's subscription with plan embedded (nullable) |
-| `GET /plans` | auth | All plans (global, not org-scoped) — a read-only catalogue. A tenant cannot change its own plan; that is `POST /admin/organizations/:orgId/plan`, superadmin-only |
+| `GET /plans` | auth | All **public** plans (global, not org-scoped), each with its active Stripe prices — a read-only catalogue. A tenant cannot change its own plan directly; that's `POST /billing/checkout` below (self-serve) or `POST /admin/organizations/:orgId/plan` (superadmin-only) |
+| `POST /billing/checkout` | perm:`billing:write` | Start a Stripe Checkout Session for a plan; returns `{ url }` to redirect to |
+| `POST /billing/portal` | perm:`billing:write` | Open a Stripe Customer Portal session (upgrade, downgrade, cancel, payment method); returns `{ url }` |
+| `GET /billing/usage` | perm:`billing:read` | Org's tool-call usage for the current UTC calendar month: live count, resolved cap, per-tool breakdown |
+| `POST /billing/webhook` | public⁴ | Stripe webhook receiver — reconciles Checkout/subscription/invoice events into `org_subscriptions` |
 | `GET /audit-logs` | org | Org's logs, newest first — `userId`, `action`, `limit` (1–100, default 50) |
 | `POST /connectors` | perm:`connector:write` | Create a connector; `config` is sealed with envelope encryption |
 | `GET /connectors` | perm:`connector:read` | Org's connectors, oldest first |
@@ -233,14 +238,15 @@ Permission matching: `*` grants everything; then an exact `resource:verb` match;
 | `DELETE /mcp-keys/:keyId` | perm:`mcpkey:delete` | Revoke a key (`revoked_at`) |
 | `POST /mcp/:connectorId` | MCP key² | Not REST — one Streamable HTTP MCP JSON-RPC endpoint per connector. See [MCP client setup](#mcp-client-setup) below. |
 | `GET /mcp/files/:connectorId/:fileId` | signed link³ | Downloads a Drive file handed out by `drive_get_file` |
-| `GET /admin/{me,organizations,organizations/:orgId,users,users/:userId,connectors,mcp-keys,audit-logs,system/stats,plans}` | platform:`superadmin,support` | Cross-organization **read** views for platform staff — outside the tenant boundary, no `x-organization-id`. See [Staff console](#staff-console). |
-| `POST /admin/organizations/:orgId/plan`, `PUT …/limits`, `DELETE /admin/organizations/:orgId`, `PATCH /admin/users/:userId/{platform-role,ban}`, `POST/PUT/DELETE /admin/plans[/:planId]` | platform:`superadmin` | Staff mutations. The three destructive ones (org delete, role grant, ban) re-verify the caller's own password |
+| `GET /admin/{me,organizations,organizations/:orgId,users,users/:userId,connectors,mcp-keys,audit-logs,system/stats,plans,plans/:planId/prices}` | platform:`superadmin,support` | Cross-organization **read** views for platform staff — outside the tenant boundary, no `x-organization-id`. See [Staff console](#staff-console). |
+| `POST /admin/organizations/:orgId/plan`, `PUT …/limits`, `DELETE /admin/organizations/:orgId`, `PATCH /admin/users/:userId/{platform-role,ban}`, `POST/PUT/DELETE /admin/plans[/:planId]`, `POST /admin/plans/:planId/prices`, `PATCH …/prices/:priceId` | platform:`superadmin` | Staff mutations, including recording/toggling a plan's Stripe prices. The three destructive ones (org delete, role grant, ban) re-verify the caller's own password |
 | `POST /admin/users/:userId/impersonate` | platform:`superadmin,support` | Mints a 10-minute, non-refreshable, **read-only** token for a tenant user. Refuses any staff target |
 | `POST /admin/2fa/{enroll,confirm,verify}` | platform:`superadmin,support` | TOTP step-up enrollment and verification — the only `/admin` routes exempt from the `ADMIN_REQUIRE_2FA` gate |
 
 ¹ reads `Authorization` if present, but does not require it.
 ² `Authorization: Bearer sk_live_...` — an MCP key from `POST /mcp-keys` above, not a JWT access token.
 ³ no header at all: the URL carries an HMAC signature and an expiry of at most 15 minutes. The signing key is derived from `CONNECTOR_MASTER_KEY` with HKDF-SHA256 rather than being a separate secret to own — a master-key rotation invalidating in-flight links is a non-event at that TTL.
+⁴ authenticated by the `Stripe-Signature` HMAC instead of a JWT, and optionally narrowed further by `STRIPE_WEBHOOK_IP_ALLOWLIST`; unset `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` make every `/billing` route answer `501 BILLING_NOT_CONFIGURED` rather than accepting unauthenticated traffic.
 
 Common error responses: `401 Unauthorized` / `Token revoked`, `400 Missing x-organization-id header`, `403 Not a member of this organization`, `403 Missing permission: <action>`, `422 Validation failed`, `404 Route not found`. Service-level codes (`EMAIL_TAKEN`, `REFRESH_TOKEN_REUSE`, `LIMIT_EXCEEDED`, …) and their exact messages are tabulated in `docs/02-api-contract.md`.
 
@@ -344,7 +350,7 @@ With `make up` and `make api` running:
 make web   # cd apps/frontend && pnpm dev — Next.js on :4000
 ```
 
-`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. An account holding a `platform_role` also sees an Admin nav entry into the staff console at `/admin` ([Staff console](#staff-console)). MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough.
+`next dev` runs on **:4000**, not the framework default, because the Go API already owns :3000 and both run at once. Open [`localhost:4000`](http://localhost:4000) and register a user; `/` redirects to `/login` or `/organizations` depending on session state, and every page (Overview, Organizations, Members, Roles, Activity, Subscription, MCP keys, Connectors) talks to the live API. The unauthenticated pages cover the full email flow too — `/verify-email`, `/forgot-password`, `/reset-password`. An account holding a `platform_role` also sees an Admin nav entry into the staff console at `/admin` ([Staff console](#staff-console)). MCP keys (`/mcp-keys`) mints/revokes Personal Access Tokens for MCP clients; Connectors (`/connectors`) creates and manages upstream connections, including a `google_sheets`-specific form (`/connectors/:id/google-sheets`) for the OAuth paste-path credentials and the spreadsheet/Drive allowlist — see [MCP client setup](#mcp-client-setup) below for the full walkthrough. Subscription (`/subscription`) is no longer a read-only catalogue: it now has a plan picker that starts a Stripe Checkout, a "Manage billing" button opening the Customer Portal, and a usage meter reading the org's current-month tool-call count against its cap.
 
 **Same-origin only.** The browser never calls the Go API directly — it calls `/api/*` on the Next.js origin, and `app/api/[...path]/route.ts` proxies to `BACKEND_URL`. This is a Route Handler rather than a `next.config.ts` `rewrites()` entry on purpose: `next.config.ts` resolves once at build time, so a rewrite destination gets baked into the image, whereas the handler reads `process.env.BACKEND_URL` fresh on every request. The same production image therefore works in dev (`http://localhost:3000`) and in compose (`http://api:3000`) unchanged. A consequence worth knowing: **the backend has no CORS middleware and needs none.**
 
@@ -627,5 +633,6 @@ commercial license. Contributions are welcome under the CLA in [`CLA.md`](CLA.md
 | [`docs/09-railway-deploy.md`](docs/09-railway-deploy.md) | How this monorepo is deployed on Railway, and the two settings that are easy to get wrong |
 | [`docs/10-transactional-email.md`](docs/10-transactional-email.md) | The outbox + Redis-token design behind verification and password reset, and the token-logging rule |
 | [`docs/11-admin-panel.md`](docs/11-admin-panel.md) | Staff console design: the authorization boundary, the impersonation threat model, and what was deliberately left out |
+| [`docs/12-billing-and-metering.md`](docs/12-billing-and-metering.md) | Stripe Checkout/Portal/webhook design, the `usage_events`/`usage_rollups` metering ledger and its `audit_logs` drift cross-check, and why a tool call is a cap rather than a metered charge |
 | [`apps/frontend/README.md`](apps/frontend/README.md) | Frontend proxy, token model, page map |
 | [`k8s/README.md`](k8s/README.md) | Manifest layout and apply instructions |

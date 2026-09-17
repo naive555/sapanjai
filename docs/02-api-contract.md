@@ -563,7 +563,8 @@ down, never broken.
 | `GET /admin/mcp-keys` | platform:`superadmin,support` | `organizationId`, `userId`, `search`, `limit`, `offset` | Every MCP key, oldest first, with org name and owner email joined in. `search` matches key name **or** owner email. **Never `key_hash`, never a raw token** — a raw token does not exist anywhere after its mint response. |
 | `GET /admin/audit-logs` | platform:`superadmin,support` | `organizationId`, `userId`, `action` (repeatable), `from`, `to`, `limit` (1–200), `offset` | Cross-org audit query, newest first, with org name and actor email joined in. `action` is repeatable (`?action=a&action=b`, matching any); a trailing `*` makes one entry a prefix match (`?action=mcp.*`), and everything else is matched literally with `%`/`_`/`\` escaped, so an action string can never be misread as a pattern. `from`/`to` are RFC3339 and are normalized to UTC before binding — `audit_logs.created_at` is a `timestamp` with no time zone, so an unnormalized offset would silently compare against the wrong instant. |
 | `GET /admin/system/stats` | platform:`superadmin,support` | — | Platform-wide counts for the console landing page: orgs, users, connectors, MCP keys (total and active), active sessions, audit rows, the `email_outbox` breakdown, 7-day signup deltas, org-count per plan, and Redis's `used_memory_human`. Same 30s count cache as the lists. A rising `emailOutbox.failed` is the earliest signal that Resend or the `EMAIL_FROM` domain is misconfigured. |
-| `GET /admin/plans` | platform:`superadmin,support` | — | Every plan with its raw `limits` JSON. `total` is simply `len(items)` — plans is a small seeded table with no filters, so it bypasses the count cache. |
+| `GET /admin/plans` | platform:`superadmin,support` | — | Every plan with its raw `limits` JSON, plus the billing-catalogue columns migration `00013` added: `stripeProductId` (nullable — no Product linked yet), `isPublic` (whether the tenant-facing `GET /plans`/checkout can see and buy it), `sortOrder`. `total` is simply `len(items)` — plans is a small seeded table with no filters, so it bypasses the count cache. |
+| `GET /admin/plans/:planId/prices` | platform:`superadmin,support` | — | Every recorded `plan_prices` row for `planId`, active and inactive both — unlike the tenant-facing `GET /plans`, which shows only active ones. `404 Resource not found` for an unknown or malformed plan id. |
 
 **Mutations.** Superadmin only (`RequirePlatformRole("superadmin")`, a
 separate guard instance from the read routes above — support never even
@@ -579,9 +580,11 @@ does not read a `DELETE` body.
 | `DELETE /admin/organizations/:orgId` | platform:`superadmin` | `{ confirm, password }` | Re-authenticates the caller's password (see below) first, then requires `confirm` to equal the org's own **slug** exactly — typing it out is the deliberate friction on an irreversible delete. Memberships/connectors/mcp_api_keys/org_subscriptions all cascade; `audit_logs.organization_id` carries no FK, so the audit trail survives the org it describes — which is why the audit write happens **before** the `DELETE`, not after. Errors: `403 REAUTH_FAILED`, `400 ORG_CONFIRM_MISMATCH`, `404 Resource not found` (unknown or malformed id), `429 TOO_MANY_ATTEMPTS`. |
 | `PATCH /admin/users/:userId/platform-role` | platform:`superadmin` | `{ role: "superadmin"\|"support"\|null, password }` | Re-authenticates, then grants (`role` set) or revokes (`role: null`) `users.platform_role`. Every session for the target is revoked in the same transaction as the write — a demotion also ends the target's tenant sessions immediately. No Redis override key is needed: `platform_role` is re-read from the database on every `/admin` request (see below), so there is no stale JWT claim to compensate for. Errors: `403 REAUTH_FAILED`, `403 CANNOT_TARGET_SELF`, `409 SUPERADMIN_LIMIT` (capped at 10 concurrent superadmins — a scripting-mistake guard, not a real ceiling), `404 USER_NOT_FOUND`, `422 Validation failed`, `429 TOO_MANY_ATTEMPTS`. |
 | `PATCH /admin/users/:userId/ban` | platform:`superadmin` | `{ banned, reason?, password }` | Re-authenticates, then sets/clears `users.banned_at`/`ban_reason` and revokes every session for the target, in one transaction. `reason` is optional either direction (conventionally set only on ban). On ban, the Redis `banned:<userId>` fast-path cache is primed best-effort (self-heals on the target's next login attempt if that write fails); on unban the Redis `Unban` call is **not** best-effort — it has no TTL, so a failed clear here has no other self-healing path and the error is surfaced. Deliberately leaves `mcp_api_keys` untouched: the gateway already refuses a banned owner's key at the MCP-key join, and revoking keys outright is irreversible where a ban is not. Errors: `403 REAUTH_FAILED`, `403 CANNOT_TARGET_SELF`, `409 TARGET_IS_PLATFORM_STAFF` (checked both directions — a still-privileged account must be demoted first), `404 USER_NOT_FOUND`, `422 Validation failed`, `429 TOO_MANY_ATTEMPTS`. |
-| `POST /admin/plans` | platform:`superadmin` | `{ name, limits }` | Creates a plan. `limits` must define `max_members`/`max_roles`/`max_connectors` (the keys `subscription.Service.EnforceLimit` and `cmd/seed` actually depend on; `-1` means unlimited) and every value, required or not, must be a whole number — `422 Validation failed` otherwise. No re-auth: plan CRUD shapes pricing tiers, not tenant or staff access. |
-| `PUT /admin/plans/:planId` | platform:`superadmin` | `{ name, limits }` | Full replace of name+limits together, not a partial patch. Same `limits` validation as create. `404 Resource not found` for an unknown or malformed id. |
+| `POST /admin/plans` | platform:`superadmin` | `{ name, limits, stripeProductId?, isPublic?, sortOrder? }` | Creates a plan. `limits` must define `max_members`/`max_roles`/`max_connectors` (the keys `subscription.Service.EnforceLimit` and `cmd/seed` actually depend on; `-1` means unlimited) and every value, required or not, must be a whole number — `422 Validation failed` otherwise. `stripeProductId` must start with `prod_` if given. `isPublic` defaults to `true` (backward-compatible with the route's pre-`00013` shape) — a staff member wiring up a real paid tier should send `isPublic: false`, add its `plan_prices` row via the route below, and flip it public last. No re-auth: plan CRUD shapes pricing tiers, not tenant or staff access. |
+| `PUT /admin/plans/:planId` | platform:`superadmin` | `{ name, limits, stripeProductId?, isPublic?, sortOrder? }` | Full replace of every field together, not a partial patch — omitting `isPublic` **re-publishes** a hidden plan, because absent means the create-time default (`true`), the same way omitting a `limits` key drops that limit. Same `limits`/`stripeProductId` validation as create. `404 Resource not found` for an unknown or malformed id. |
 | `DELETE /admin/plans/:planId` | platform:`superadmin` | — | `409 PLAN_IN_USE` if any `org_subscriptions` row still references the plan (checked explicitly so this is a real 409 rather than a 500 from the underlying `ON DELETE NO ACTION` constraint). `404 Resource not found` for an unknown or malformed id. |
+| `POST /admin/plans/:planId/prices` | platform:`superadmin` | `{ stripePriceId, unitAmount, currency, interval: "month"\|"year", active? }` | Records an already-created Stripe Price against `planId` — it does not call Stripe or create one. `stripePriceId` must start with `price_`. `active` defaults to `true`. No update-the-amount route exists: a Stripe Price is immutable, so re-pricing is insert-then-deactivate (the route below), never an edit — deleting the old row would break an existing subscriber's entitlement resolution. No re-auth. |
+| `PATCH /admin/plans/:planId/prices/:priceId` | platform:`superadmin` | `{ active }` | The only mutation a recorded price accepts. `409 PLAN_PRICE_LAST_ACTIVE` refuses an active→inactive transition that would leave a **public** plan with no active price for that currency/interval — `GET /plans` would keep listing it while `POST /billing/checkout` answered `PLAN_NOT_PURCHASABLE` to everyone who clicked. Not enforced on a hidden (`isPublic: false`) plan, since nothing is being sold to strand; re-deactivating an already-inactive price is a no-op, never a 409, so a retry can't fail where the first call succeeded. `404 Resource not found` for an unknown plan or price id. No re-auth. |
 
 **Impersonation.** On the *read* guard, not write — it grants no more than
 support already has (read access), and the token it mints is itself
@@ -643,16 +646,26 @@ GET /admin/system/stats           -> { organizations, users, connectors, mcpKeys
                                        planBreakdown: [{ planName, orgCount }],
                                        redisUsedMemoryHuman }
 
-GET /admin/plans                  -> { items: [{ id, name, limits, createdAt }], total }
+GET /admin/plans                  -> { items: [{ id, name, limits, stripeProductId, isPublic,
+                                                 sortOrder, createdAt }], total }
+
+GET /admin/plans/:planId/prices   -> { items: [{ id, planId, stripePriceId, unitAmount, currency,
+                                                 interval, active, createdAt }], total }
 
 POST /admin/organizations/:orgId/plan   -> { success: true }
 PUT  /admin/organizations/:orgId/limits -> { success: true }
 DELETE /admin/organizations/:orgId      -> { success: true }
 PATCH /admin/users/:userId/platform-role -> { success: true }
 PATCH /admin/users/:userId/ban          -> { success: true }
-POST /admin/plans                       -> { id, name, limits, createdAt }
-PUT  /admin/plans/:planId               -> { id, name, limits, createdAt }
+POST /admin/plans                       -> { id, name, limits, stripeProductId, isPublic,
+                                              sortOrder, createdAt }
+PUT  /admin/plans/:planId               -> { id, name, limits, stripeProductId, isPublic,
+                                              sortOrder, createdAt }
 DELETE /admin/plans/:planId             -> { success: true }
+POST  /admin/plans/:planId/prices          -> { id, planId, stripePriceId, unitAmount, currency,
+                                                 interval, active, createdAt }
+PATCH /admin/plans/:planId/prices/:priceId -> { id, planId, stripePriceId, unitAmount, currency,
+                                                 interval, active, createdAt }
 
 POST /admin/users/:userId/impersonate   -> { accessToken, expiresIn,
                                               user: { id, email, displayName } }
