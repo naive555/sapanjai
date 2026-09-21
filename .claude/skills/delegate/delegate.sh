@@ -57,11 +57,25 @@ rm -f "$LMS_JSON"
 if [[ -z "$LOADED" ]]; then
   echo "FAIL: no model loaded in LM Studio at $LMS_URL" >&2
   echo "  start the server (Developer tab), then:" >&2
-  echo "  lms load qwen2.5-coder-14b-instruct-mlx --context-length 16384 --parallel 1 -y" >&2
+  echo "  lms load qwen2.5-coder-7b-instruct-mlx --context-length 8192 --parallel 1 --ttl 900 -y" >&2
   exit 1
 fi
 echo "### local model"
 printf 'model\tctx\tparallel\n%s\n' "$LOADED"
+
+# This machine has 16GB. A run holds the model resident while go build,
+# golangci-lint and go test each fork compilers, and once macOS starts swapping
+# model weights on unified memory the whole system stalls -- it does not
+# degrade, it freezes. Refuse rather than wedge the user's desktop.
+FREE_PCT="$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/ {gsub(/%/,"",$2); print $2}')"
+if [[ -n "$FREE_PCT" && "$FREE_PCT" -lt 25 ]]; then
+  echo >&2
+  echo "FAIL: only ${FREE_PCT}% memory free -- a run would swap." >&2
+  echo "  quit Docker Desktop, close browser tabs, or drop to a smaller model:" >&2
+  echo "  lms unload --all && lms load qwen2.5-coder-7b-instruct-mlx --context-length 8192 --parallel 1 --ttl 900 -y" >&2
+  exit 1
+fi
+echo "memory free: ${FREE_PCT:-?}%"
 
 # ---- worktree --------------------------------------------------------------
 STAMP="$(date +%H%M%S)"
