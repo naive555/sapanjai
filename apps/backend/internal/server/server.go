@@ -351,11 +351,19 @@ func requestLogger(log *slog.Logger) echo.MiddlewareFunc {
 // status and sanitized URI that reach the log line.
 func requestLoggerWithSink(log *slog.Logger, sink func(status int, uri string)) echo.MiddlewareFunc {
 	return echomw.RequestLoggerWithConfig(echomw.RequestLoggerConfig{
-		LogStatus:    true,
-		LogURI:       true,
-		LogMethod:    true,
-		LogLatency:   true,
-		LogRequestID: true,
+		LogStatus:       true,
+		LogURI:          true,
+		LogMethod:       true,
+		LogLatency:      true,
+		LogRequestID:    true,
+		LogRoutePath:    true,
+		LogResponseSize: true,
+		LogError:        true,
+		// Deliberately absent: LogHeaders, LogQueryParams, LogFormValues. The
+		// centralized redaction in internal/shared/logger matches attribute
+		// keys, so an Authorization header nested inside a map value would
+		// reach the log untouched.
+		//
 		// Required for an accurate status: without it the middleware reads
 		// res.Status before the error handler has run (so every errored
 		// request logs 200), and its only fallback unwraps *echo.HTTPError —
@@ -363,13 +371,48 @@ func requestLoggerWithSink(log *slog.Logger, sink func(status int, uri string)) 
 		HandleError: true,
 		LogValuesFunc: func(c echo.Context, v echomw.RequestLoggerValues) error {
 			uri := logger.SanitizeURI(v.URI)
-			log.Info("request",
+			attrs := []any{
 				"method", v.Method,
 				"uri", uri,
+				// The matched pattern (/connectors/:id), not the filled path —
+				// uri is unique per request and cannot be grouped or alerted on.
+				"route", v.RoutePath,
 				"status", v.Status,
 				"latency", v.Latency.String(),
+				// Alongside the string, not instead of it: "7.221966ms" cannot
+				// be sorted or thresholded by a log backend.
+				"latency_ms", float64(v.Latency.Nanoseconds()) / 1e6,
 				"request_id", v.RequestID,
-			)
+				"bytes_out", v.ResponseSize,
+			}
+
+			// Absent on unauthenticated routes; the getters are comma-ok and
+			// return the zero uuid rather than panicking.
+			if userID := appmw.UserID(c); userID != uuid.Nil {
+				attrs = append(attrs, "user_id", userID.String())
+			}
+			if orgID := appmw.OrgID(c); orgID != uuid.Nil {
+				attrs = append(attrs, "org_id", orgID.String())
+			}
+			if appmw.IsImpersonated(c) {
+				attrs = append(attrs, "impersonated", true, "actor_id", appmw.ActorID(c).String())
+			}
+
+			if v.Error != nil {
+				var appErr *apperror.Error
+				if asAppError(v.Error, &appErr) {
+					attrs = append(attrs, "error_code", appErr.Code)
+				}
+				// The message only above 500, where the code is absent or
+				// generic and the cause lives solely in the wrapped error.
+				// A 4xx is already named by its code, and an infra error's
+				// message can quote credential-adjacent upstream detail.
+				if v.Status >= 500 {
+					attrs = append(attrs, "error", v.Error.Error())
+				}
+			}
+
+			log.Info("request", attrs...)
 			if sink != nil {
 				sink(v.Status, uri)
 			}
