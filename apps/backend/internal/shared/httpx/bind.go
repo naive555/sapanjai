@@ -24,14 +24,23 @@ func BindAndValidate(c echo.Context, req any) error {
 	return nil
 }
 
-// BindBodyAndValidate behaves exactly like BindAndValidate, except it
-// always parses the request body regardless of HTTP method. Echo's default
-// binder (DefaultBinder.Bind) skips BindBody entirely for GET/DELETE/HEAD —
-// reasonable for the vast majority of routes, but wrong for
-// DELETE /admin/organizations/:orgId, whose body carries the confirmation
-// slug and re-auth password (docs/11-admin-panel.md D4). Use this instead
-// of BindAndValidate for any route that needs a body on one of those three
-// methods.
+// BindBodyAndValidate behaves like BindAndValidate, except it decodes the
+// request body directly and binds nothing else: no path parameters, no query
+// parameters, no content-type negotiation, and no dependence on the HTTP
+// method.
+//
+// Its caller is DELETE /admin/organizations/:orgId, whose body carries the
+// confirmation slug and re-auth password (docs/11-admin-panel.md D4). It is
+// easy to assume this helper is what makes that body readable at all; it is
+// not. As of echo v4.15.4, DefaultBinder.Bind's GET/DELETE/HEAD special case
+// gates only BindQueryParams and BindBody runs for every method, so plain
+// BindAndValidate would read that body too. What this buys is independence
+// from that rule, which echo has moved before (its own source cites issue
+// #1670 and a pre-v4.1.11 behavior it restored). On the one
+// route where a silently-empty confirmation field turns a destructive-action
+// guard into a no-op, not tracking a third-party binder's method semantics is
+// worth eight lines. TestBindAndValidate's "bind valid delete" case pins the
+// current behavior so a change surfaces there first.
 func BindBodyAndValidate(c echo.Context, req any) error {
 	if err := json.NewDecoder(c.Request().Body).Decode(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
