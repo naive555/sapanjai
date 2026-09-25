@@ -151,15 +151,16 @@ func generateToken() (string, error) {
 // same way before its GetMCPKeyByHash lookup — one hashing implementation,
 // two callers (mint-time here, verify-time there).
 //
-// Deliberate departure from CLAUDE.md's bcrypt-cost-12 rule: that rule
+// Deliberate departure from CLAUDE.md's slow-password-hash rule: that rule
 // exists for *passwords* — low-entropy secrets a human chose, where the
 // point of a slow hash is to make offline brute force expensive. A PAT is
 // 256 bits of crypto/rand output, so brute force is already infeasible, and
-// bcrypt is both too slow to run on every MCP call and — critically —
-// impossible to index for a lookup-by-token query (bcrypt salts each hash
-// differently, so equal inputs don't produce equal outputs). SHA-256 is
-// deterministic, so key_hash carries a unique index and revocation/lookup
-// is a single indexed read. Do not "fix" this to bcrypt.
+// a slow salted hash (bcrypt, Argon2id) is both too slow to run on every
+// MCP call and — critically — impossible to index for a lookup-by-token
+// query (each hash is salted differently, so equal inputs don't produce
+// equal outputs). SHA-256 is deterministic, so key_hash carries a unique
+// index and revocation/lookup is a single indexed read. Do not "fix" this
+// to a password hash.
 func HashToken(rawToken string) string {
 	sum := sha256.Sum256([]byte(rawToken))
 	return hex.EncodeToString(sum[:])

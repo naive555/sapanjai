@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sapanjai/backend/internal/shared/envelope"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 const minSecretLen = 32
@@ -108,6 +109,12 @@ type Config struct {
 	// before a tools/call is dispatched. See
 	// docs/07-sheets-adapter-decisions.md step 4.
 	MCPRateLimitPerMin int
+
+	// PasswordHashing sets the Argon2id cost and how many password hashes
+	// run at once across the process (internal/shared/password). Peak
+	// hashing memory is MaxConcurrent × MemoryKiB and has to fit the API
+	// container's memory limit.
+	PasswordHashing password.Params
 
 	// ResendAPIKey authenticates the transactional-mail sender. Optional and
 	// empty by default: with no key the worker falls back to
@@ -377,6 +384,8 @@ func Load() (*Config, error) {
 		cfg.MCPRateLimitPerMin = mcpRateLimit
 	}
 
+	cfg.PasswordHashing, problems = loadPasswordHashing(problems)
+
 	cfg.ResendAPIKey = os.Getenv("RESEND_API_KEY")
 	cfg.EmailFrom = getEnv("EMAIL_FROM", "Sapanjai <noreply@localhost>")
 
@@ -594,6 +603,30 @@ func redisKeyPrefix() string {
 		return raw
 	}
 	return raw + ":"
+}
+
+// loadPasswordHashing reads the PASSWORD_HASH_* variables over
+// password.DefaultParams, falling back to the default for any field that
+// fails to parse so Validate still judges the rest.
+func loadPasswordHashing(problems []string) (password.Params, []string) {
+	p := password.DefaultParams
+	parse := func(key string, fallback uint64, bits int) uint64 {
+		v, err := strconv.ParseUint(getEnv(key, strconv.FormatUint(fallback, 10)), 10, bits)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s must be a non-negative integer that fits in %d bits", key, bits))
+			return fallback
+		}
+		return v
+	}
+	p.MemoryKiB = uint32(parse("PASSWORD_HASH_MEMORY_KIB", uint64(p.MemoryKiB), 32))
+	p.Iterations = uint32(parse("PASSWORD_HASH_ITERATIONS", uint64(p.Iterations), 32))
+	p.Parallelism = uint8(parse("PASSWORD_HASH_PARALLELISM", uint64(p.Parallelism), 8))
+	p.MaxConcurrent = int(parse("PASSWORD_HASH_MAX_CONCURRENT", uint64(p.MaxConcurrent), 16))
+
+	if err := p.Validate(); err != nil {
+		problems = append(problems, "PASSWORD_HASH_* is invalid: "+err.Error())
+	}
+	return p, problems
 }
 
 func getEnv(key, fallback string) string {

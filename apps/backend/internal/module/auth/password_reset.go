@@ -104,9 +104,8 @@ func (s *Service) RequestPasswordReset(ctx context.Context, to string) error {
 // access tokens are unaffected and remain valid until their own (short)
 // expiry — only refresh sessions die immediately.
 //
-// newPasswordHash is already bcrypt-hashed by the caller (the handler),
-// mirroring Register's split so the 72-byte truncation step lives in
-// exactly one place.
+// newPasswordHash is already hashed by the caller (the handler, via
+// password.Hash), mirroring Register's split.
 func (s *Service) ResetPassword(ctx context.Context, token, newPasswordHash string) error {
 	userID, found, err := s.mail.ConsumeResetToken(ctx, hashToken(token))
 	if err != nil {

@@ -35,3 +35,6 @@ k8s/**/secret.yaml
 # OS
 .DS_Store
 Thumbs.db
+
+# aider (local-model implementer; see ~/.aider.conf.yml)
+.aider*

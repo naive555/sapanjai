@@ -3,11 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
@@ -15,6 +15,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/shared/apperror"
 	"github.com/sapanjai/backend/internal/shared/email"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 // Compile-time checks that the concrete infra types satisfy the narrow
@@ -30,10 +31,6 @@ var (
 // src/modules/auth/service.ts.
 const maxLoginAttempts = 5
 
-// bcryptCost mirrors SALT_ROUNDS in the source app's
-// src/modules/auth/service.ts (bcryptjs cost 12).
-const bcryptCost = 12
-
 // authStore is the subset of *database.Store the auth service depends on,
 // narrowed so unit tests can hand-mock it without implementing the full
 // db.Querier surface. *database.Store satisfies this (it embeds *db.Queries
@@ -43,6 +40,7 @@ type authStore interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (db.User, error)
 	CreateUser(ctx context.Context, arg db.CreateUserParams) (db.User, error)
 	MarkUserVerified(ctx context.Context, id uuid.UUID) error
+	UpdateUserPassword(ctx context.Context, arg db.UpdateUserPasswordParams) error
 	EnqueueEmail(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (db.Session, error)
 	CreateSession(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
@@ -77,17 +75,22 @@ type Service struct {
 	mail   verificationTokens
 	render verificationRenderer
 	appURL string
+
+	log *slog.Logger
 }
 
 // NewService builds an auth Service.
-func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, mail verificationTokens, render verificationRenderer, appURL string) *Service {
-	return &Service{store: store, limiter: limiter, audit: audit, mail: mail, render: render, appURL: appURL}
+func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, mail verificationTokens, render verificationRenderer, appURL string, log *slog.Logger) *Service {
+	return &Service{store: store, limiter: limiter, audit: audit, mail: mail, render: render, appURL: appURL, log: log}
 }
 
 // Register creates a new user and enqueues its verification email.
-// passwordHash is the already-bcrypt-hashed password (hashing happens in
-// the handler alongside the 72-byte truncation shared with Login). Returns
-// apperror.EmailTaken if the email is already registered.
+// Returns apperror.EmailTaken if the email is already registered.
+//
+// The password is hashed only after the taken-email check, so a request
+// that ends in 409 costs no Argon2id work. That makes a taken address
+// answer faster than a new one — no new leak, since the 409 already says
+// so (docs/02-api-contract.md, the one accepted enumeration surface).
 //
 // CreateUser and the verification email's outbox insert run inside one
 // transaction (store.WithTx) so a user row can never exist without its
@@ -97,12 +100,17 @@ func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, 
 // pre-check is read-only and has nothing to roll back, and audit writes
 // are best-effort and must never roll back a registration that otherwise
 // succeeded.
-func (s *Service) Register(ctx context.Context, email, passwordHash string, displayName *string) (db.User, error) {
+func (s *Service) Register(ctx context.Context, email, pw string, displayName *string) (db.User, error) {
 	_, err := s.store.GetUserByEmail(ctx, email)
 	if err == nil {
 		return db.User{}, apperror.New(apperror.EmailTaken)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.User{}, err
+	}
+
+	passwordHash, err := password.Hash(ctx, pw)
+	if err != nil {
 		return db.User{}, err
 	}
 
@@ -133,7 +141,13 @@ func (s *Service) Register(ctx context.Context, email, passwordHash string, disp
 // The rate-limit check happens BEFORE credential validation, matching
 // source. A failed attempt (unknown email or bad password) increments the
 // limiter and returns apperror.InvalidCredentials; success resets it.
-func (s *Service) Login(ctx context.Context, email, password string) (db.User, error) {
+//
+// An unknown email still pays for one Argon2id hash (password.DummyVerify)
+// so it can't be told apart from a wrong password by response time. A
+// user still on a legacy bcrypt hash remains distinguishable — bcrypt cost
+// 12 is slower than the current Argon2id profile — until their first
+// successful login rehashes them.
+func (s *Service) Login(ctx context.Context, email, pw string) (db.User, error) {
 	attempts, err := s.limiter.GetLoginAttempts(ctx, email)
 	if err != nil {
 		return db.User{}, err
@@ -147,13 +161,22 @@ func (s *Service) Login(ctx context.Context, email, password string) (db.User, e
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return db.User{}, err
 		}
+		if err := password.DummyVerify(ctx, pw); err != nil {
+			return db.User{}, err
+		}
 		if _, incErr := s.limiter.IncrementLoginAttempts(ctx, email); incErr != nil {
 			return db.User{}, incErr
 		}
 		return db.User{}, apperror.New(apperror.InvalidCredentials)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), truncatePassword(password)); err != nil {
+	needsRehash, err := password.Verify(ctx, user.PasswordHash, pw)
+	if err != nil {
+		// The request ended while queued for a hashing slot: no verdict
+		// was reached, so it is neither a failed attempt nor a 401.
+		if ctx.Err() != nil {
+			return db.User{}, err
+		}
 		if _, incErr := s.limiter.IncrementLoginAttempts(ctx, email); incErr != nil {
 			return db.User{}, incErr
 		}
@@ -162,6 +185,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (db.User, e
 
 	if err := s.limiter.ResetLoginAttempts(ctx, email); err != nil {
 		return db.User{}, err
+	}
+
+	if needsRehash {
+		s.rehashPassword(ctx, user.ID, pw)
 	}
 
 	// Credentials check out, but a banned account never gets a session.
@@ -258,13 +285,16 @@ func (s *Service) RevokeAllSessions(ctx context.Context, userID uuid.UUID) error
 	return s.store.RevokeAllUserSessions(ctx, userID)
 }
 
-// truncatePassword reproduces bcryptjs's silent truncation of inputs over
-// 72 bytes (Go's bcrypt errors instead of truncating), so long passwords
-// hash/compare identically to the source rather than turning into a 500.
-func truncatePassword(password string) []byte {
-	b := []byte(password)
-	if len(b) > 72 {
-		return b[:72]
+// rehashPassword upgrades a verified legacy (bcrypt) or outdated Argon2id
+// hash in place. Best-effort: a failure leaves the old hash working, and
+// the next successful login offers the same upgrade again, so it logs
+// rather than failing a login whose credentials already checked out.
+func (s *Service) rehashPassword(ctx context.Context, userID uuid.UUID, pw string) {
+	hash, err := password.Hash(ctx, pw)
+	if err == nil {
+		err = s.store.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: userID, PasswordHash: hash})
 	}
-	return b
+	if err != nil {
+		s.log.WarnContext(ctx, "password rehash failed", slog.String("user_id", userID.String()), slog.Any("error", err))
+	}
 }

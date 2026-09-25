@@ -16,7 +16,10 @@ import { useSession } from "@/lib/auth/use-session";
 
 const loginSchema = z.object({
   email: z.email("Enter a valid email address"),
-  password: z.string().min(1, "Password is required"),
+  password: z
+    .string()
+    .min(1, "Password is required")
+    .max(1024, "Password must be at most 1024 characters"),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;

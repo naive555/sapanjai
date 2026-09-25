@@ -34,7 +34,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
@@ -42,6 +41,7 @@ import (
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/module/subscription"
 	"github.com/sapanjai/backend/internal/shared/apperror"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 var (
@@ -287,7 +287,7 @@ const superadminCap = 10
 // budget here, and vice versa. Structure mirrors auth.Service.Login's own
 // rate-limit dance exactly: check-before-compare, increment-and-propagate
 // on failure, reset on success.
-func (s *Service) reauth(ctx context.Context, adminID uuid.UUID, password string) error {
+func (s *Service) reauth(ctx context.Context, adminID uuid.UUID, pw string) error {
 	attempts, err := s.redisAuth.GetReauthAttempts(ctx, adminID)
 	if err != nil {
 		return err
@@ -301,7 +301,10 @@ func (s *Service) reauth(ctx context.Context, adminID uuid.UUID, password string
 		return err
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), truncatePassword(password)); err != nil {
+	if _, err := password.Verify(ctx, admin.PasswordHash, pw); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
 		if _, incErr := s.redisAuth.IncrementReauthAttempts(ctx, adminID); incErr != nil {
 			return incErr
 		}
@@ -309,22 +312,6 @@ func (s *Service) reauth(ctx context.Context, adminID uuid.UUID, password string
 	}
 
 	return s.redisAuth.ResetReauthAttempts(ctx, adminID)
-}
-
-// truncatePassword mirrors internal/module/auth.truncatePassword (kept as
-// its own private copy rather than exported cross-package, matching how
-// this file already keeps its own copies of the pgtype conversions
-// auditlog/connector also carry privately): bcrypt silently ignores
-// anything past 72 bytes, so a caller whose real password is longer than
-// that must be truncated identically at both hash time (registration) and
-// every compare time (login, and now admin reauth) or a legitimately
-// correct password fails to verify.
-func truncatePassword(password string) []byte {
-	b := []byte(password)
-	if len(b) > 72 {
-		return b[:72]
-	}
-	return b
 }
 
 // adminAuditMetadata marshals a mutation's action-specific fields plus the

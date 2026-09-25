@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 // setBaselineEnv sets every variable Load requires, so each test can vary the
@@ -29,6 +31,8 @@ func setBaselineEnv(t *testing.T) {
 		"APP_NAME", "APP_ENV", "PORT", "LOG_LEVEL", "WORKER_PORT",
 		"JWT_ACCESS_EXPIRES_IN", "JWT_REFRESH_EXPIRES_IN",
 		"WORKER_JOB_TIMEOUT", "MCP_RATE_LIMIT_PER_MIN",
+		"PASSWORD_HASH_MEMORY_KIB", "PASSWORD_HASH_ITERATIONS",
+		"PASSWORD_HASH_PARALLELISM", "PASSWORD_HASH_MAX_CONCURRENT",
 		"SESSION_CLEANUP_INTERVAL", "SESSION_CLEANUP_RETENTION", "SESSION_CLEANUP_BATCH_SIZE",
 		"RESEND_API_KEY", "EMAIL_FROM", "APP_PUBLIC_URL",
 		"EMAIL_DISPATCH_INTERVAL", "EMAIL_DISPATCH_BATCH_SIZE",
@@ -651,6 +655,58 @@ func TestLoad_StripeKeyRejectsInvalidValues(t *testing.T) {
 			// prefix would end up in those logs.
 			if strings.Contains(err.Error(), tc.key) {
 				t.Fatalf("error echoes the configured key: %v", err)
+			}
+		})
+	}
+}
+
+// ---- PASSWORD_HASH_* ----
+
+func TestLoad_PasswordHashingDefaults(t *testing.T) {
+	setBaselineEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PasswordHashing != password.DefaultParams {
+		t.Fatalf("PasswordHashing = %+v, want %+v", cfg.PasswordHashing, password.DefaultParams)
+	}
+}
+
+func TestLoad_PasswordHashingOverrides(t *testing.T) {
+	setBaselineEnv(t)
+	t.Setenv("PASSWORD_HASH_MEMORY_KIB", "47104")
+	t.Setenv("PASSWORD_HASH_ITERATIONS", "1")
+	t.Setenv("PASSWORD_HASH_PARALLELISM", "1")
+	t.Setenv("PASSWORD_HASH_MAX_CONCURRENT", "8")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := password.Params{MemoryKiB: 47104, Iterations: 1, Parallelism: 1, MaxConcurrent: 8}
+	if cfg.PasswordHashing != want {
+		t.Fatalf("PasswordHashing = %+v, want %+v", cfg.PasswordHashing, want)
+	}
+}
+
+func TestLoad_PasswordHashingInvalid(t *testing.T) {
+	tests := []struct {
+		name, key, value, want string
+	}{
+		{"not a number", "PASSWORD_HASH_MEMORY_KIB", "19MiB", "PASSWORD_HASH_MEMORY_KIB must be a non-negative integer"},
+		{"negative", "PASSWORD_HASH_MAX_CONCURRENT", "-1", "PASSWORD_HASH_MAX_CONCURRENT must be a non-negative integer"},
+		{"parallelism overflows uint8", "PASSWORD_HASH_PARALLELISM", "256", "PASSWORD_HASH_PARALLELISM must be a non-negative integer"},
+		{"below OWASP floor", "PASSWORD_HASH_ITERATIONS", "1", "PASSWORD_HASH_* is invalid"},
+		{"memory given in bytes", "PASSWORD_HASH_MEMORY_KIB", "19922944", "PASSWORD_HASH_* is invalid"},
+		{"zero concurrency", "PASSWORD_HASH_MAX_CONCURRENT", "0", "PASSWORD_HASH_* is invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBaselineEnv(t)
+			t.Setenv(tt.key, tt.value)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want it to contain %q", err, tt.want)
 			}
 		})
 	}
