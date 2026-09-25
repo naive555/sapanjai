@@ -94,7 +94,7 @@ func (h *Handler) register(c echo.Context) error {
 		return err
 	}
 
-	hash, err := password.Hash(req.Password)
+	hash, err := password.Hash(c.Request().Context(), req.Password)
 	if err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func (h *Handler) resetPassword(c echo.Context) error {
 		return err
 	}
 
-	hash, err := password.Hash(req.Password)
+	hash, err := password.Hash(c.Request().Context(), req.Password)
 	if err != nil {
 		return err
 	}

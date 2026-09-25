@@ -301,7 +301,10 @@ func (s *Service) reauth(ctx context.Context, adminID uuid.UUID, pw string) erro
 		return err
 	}
 
-	if _, err := password.Verify(admin.PasswordHash, pw); err != nil {
+	if _, err := password.Verify(ctx, admin.PasswordHash, pw); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
 		if _, incErr := s.redisAuth.IncrementReauthAttempts(ctx, adminID); incErr != nil {
 			return incErr
 		}

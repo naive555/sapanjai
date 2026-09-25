@@ -520,6 +520,27 @@ func TestReauth_WrongPassword(t *testing.T) {
 	}
 }
 
+// A request that ends before its hash runs got no verdict: it must not
+// burn one of the five reauth attempts or report REAUTH_FAILED.
+func TestReauth_CancelledContextIsNotAFailedAttempt(t *testing.T) {
+	adminID := uuid.New()
+	auth := alwaysAllowReauth()
+	svc := NewService(&mockAdminStore{
+		getUserByID: func(ctx context.Context, id uuid.UUID) (db.User, error) {
+			return db.User{ID: adminID, PasswordHash: adminBcryptHash}, nil
+		},
+	}, &mockCountCache{}, nil, nil, auth, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := svc.reauth(ctx, adminID, "password123"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reauth() error = %v, want context.Canceled", err)
+	}
+	if auth.incrementReauthCalls != 0 || auth.resetReauthCalls != 0 {
+		t.Errorf("increment=%d reset=%d, want neither on a cancelled request", auth.incrementReauthCalls, auth.resetReauthCalls)
+	}
+}
+
 func TestReauth_TooManyAttempts(t *testing.T) {
 	adminID := uuid.New()
 	auth := &mockAdminAuth{getReauthAttempts: func(ctx context.Context, userID uuid.UUID) (int, error) { return maxReauthAttempts, nil }}

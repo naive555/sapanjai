@@ -153,15 +153,22 @@ func (s *Service) Login(ctx context.Context, email, pw string) (db.User, error) 
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return db.User{}, err
 		}
-		password.DummyVerify(pw)
+		if err := password.DummyVerify(ctx, pw); err != nil {
+			return db.User{}, err
+		}
 		if _, incErr := s.limiter.IncrementLoginAttempts(ctx, email); incErr != nil {
 			return db.User{}, incErr
 		}
 		return db.User{}, apperror.New(apperror.InvalidCredentials)
 	}
 
-	needsRehash, err := password.Verify(user.PasswordHash, pw)
+	needsRehash, err := password.Verify(ctx, user.PasswordHash, pw)
 	if err != nil {
+		// The request ended while queued for a hashing slot: no verdict
+		// was reached, so it is neither a failed attempt nor a 401.
+		if ctx.Err() != nil {
+			return db.User{}, err
+		}
 		if _, incErr := s.limiter.IncrementLoginAttempts(ctx, email); incErr != nil {
 			return db.User{}, incErr
 		}
@@ -275,7 +282,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, userID uuid.UUID) error
 // the next successful login offers the same upgrade again, so it logs
 // rather than failing a login whose credentials already checked out.
 func (s *Service) rehashPassword(ctx context.Context, userID uuid.UUID, pw string) {
-	hash, err := password.Hash(pw)
+	hash, err := password.Hash(ctx, pw)
 	if err == nil {
 		err = s.store.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: userID, PasswordHash: hash})
 	}

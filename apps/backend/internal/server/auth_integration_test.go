@@ -23,6 +23,7 @@ import (
 	"github.com/sapanjai/backend/internal/server"
 	"github.com/sapanjai/backend/internal/shared/envelope"
 	applogger "github.com/sapanjai/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/internal/shared/password"
 	"github.com/sapanjai/backend/migrations"
 )
 
@@ -84,6 +85,7 @@ func setupTestServer(t *testing.T, configure ...func(*config.Config)) (*httptest
 		JWTRefreshExpiresIn: 7 * 24 * time.Hour,
 		ConnectorMasterKey:  bytes.Repeat([]byte{7}, envelope.MasterKeyLen), // fixed test key
 		MCPRateLimitPerMin:  60,                                             // matches config.Load's own default
+		PasswordHashing:     password.DefaultParams,                         // server.New rejects the zero value
 	}
 	for _, mutate := range configure {
 		mutate(cfg)

@@ -325,7 +325,7 @@ func TestService_Register_HappyPath(t *testing.T) {
 
 func newLoginTestUser(t *testing.T, pw string) db.User {
 	t.Helper()
-	hash, err := password.Hash(pw)
+	hash, err := password.Hash(context.Background(), pw)
 	if err != nil {
 		t.Fatalf("password.Hash: %v", err)
 	}
@@ -431,6 +431,34 @@ func TestService_Login_UnknownUserTakesAsLongAsWrongPassword(t *testing.T) {
 	}
 }
 
+// A login that ends before its hash runs (the client gave up while queued
+// for a hashing slot) got no verdict: it must not count toward the rate
+// limit or answer INVALID_CREDENTIALS — for a known or an unknown email.
+func TestService_Login_CancelledContextIsNotAFailedAttempt(t *testing.T) {
+	user := newLoginTestUser(t, "correct-password")
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			if email == user.Email {
+				return user, nil
+			}
+			return db.User{}, pgx.ErrNoRows
+		},
+	}
+	for _, email := range []string{user.Email, "nobody@example.com"} {
+		limiter := &mockLimiter{}
+		svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := svc.Login(ctx, email, "correct-password"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s: err = %v, want context.Canceled", email, err)
+		}
+		if limiter.incremented != 0 || limiter.resetCalls != 0 {
+			t.Fatalf("%s: incremented=%d reset=%d, want neither", email, limiter.incremented, limiter.resetCalls)
+		}
+	}
+}
+
 func TestService_Login_Success(t *testing.T) {
 	password := "correct-password"
 	user := newLoginTestUser(t, password)
@@ -482,7 +510,7 @@ func TestService_Login_LegacyBcryptRehashesToArgon2id(t *testing.T) {
 	if len(updates) != 1 || updates[0].ID != user.ID {
 		t.Fatalf("expected one password update for %v, got %+v", user.ID, updates)
 	}
-	needsRehash, err := password.Verify(updates[0].PasswordHash, pw)
+	needsRehash, err := password.Verify(context.Background(), updates[0].PasswordHash, pw)
 	if err != nil || needsRehash {
 		t.Fatalf("stored hash must be current Argon2id for the same password: needsRehash=%v err=%v", needsRehash, err)
 	}

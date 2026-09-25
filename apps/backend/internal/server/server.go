@@ -37,6 +37,7 @@ import (
 	"github.com/sapanjai/backend/internal/shared/envelope"
 	"github.com/sapanjai/backend/internal/shared/httpx"
 	"github.com/sapanjai/backend/internal/shared/logger"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 // New builds a fully configured Echo instance: middleware stack, custom
@@ -133,6 +134,17 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 
 	rbacSvc := rbac.NewService(store)
 	guards := appmw.NewGuards(tokenSvc, redisAuth, store, rbacSvc)
+
+	if err := password.Configure(cfg.PasswordHashing); err != nil {
+		return nil, fmt.Errorf("password hashing: %w", err)
+	}
+	ph := cfg.PasswordHashing
+	log.Info("password hashing configured",
+		slog.Uint64("memory_kib", uint64(ph.MemoryKiB)),
+		slog.Uint64("iterations", uint64(ph.Iterations)),
+		slog.Int("parallelism", int(ph.Parallelism)),
+		slog.Int("max_concurrent", ph.MaxConcurrent),
+		slog.Uint64("peak_memory_mib", uint64(ph.MemoryKiB)*uint64(ph.MaxConcurrent)/1024))
 
 	authSvc := auth.NewService(store, redisAuth, auditSvc, redisEmail, renderer, cfg.AppPublicURL, log)
 	authHandler := auth.NewHandler(authSvc, tokenSvc, store, redisAuth, cfg.JWTRefreshExpiresIn)
