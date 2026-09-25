@@ -16,7 +16,10 @@ import { useSession } from "@/lib/auth/use-session";
 
 const registerSchema = z.object({
   email: z.email("Enter a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(1024, "Password must be at most 1024 characters"),
   displayName: z.string().optional(),
 });
 

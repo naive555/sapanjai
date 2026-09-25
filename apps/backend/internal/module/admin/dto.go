@@ -449,7 +449,7 @@ type SetLimitsRequest struct {
 // reauth before anything destructive happens.
 type DeleteOrganizationRequest struct {
 	Confirm  string `json:"confirm" validate:"required"`
-	Password string `json:"password" validate:"required"`
+	Password string `json:"password" validate:"required,max=1024"`
 }
 
 // PlatformRoleRequest is the PATCH /admin/users/:userId/platform-role body.
@@ -458,7 +458,7 @@ type DeleteOrganizationRequest struct {
 // grant it.
 type PlatformRoleRequest struct {
 	Role     *string `json:"role" validate:"omitempty,oneof=superadmin support"`
-	Password string  `json:"password" validate:"required"`
+	Password string  `json:"password" validate:"required,max=1024"`
 }
 
 // BanRequest is the PATCH /admin/users/:userId/ban body. Reason is optional
@@ -468,7 +468,7 @@ type PlatformRoleRequest struct {
 type BanRequest struct {
 	Banned   bool    `json:"banned"`
 	Reason   *string `json:"reason" validate:"omitempty,max=500"`
-	Password string  `json:"password" validate:"required"`
+	Password string  `json:"password" validate:"required,max=1024"`
 }
 
 // PlanCreateRequest is the POST /admin/plans body.

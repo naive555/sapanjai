@@ -10,14 +10,14 @@ import (
 // AuthModel.registerBody in the source app.
 type RegisterRequest struct {
 	Email       string  `json:"email" validate:"required,email"`
-	Password    string  `json:"password" validate:"required,min=8"`
+	Password    string  `json:"password" validate:"required,min=8,max=1024"`
 	DisplayName *string `json:"displayName" validate:"omitempty,min=1"`
 }
 
 // LoginRequest is the POST /auth/login body, mirroring AuthModel.loginBody.
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Password string `json:"password" validate:"required,max=1024"`
 }
 
 // RefreshRequest is the POST /auth/refresh and POST /auth/logout body,
@@ -74,5 +74,5 @@ type ForgotPasswordRequest struct {
 // ResetPasswordRequest is the POST /auth/reset-password body.
 type ResetPasswordRequest struct {
 	Token    string `json:"token" validate:"required"`
-	Password string `json:"password" validate:"required,min=8"`
+	Password string `json:"password" validate:"required,min=8,max=1024"`
 }

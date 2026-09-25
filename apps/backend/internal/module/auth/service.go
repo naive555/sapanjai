@@ -133,6 +133,12 @@ func (s *Service) Register(ctx context.Context, email, passwordHash string, disp
 // The rate-limit check happens BEFORE credential validation, matching
 // source. A failed attempt (unknown email or bad password) increments the
 // limiter and returns apperror.InvalidCredentials; success resets it.
+//
+// An unknown email still pays for one Argon2id hash (password.DummyVerify)
+// so it can't be told apart from a wrong password by response time. A
+// user still on a legacy bcrypt hash remains distinguishable — bcrypt cost
+// 12 is slower than the current Argon2id profile — until their first
+// successful login rehashes them.
 func (s *Service) Login(ctx context.Context, email, pw string) (db.User, error) {
 	attempts, err := s.limiter.GetLoginAttempts(ctx, email)
 	if err != nil {
@@ -147,6 +153,7 @@ func (s *Service) Login(ctx context.Context, email, pw string) (db.User, error) 
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return db.User{}, err
 		}
+		password.DummyVerify(pw)
 		if _, incErr := s.limiter.IncrementLoginAttempts(ctx, email); incErr != nil {
 			return db.User{}, incErr
 		}

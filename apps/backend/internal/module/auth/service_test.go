@@ -399,6 +399,38 @@ func TestService_Login_UnknownUser(t *testing.T) {
 	}
 }
 
+// Pins password.DummyVerify on the unknown-email path. Without it that
+// path answers in microseconds against tens of milliseconds for a wrong
+// password, so the loose 0.5x bound catches a regression without flaking.
+func TestService_Login_UnknownUserTakesAsLongAsWrongPassword(t *testing.T) {
+	user := newLoginTestUser(t, "correct-password")
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			if email == user.Email {
+				return user, nil
+			}
+			return db.User{}, pgx.ErrNoRows
+		},
+	}
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
+
+	fastest := func(email string) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for range 3 {
+			start := time.Now()
+			_, _ = svc.Login(context.Background(), email, "wrong-password")
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	wrongPassword := fastest(user.Email)
+	unknownUser := fastest("nobody@example.com")
+
+	if unknownUser < wrongPassword/2 {
+		t.Fatalf("unknown email took %v vs %v for a wrong password: the timing gap enumerates accounts", unknownUser, wrongPassword)
+	}
+}
+
 func TestService_Login_Success(t *testing.T) {
 	password := "correct-password"
 	user := newLoginTestUser(t, password)

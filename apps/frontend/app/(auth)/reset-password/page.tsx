@@ -16,7 +16,10 @@ import { resetPassword } from "@/lib/api/endpoints";
 
 const resetPasswordSchema = z
   .object({
-    password: z.string().min(8, "Password must be at least 8 characters"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .max(1024, "Password must be at most 1024 characters"),
     confirmPassword: z.string().min(1, "Confirm your password"),
   })
   .refine((values) => values.password === values.confirmPassword, {

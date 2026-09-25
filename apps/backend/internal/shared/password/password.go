@@ -74,6 +74,18 @@ func Verify(encoded, password string) (needsRehash bool, err error) {
 	return !current, nil
 }
 
+// dummySalt only has to be the right length: DummyVerify's output is
+// discarded, so nothing about it needs to be secret or unique.
+var dummySalt = make([]byte, saltLen)
+
+// DummyVerify spends the same work as Verify against a current-parameter
+// hash, for the path where there is no hash to check against (an unknown
+// email). Without it, "no such user" answers measurably faster than "wrong
+// password", and login becomes an account-enumeration oracle.
+func DummyVerify(password string) {
+	argon2.IDKey([]byte(password), dummySalt, iterations, memoryKiB, parallelism, keyLen)
+}
+
 func isBcrypt(encoded string) bool {
 	return strings.HasPrefix(encoded, "$2a$") ||
 		strings.HasPrefix(encoded, "$2b$") ||
