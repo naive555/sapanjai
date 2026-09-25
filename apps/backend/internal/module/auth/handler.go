@@ -94,12 +94,7 @@ func (h *Handler) register(c echo.Context) error {
 		return err
 	}
 
-	hash, err := password.Hash(c.Request().Context(), req.Password)
-	if err != nil {
-		return err
-	}
-
-	user, err := h.service.Register(c.Request().Context(), req.Email, hash, req.DisplayName)
+	user, err := h.service.Register(c.Request().Context(), req.Email, req.Password, req.DisplayName)
 	if err != nil {
 		return err
 	}

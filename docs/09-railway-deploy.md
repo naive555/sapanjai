@@ -267,7 +267,7 @@ offers. Rules to set there, keyed by client IP, on `POST` only:
 | Path | Starting limit | Why |
 | ---- | -------------- | --- |
 | `/api/auth/login` | 20 / min | Credential stuffing: it spreads attempts across addresses, so the per-email limit never fires, while each attempt still costs `api` an Argon2id hash. |
-| `/api/auth/register` | 10 / hour | Address enumeration via `409 EMAIL_TAKEN`. Also bounds verification mail sent to third parties, and hashing: the password is hashed before the taken-address check, so every request costs one. |
+| `/api/auth/register` | 10 / hour | Address enumeration via `409 EMAIL_TAKEN`. Also bounds verification mail sent to third parties, and hashing: every register of a new address costs an Argon2id hash (a taken one returns 409 before hashing). |
 | `/api/auth/forgot-password` | 10 / hour | Its response is already uniform — this caps reset mail sent to addresses the caller doesn't own. |
 
 These are starting points, not measured numbers. Carrier-grade NAT is common

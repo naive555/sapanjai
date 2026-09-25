@@ -85,9 +85,12 @@ func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, 
 }
 
 // Register creates a new user and enqueues its verification email.
-// passwordHash is the already-hashed password (password.Hash, called by
-// the handler). Returns
-// apperror.EmailTaken if the email is already registered.
+// Returns apperror.EmailTaken if the email is already registered.
+//
+// The password is hashed only after the taken-email check, so a request
+// that ends in 409 costs no Argon2id work. That makes a taken address
+// answer faster than a new one — no new leak, since the 409 already says
+// so (docs/02-api-contract.md, the one accepted enumeration surface).
 //
 // CreateUser and the verification email's outbox insert run inside one
 // transaction (store.WithTx) so a user row can never exist without its
@@ -97,12 +100,17 @@ func NewService(store authStore, limiter loginLimiter, audit *auditlog.Service, 
 // pre-check is read-only and has nothing to roll back, and audit writes
 // are best-effort and must never roll back a registration that otherwise
 // succeeded.
-func (s *Service) Register(ctx context.Context, email, passwordHash string, displayName *string) (db.User, error) {
+func (s *Service) Register(ctx context.Context, email, pw string, displayName *string) (db.User, error) {
 	_, err := s.store.GetUserByEmail(ctx, email)
 	if err == nil {
 		return db.User{}, apperror.New(apperror.EmailTaken)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.User{}, err
+	}
+
+	passwordHash, err := password.Hash(ctx, pw)
+	if err != nil {
 		return db.User{}, err
 	}
 

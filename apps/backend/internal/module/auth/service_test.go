@@ -261,7 +261,12 @@ func TestService_Register_EmailTaken(t *testing.T) {
 	spy := &spyQuerier{}
 	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
-	_, err := svc.Register(context.Background(), "taken@example.com", "hash", nil)
+	// An already-cancelled context makes password.Hash fail immediately, so
+	// getting EMAIL_TAKEN rather than context.Canceled proves the 409 is
+	// decided before any hashing is attempted.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.Register(ctx, "taken@example.com", "correct-password", nil)
 	if code := appErrorCode(t, err); code != apperror.EmailTaken {
 		t.Fatalf("code = %q, want %q", code, apperror.EmailTaken)
 	}
@@ -288,12 +293,15 @@ func TestService_Register_HappyPath(t *testing.T) {
 	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	displayName := "Ann"
-	user, err := svc.Register(context.Background(), "new@example.com", "hashed-pw", &displayName)
+	user, err := svc.Register(context.Background(), "new@example.com", "correct-password", &displayName)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if user.Email != "new@example.com" || user.PasswordHash != "hashed-pw" {
+	if user.Email != "new@example.com" {
 		t.Fatalf("unexpected user: %+v", user)
+	}
+	if needsRehash, err := password.Verify(context.Background(), user.PasswordHash, "correct-password"); err != nil || needsRehash {
+		t.Fatalf("stored hash must be a current Argon2id hash of the password: needsRehash=%v err=%v", needsRehash, err)
 	}
 
 	// CreateUser and EnqueueEmail must both have gone through the SAME
@@ -303,7 +311,7 @@ func TestService_Register_HappyPath(t *testing.T) {
 		t.Fatalf("createUserCalls = %d, want 1", len(tx.createUserCalls))
 	}
 	created := tx.createUserCalls[0]
-	if created.Email != "new@example.com" || created.PasswordHash != "hashed-pw" || created.DisplayName != &displayName {
+	if created.Email != "new@example.com" || created.PasswordHash != user.PasswordHash || created.DisplayName != &displayName {
 		t.Fatalf("unexpected CreateUserParams: %+v", created)
 	}
 	if len(tx.enqueueEmailCalls) != 1 {
