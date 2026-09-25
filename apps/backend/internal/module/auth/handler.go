@@ -10,13 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sapanjai/backend/internal/infra/database"
 	"github.com/sapanjai/backend/internal/infra/database/db"
 	"github.com/sapanjai/backend/internal/infra/redis"
 	appmw "github.com/sapanjai/backend/internal/middleware"
 	"github.com/sapanjai/backend/internal/shared/httpx"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 // blacklistTTL mirrors the hard-coded 15-minute access-token blacklist TTL
@@ -94,12 +94,12 @@ func (h *Handler) register(c echo.Context) error {
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword(truncatePassword(req.Password), bcryptCost)
+	hash, err := password.Hash(req.Password)
 	if err != nil {
 		return err
 	}
 
-	user, err := h.service.Register(c.Request().Context(), req.Email, string(hash), req.DisplayName)
+	user, err := h.service.Register(c.Request().Context(), req.Email, hash, req.DisplayName)
 	if err != nil {
 		return err
 	}
@@ -373,12 +373,12 @@ func (h *Handler) resetPassword(c echo.Context) error {
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword(truncatePassword(req.Password), bcryptCost)
+	hash, err := password.Hash(req.Password)
 	if err != nil {
 		return err
 	}
 
-	if err := h.service.ResetPassword(c.Request().Context(), req.Token, string(hash)); err != nil {
+	if err := h.service.ResetPassword(c.Request().Context(), req.Token, hash); err != nil {
 		return err
 	}
 

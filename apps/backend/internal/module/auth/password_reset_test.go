@@ -30,7 +30,7 @@ func TestService_RequestPasswordReset_CooldownActive(t *testing.T) {
 		return false, nil // cooldown already active
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.RequestPasswordReset(context.Background(), "known@example.com"); err != nil {
 		t.Fatalf("RequestPasswordReset: %v, want nil (cooldown must not be observable)", err)
@@ -51,7 +51,7 @@ func TestService_RequestPasswordReset_UnknownEmail(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	// The response for an unknown email must be indistinguishable from a
 	// known one — nil either way.
@@ -82,7 +82,7 @@ func TestService_RequestPasswordReset_HappyPath(t *testing.T) {
 		return nil
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.RequestPasswordReset(context.Background(), "known@example.com"); err != nil {
 		t.Fatalf("RequestPasswordReset: %v", err)
@@ -109,7 +109,7 @@ func TestService_ResetPassword_UnknownToken(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.ResetPassword(context.Background(), "bogus-token", "new-hash")
 	if code := appErrorCode(t, err); code != apperror.InvalidResetToken {
@@ -139,7 +139,7 @@ func TestService_ResetPassword_ReplayedToken(t *testing.T) {
 		},
 		withTx: withMockTx(new(*mockTxQuerier)),
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.ResetPassword(context.Background(), "raw-token", "new-hash"); err != nil {
 		t.Fatalf("first ResetPassword: %v", err)
@@ -164,7 +164,7 @@ func TestService_ResetPassword_UserGone(t *testing.T) {
 			return db.User{}, pgx.ErrNoRows
 		},
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.ResetPassword(context.Background(), "raw-token", "new-hash")
 	if code := appErrorCode(t, err); code != apperror.InvalidResetToken {
@@ -186,7 +186,7 @@ func TestService_ResetPassword_HappyPath(t *testing.T) {
 		withTx: withMockTx(&tx),
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.ResetPassword(context.Background(), "raw-token", "new-bcrypt-hash"); err != nil {
 		t.Fatalf("ResetPassword: %v", err)

@@ -17,16 +17,18 @@ import (
 	"github.com/sapanjai/backend/internal/module/auditlog"
 	"github.com/sapanjai/backend/internal/shared/apperror"
 	"github.com/sapanjai/backend/internal/shared/email"
+	"github.com/sapanjai/backend/internal/shared/password"
 )
 
 // ---- hand-mocked authStore ----
 
 type mockAuthStore struct {
-	getUserByEmail   func(ctx context.Context, email string) (db.User, error)
-	getUserByID      func(ctx context.Context, id uuid.UUID) (db.User, error)
-	createUser       func(ctx context.Context, arg db.CreateUserParams) (db.User, error)
-	markUserVerified func(ctx context.Context, id uuid.UUID) error
-	enqueueEmail     func(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error)
+	getUserByEmail     func(ctx context.Context, email string) (db.User, error)
+	getUserByID        func(ctx context.Context, id uuid.UUID) (db.User, error)
+	createUser         func(ctx context.Context, arg db.CreateUserParams) (db.User, error)
+	markUserVerified   func(ctx context.Context, id uuid.UUID) error
+	updateUserPassword func(ctx context.Context, arg db.UpdateUserPasswordParams) error
+	enqueueEmail       func(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error)
 
 	getSessionByRefreshToken func(ctx context.Context, refreshToken string) (db.Session, error)
 	createSession            func(ctx context.Context, arg db.CreateSessionParams) (db.Session, error)
@@ -50,6 +52,10 @@ func (m *mockAuthStore) CreateUser(ctx context.Context, arg db.CreateUserParams)
 
 func (m *mockAuthStore) MarkUserVerified(ctx context.Context, id uuid.UUID) error {
 	return m.markUserVerified(ctx, id)
+}
+
+func (m *mockAuthStore) UpdateUserPassword(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+	return m.updateUserPassword(ctx, arg)
 }
 
 func (m *mockAuthStore) EnqueueEmail(ctx context.Context, arg db.EnqueueEmailParams) (db.EmailOutbox, error) {
@@ -216,6 +222,8 @@ func newMockRenderer() *mockRenderer {
 
 const testAppURL = "http://localhost:4000"
 
+var testLogger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 // spyQuerier records CreateAuditLog calls for assertion; it embeds the
 // db.Querier interface unset so any other method panics if accidentally
 // exercised — none of these tests should ever reach one.
@@ -251,7 +259,7 @@ func TestService_Register_EmailTaken(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	_, err := svc.Register(context.Background(), "taken@example.com", "hash", nil)
 	if code := appErrorCode(t, err); code != apperror.EmailTaken {
@@ -277,7 +285,7 @@ func TestService_Register_HappyPath(t *testing.T) {
 		return nil
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	displayName := "Ann"
 	user, err := svc.Register(context.Background(), "new@example.com", "hashed-pw", &displayName)
@@ -315,9 +323,20 @@ func TestService_Register_HappyPath(t *testing.T) {
 
 // ---- Login ----
 
-func newLoginTestUser(t *testing.T, password string) db.User {
+func newLoginTestUser(t *testing.T, pw string) db.User {
 	t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	hash, err := password.Hash(pw)
+	if err != nil {
+		t.Fatalf("password.Hash: %v", err)
+	}
+	return db.User{ID: uuid.New(), Email: "user@example.com", PasswordHash: hash}
+}
+
+// newLegacyLoginTestUser stores a bcrypt hash, as every account created
+// before the Argon2id switch has.
+func newLegacyLoginTestUser(t *testing.T, pw string) db.User {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 	if err != nil {
 		t.Fatalf("bcrypt.GenerateFromPassword: %v", err)
 	}
@@ -332,7 +351,7 @@ func TestService_Login_RateLimited(t *testing.T) {
 		},
 	}
 	limiter := &mockLimiter{attempts: maxLoginAttempts}
-	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	_, err := svc.Login(context.Background(), "user@example.com", "irrelevant")
 	if code := appErrorCode(t, err); code != apperror.TooManyAttempts {
@@ -348,7 +367,7 @@ func TestService_Login_WrongPassword(t *testing.T) {
 		},
 	}
 	limiter := &mockLimiter{attempts: 1}
-	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	_, err := svc.Login(context.Background(), user.Email, "wrong-password")
 	if code := appErrorCode(t, err); code != apperror.InvalidCredentials {
@@ -369,7 +388,7 @@ func TestService_Login_UnknownUser(t *testing.T) {
 		},
 	}
 	limiter := &mockLimiter{}
-	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, limiter, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	_, err := svc.Login(context.Background(), "nobody@example.com", "whatever")
 	if code := appErrorCode(t, err); code != apperror.InvalidCredentials {
@@ -390,7 +409,7 @@ func TestService_Login_Success(t *testing.T) {
 	}
 	limiter := &mockLimiter{attempts: 3}
 	spy := &spyQuerier{}
-	svc := NewService(store, limiter, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, limiter, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	got, err := svc.Login(context.Background(), user.Email, password)
 	if err != nil {
@@ -410,6 +429,74 @@ func TestService_Login_Success(t *testing.T) {
 	}
 }
 
+func TestService_Login_LegacyBcryptRehashesToArgon2id(t *testing.T) {
+	pw := "correct-password"
+	user := newLegacyLoginTestUser(t, pw)
+	var updates []db.UpdateUserPasswordParams
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			return user, nil
+		},
+		updateUserPassword: func(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+			updates = append(updates, arg)
+			return nil
+		},
+	}
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
+
+	if _, err := svc.Login(context.Background(), user.Email, pw); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if len(updates) != 1 || updates[0].ID != user.ID {
+		t.Fatalf("expected one password update for %v, got %+v", user.ID, updates)
+	}
+	needsRehash, err := password.Verify(updates[0].PasswordHash, pw)
+	if err != nil || needsRehash {
+		t.Fatalf("stored hash must be current Argon2id for the same password: needsRehash=%v err=%v", needsRehash, err)
+	}
+}
+
+func TestService_Login_LegacyBcryptWrongPasswordDoesNotRehash(t *testing.T) {
+	user := newLegacyLoginTestUser(t, "correct-password")
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			return user, nil
+		},
+		updateUserPassword: func(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+			t.Fatal("a failed login must never rewrite the hash")
+			return nil
+		},
+	}
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
+
+	_, err := svc.Login(context.Background(), user.Email, "wrong-password")
+	if code := appErrorCode(t, err); code != apperror.InvalidCredentials {
+		t.Fatalf("code = %q, want %q", code, apperror.InvalidCredentials)
+	}
+}
+
+func TestService_Login_RehashFailureStillLogsIn(t *testing.T) {
+	pw := "correct-password"
+	user := newLegacyLoginTestUser(t, pw)
+	store := &mockAuthStore{
+		getUserByEmail: func(ctx context.Context, email string) (db.User, error) {
+			return user, nil
+		},
+		updateUserPassword: func(ctx context.Context, arg db.UpdateUserPasswordParams) error {
+			return errors.New("db down")
+		},
+	}
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
+
+	got, err := svc.Login(context.Background(), user.Email, pw)
+	if err != nil {
+		t.Fatalf("Login must succeed when only the rehash write fails: %v", err)
+	}
+	if got.ID != user.ID {
+		t.Fatalf("unexpected user: %+v", got)
+	}
+}
+
 func TestService_Login_BannedUser(t *testing.T) {
 	password := "correct-password"
 	user := newLoginTestUser(t, password)
@@ -421,7 +508,7 @@ func TestService_Login_BannedUser(t *testing.T) {
 	}
 	limiter := &mockLimiter{attempts: 1}
 	spy := &spyQuerier{}
-	svc := NewService(store, limiter, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, limiter, newTestAudit(spy), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	_, err := svc.Login(context.Background(), user.Email, password)
 	if code := appErrorCode(t, err); code != apperror.AccountSuspended {

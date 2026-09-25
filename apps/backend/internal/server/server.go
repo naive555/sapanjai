@@ -134,7 +134,7 @@ func New(cfg *config.Config, log *slog.Logger, pool *pgxpool.Pool, rdb *redis.Cl
 	rbacSvc := rbac.NewService(store)
 	guards := appmw.NewGuards(tokenSvc, redisAuth, store, rbacSvc)
 
-	authSvc := auth.NewService(store, redisAuth, auditSvc, redisEmail, renderer, cfg.AppPublicURL)
+	authSvc := auth.NewService(store, redisAuth, auditSvc, redisEmail, renderer, cfg.AppPublicURL, log)
 	authHandler := auth.NewHandler(authSvc, tokenSvc, store, redisAuth, cfg.JWTRefreshExpiresIn)
 	authHandler.Register(e.Group("/auth"), guards)
 

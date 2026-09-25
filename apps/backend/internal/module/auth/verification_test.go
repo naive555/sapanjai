@@ -23,7 +23,7 @@ func TestService_VerifyEmail_UnknownToken(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.VerifyEmail(context.Background(), "bogus-token")
 	if code := appErrorCode(t, err); code != apperror.InvalidVerificationToken {
@@ -53,7 +53,7 @@ func TestService_VerifyEmail_ReplayedToken(t *testing.T) {
 		},
 		markUserVerified: func(ctx context.Context, id uuid.UUID) error { return nil },
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.VerifyEmail(context.Background(), "raw-token"); err != nil {
 		t.Fatalf("first VerifyEmail: %v", err)
@@ -80,7 +80,7 @@ func TestService_VerifyEmail_UserGone(t *testing.T) {
 			return db.User{}, pgx.ErrNoRows
 		},
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.VerifyEmail(context.Background(), "raw-token")
 	if code := appErrorCode(t, err); code != apperror.InvalidVerificationToken {
@@ -105,7 +105,7 @@ func TestService_VerifyEmail_HappyPath(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.VerifyEmail(context.Background(), "raw-token"); err != nil {
 		t.Fatalf("VerifyEmail: %v", err)
@@ -138,7 +138,7 @@ func TestService_VerifyEmail_AlreadyVerified_NoSecondAudit(t *testing.T) {
 		},
 	}
 	spy := &spyQuerier{}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(spy), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.VerifyEmail(context.Background(), "raw-token"); err != nil {
 		t.Fatalf("VerifyEmail: %v", err)
@@ -156,7 +156,7 @@ func TestService_ResendVerification_UserNotFound(t *testing.T) {
 			return db.User{}, pgx.ErrNoRows
 		},
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), newMockMail(), newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.ResendVerificationEmail(context.Background(), uuid.New())
 	if code := appErrorCode(t, err); code != apperror.UserNotFound {
@@ -175,7 +175,7 @@ func TestService_ResendVerification_AlreadyVerified(t *testing.T) {
 		t.Fatal("MarkVerifyResent must not be called for an already-verified user")
 		return false, nil
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.ResendVerificationEmail(context.Background(), uuid.New())
 	if code := appErrorCode(t, err); code != apperror.AlreadyVerified {
@@ -197,7 +197,7 @@ func TestService_ResendVerification_CooldownActive(t *testing.T) {
 	mail.markVerifyResent = func(ctx context.Context, userID uuid.UUID) (bool, error) {
 		return false, nil // cooldown already active
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	err := svc.ResendVerificationEmail(context.Background(), uuid.New())
 	if code := appErrorCode(t, err); code != apperror.VerificationResendTooSoon {
@@ -223,7 +223,7 @@ func TestService_ResendVerification_HappyPath(t *testing.T) {
 		tokenUserID = uid
 		return nil
 	}
-	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL)
+	svc := NewService(store, &mockLimiter{}, newTestAudit(&spyQuerier{}), mail, newMockRenderer(), testAppURL, testLogger)
 
 	if err := svc.ResendVerificationEmail(context.Background(), userID); err != nil {
 		t.Fatalf("ResendVerificationEmail: %v", err)
