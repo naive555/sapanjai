@@ -244,6 +244,38 @@ Rotating `CONNECTOR_MASTER_KEY` without moving the old value into
 `CONNECTOR_MASTER_KEY_PREVIOUS` makes every stored connector config
 unreadable — see the envelope-encryption ground rule in CLAUDE.md.
 
+### Auth endpoints: per-client rate limiting belongs in front of `web`
+
+`api` limits auth attempts **per account**, never per client: 5 failed logins
+per email per 15 minutes (`login:attempts:<email>`), one password-reset mail
+per email per 15 minutes, one verification resend per user per 5 minutes.
+That stops a password being guessed against one account, but not one IP
+trying one password across thousands of accounts (credential stuffing), nor
+walking a list of addresses through `POST /auth/register`, whose
+`409 EMAIL_TAKEN` is the one enumeration surface kept on purpose
+(`docs/02-api-contract.md`).
+
+A per-IP limit can't live in `api`, for the reason the admin section above
+spells out: `route.ts` strips inbound `X-Forwarded-For`, so `c.RealIP()` is
+`web`'s own private address for every browser request. A per-IP counter there
+would be a single global bucket — five bad passwords from anyone would lock
+everyone out. It has to run in front of `web`, wherever the real client
+address is still known and trustworthy: a CDN/WAF proxying `web`'s domain
+(e.g. a Cloudflare rate-limiting rule), or whatever edge control the platform
+offers. Rules to set there, keyed by client IP, on `POST` only:
+
+| Path | Starting limit | Why |
+| ---- | -------------- | --- |
+| `/api/auth/login` | 20 / min | Credential stuffing: it spreads attempts across addresses, so the per-email limit never fires, while each attempt still costs `api` an Argon2id hash. |
+| `/api/auth/register` | 10 / hour | Address enumeration via `409 EMAIL_TAKEN`. Also bounds verification mail sent to third parties, and hashing: the password is hashed before the taken-address check, so every request costs one. |
+| `/api/auth/forgot-password` | 10 / hour | Its response is already uniform — this caps reset mail sent to addresses the caller doesn't own. |
+
+These are starting points, not measured numbers. Carrier-grade NAT is common
+on Thai mobile networks and in offices, so many real users can share one
+address: start in log/challenge mode rather than block, watch how often
+legitimate traffic hits the limit, then tighten. The per-account limits in
+`api` stay the backstop either way.
+
 ### Bootstrapping the first platform admin
 
 `grantadmin` ships in the same image as `api`/`worker`/`migrate`/`seed` and is

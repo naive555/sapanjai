@@ -72,6 +72,21 @@ an account and whether or not its 15-minute resend cooldown is currently
 active — a distinguishable response for "cooldown active" would itself be the
 enumeration oracle the uniform response exists to close.
 
+`POST /auth/register`'s `409 EMAIL_TAKEN` is the **one accepted
+account-enumeration surface**, kept on purpose. Everywhere else an unknown
+address is indistinguishable from a known one: forgot-password by its uniform
+response, login by `INVALID_CREDENTIALS` for both cases *and* by timing (an
+unknown email still runs one Argon2id hash, `password.DummyVerify`). Closing
+register too was considered and rejected: a neutral `202` can't issue tokens
+(that would hand an existing account to whoever re-registers its address), and
+it still leaks through a follow-up login with the registrant's own password —
+new address succeeds, taken address fails — unless login refuses unverified
+accounts with the same 401 as a wrong password. That turns email verification
+from a banner into a gate and removes instant access at sign-up, a larger
+product change than the leak justifies. The compensating control is an edge
+rate limit on `/api/auth/register` (`docs/09-railway-deploy.md`, "Auth
+endpoints"). Revisit if sign-up moves to verify-first anyway.
+
 A banned account is rejected with **403 `ACCOUNT_SUSPENDED` from `POST /auth/login`** but **401 `Account suspended` from the guard** on an already-issued access token. The asymmetry is intentional: at login the credential is valid and the account is not, while mid-session the credential itself is no longer usable and the frontend's existing 401 path clears the session cleanly. Do not unify them. `RequireMCPKey` is a third case and stays silent about the reason — a banned key owner gets the same indistinguishable 401 as a revoked, expired, or unknown key (`docs/11-admin-panel.md` §4).
 
 `RATE_LIMITED` has exactly one definition (`apperror.Map`, for a future REST
